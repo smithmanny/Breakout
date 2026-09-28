@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { CS, MC, PART } from './character-mats.js';
 import * as K from './character-geo.js';
 import { G } from '../core/ctx.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const V3 = THREE.Vector3;
 const TAU = Math.PI * 2;
@@ -165,10 +166,18 @@ function addArms(B, lv) {
     const A = armSpec(s);
     const s0 = 0.03, s1 = A.sW + 0.022;
     const ss = K.densitySamples(nS, s0, s1, (x) => 1 + 1.6 * gauss(x - A.sE, 0.03) + 1.2 * gauss(x - A.sW, 0.02) + 0.6 * gauss(x - 0.105, 0.02));
-    const geo = loftLimb(A.path, ss, nTh, A.sec, { capStart: 0.7 });
+    // BREAKOUT: a loose padded jersey sleeve over the arm (skin sub-material 4): fuller section, elbow pad, tight cuff
+    const sec = (th, s2) => {
+      const [a, b] = A.sec(th, s2);
+      const n = Math.sin(th);
+      let k = 1.16 - 0.1 * sstep(A.sW - 0.06, A.sW - 0.035, s2) - 0.04 * sstep(A.sW - 0.015, A.sW + 0.01, s2);
+      k += 0.16 * gauss(s2 - A.sE - 0.003, 0.03) * pos(-n) ** 2;                                      // elbow pad
+      return [a * k, b * k];
+    };
+    const geo = loftLimb(A.path, ss, nTh, sec, { capStart: 0.7 });
     const uvA = geo.attributes.uv;
     B.add(geo, {
-      v3: [0, 0, 0],
+      v3: [0, 0, 0], ex: 4, uv: true,
       color: (p, i) => _white,
       weights: (p, i) => {
         const s2 = uvA.getY(i), th = uvA.getX(i) * TAU;
@@ -228,10 +237,19 @@ function addLegs(B, lv) {
     const Lg = legSpec2(s);
     const s0 = 0.03, s1 = Lg.sA + 0.03;
     const ss = K.densitySamples(nS, s0, s1, (x) => 1 + 1.8 * gauss(x - Lg.sK, 0.04) + 0.5 * gauss(x - Lg.sK - 0.06, 0.04) + 0.3 * gauss(x - 0.17, 0.03));
-    const geo = loftLimb(Lg.path, ss, nTh, Lg.sec, { capStart: 0.6, capEnd: 0.6 });
+    // BREAKOUT: loose padded paintball pants over the leg (skin sub-material 5): fuller thigh and shin, knee pads, the
+    // elastic cuff gathers into the sock band above the cleat (the sock keeps its 2.4 mm offset over the bare section)
+    const sec = (th, s2) => {
+      const [a, b] = Lg.sec(th, s2);
+      const n = Math.sin(th);
+      const loose = 1 + 0.14 * sstep(Lg.sA - 0.1, Lg.sA - 0.16, s2);
+      const k = loose + 0.2 * gauss(s2 - Lg.sK + 0.004, 0.034) * pos(n) ** 1.5;                         // knee pad
+      return [a * k, b * k];
+    };
+    const geo = loftLimb(Lg.path, ss, nTh, sec, { capStart: 0.6, capEnd: 0.6 });
     const uvA = geo.attributes.uv;
     B.add(geo, {
-      v3: [0, 0, 0], color: () => _white,
+      v3: [0, 0, 0], color: () => _white, ex: 5, uv: true,
       weights: (p, i) => {
         const s2 = uvA.getY(i), th = uvA.getX(i) * TAU;
         const front = pos(Math.sin(th));
@@ -969,7 +987,7 @@ function addShorts(B, lv) {
       : [[-0.0205, -0.0002], [-0.018, 0.0036], [0.005, 0.0034], [0.0064, -0.0006], [0.002, -0.0032], [-0.012, -0.003]];
     const crow = prof.map(([dx, dr]) => lg.circ(SHX.yHem - dx, dr));
     const cg = K.gridGeo(crow, { wrapU: true, outward: lg.axisOut, uv: (i, j) => [i / half, j / (prof.length - 1)] });
-    B.add(cg, { ex: CS.team, uv: true, v3: cl(PART.cuff, MC.twill), weights: legW });
+    B.add(cg, { ex: CS.shorts, uv: true, v3: cl(PART.cuff, MC.twill), weights: legW });
   }
   // ---- gathered elastic waistband (mostly under the tee; shows when the hem flaps) — hero only
   if (lv >= 3) {
@@ -1272,6 +1290,18 @@ function shoeParts(lv) {
     const len = sw.curve.getLength(); const tA = sw.t, cA = sw.cs;
     parts.push({ geo: sw.geo, ex: CS.team, v3: cl(PART.heelTab, MC.webbing), uvFn: (i) => [tA[i] * len, cA[i]] });
   }
+  // BREAKOUT cleats: moulded studs under the outsole (forefoot + heel), placed inside the sole's footprint
+  if (lv >= 1) {
+    const bb = new THREE.Box3(), tmp = new THREE.Box3();
+    for (const pt of parts) { pt.geo.computeBoundingBox(); tmp.copy(pt.geo.boundingBox); bb.union(tmp); }
+    const L = bb.max.z - bb.min.z, W = bb.max.x - bb.min.x, cx = (bb.max.x + bb.min.x) / 2, y0 = bb.min.y + 0.0015;
+    const spots = [[-0.28, 0.84], [0.28, 0.84], [-0.33, 0.66], [0.33, 0.66], [0, 0.75], [-0.26, 0.14], [0.26, 0.14]];
+    for (const [fx, fz] of spots) {
+      const st = K.lathe([[0, 0.0], [0.0052, 0.0], [0.0045, -0.0055], [0.0028, -0.0072], [0, -0.0074]], lv >= 3 ? 8 : 5);
+      st.translate(cx + fx * W, y0, bb.min.z + fz * L);
+      parts.push({ geo: st, ex: CS.outsole, v3: cl(PART.none, MC.rubber) });
+    }
+  }
   _shoeCache.set(lv, parts);
   return parts;
 }
@@ -1309,75 +1339,43 @@ const TK_RES = [
   { seg: 32, prof: 1, bolts: 6, knob: 16 },
   { seg: 44, prof: 1, bolts: 6, knob: 22 },
 ];
-/** Glass + ink-fill geometry (tank-local, used by character.js), per detail level. */
+// BREAKOUT pod pack: four paintball pods standing in a moulded tray on the harness back panel (tank-local: +Y up the
+// pack, +Z toward the kid's back). The pods' shells + ball fill come from tankGlass() (character.js scales the fill with
+// the ammo); the tray, lids, retaining strap, back panel and pad are cloth parts weighted to the `tank` bone.
+export const PODS = { r: 0.0178, xs: [-0.0585, -0.0195, 0.0195, 0.0585], z: 0.026, y0: -0.098, y1: 0.052 };
+/** Pod shells + paintball fill (tank-local, used by character.js), per detail level. */
 export function tankGlass(level = 3) {
-  const lv = clamp(level | 0, 0, 4), T = TK_RES[lv];
-  const g = K.lathe(K.smoothProfile([[0, -0.098], [0.046, -0.098], [0.0632, -0.092], [0.0676, -0.078], [0.0686, -0.04], [0.0689, 0], [0.0686, 0.04], [0.0676, 0.078], [0.0632, 0.092], [0.046, 0.098], [0, 0.098]], lv >= 3 ? 22 : 12), T.seg + 4);
-  // fill in unit height (character.js scales y by the ink level); the top curls up the wall (meniscus)
-  const f = K.lathe(K.smoothProfile([[0, 0.0], [0.05, 0.0], [0.0598, 0.006], [0.0614, 0.03], [0.0614, 0.972], [0.0616, 0.996], [0.0605, 1.004], [0.054, 0.992], [0.036, 0.986], [0, 0.985]], lv >= 3 ? 14 : 8), T.seg);
-  return { glass: g, fill: f };
+  const lv = clamp(level | 0, 0, 4), T = TK_RES[lv], seg = Math.max(10, T.seg - 8);
+  const P = PODS, H = P.y1 - P.y0;
+  const shells = [], fills = [];
+  for (const x of P.xs) {
+    const g = K.lathe([[0, P.y0], [P.r * 0.8, P.y0], [P.r, P.y0 + 0.004], [P.r, P.y1 - 0.002], [P.r * 0.9, P.y1], [0, P.y1]], seg);
+    g.translate(x, 0, P.z); shells.push(g);
+    // fill in unit height (character.js scales y by the ammo level): a rounded column of stacked balls
+    const f = K.lathe([[0, 0.0], [P.r * 0.8, 0.0], [P.r * 0.9, 0.02], [P.r * 0.9, 0.97], [P.r * 0.6, 1.0], [0, 1.0]], seg - 2);
+    f.translate(x, 0, P.z); fills.push(f);
+  }
+  return { glass: mergeGeometries(shells, false), fill: mergeGeometries(fills, false), fillBottom: P.y0 + 0.003, fillHeight: H - 0.006 };
 }
 function addTank(B, lv) {
-  const T = TK_RES[lv], seg = T.seg;
-  const TKN = K.TANK;
+  const T = TK_RES[lv], seg = Math.max(10, T.seg - 8);
+  const TKN = K.TANK, P = PODS;
   const M = new THREE.Matrix4().makeRotationX(TKN.tilt).setPosition(TKN.center);
   const add = (g, ex, v3, extra = {}) => { g.applyMatrix4(M); B.add(g, { ex, v3, bone: 'tank', uv: !!g.attributes.uv, ...extra }); };
-  const prof = (pts, n) => (T.prof >= 1 ? K.smoothProfile(pts, n) : pts);
-  // ---- end caps: dark anodised body, chamfered rim, recessed groove, flat face
-  const capBody = [[0, -0.1292], [0.048, -0.1292], [0.0612, -0.1286], [0.0664, -0.127], [0.0692, -0.1238], [0.0699, -0.1198], [0.0699, -0.114], [0.0688, -0.1128], [0.0688, -0.1112], [0.0699, -0.11], [0.0699, -0.1072], [0.072, -0.1068], [0, -0.1068]];
-  const lowT = lv <= 2;
-  if (lowT) capBody.splice(0, capBody.length, [0, -0.1292], [0.061, -0.1288], [0.0692, -0.1238], [0.0699, -0.1072], [0.072, -0.1068], [0, -0.1068]);
-  add(K.revolve(capBody, seg), CS.darkPlastic, cl(PART.none, MC.plastic));
-  const capTop = capBody.map(([r, y]) => [r, -y]).reverse();
-  capTop.splice(capTop.length - 1, 0, [0.034, 0.1294], [0.0286, 0.1312]);
-  capTop[capTop.length - 1] = [0, 0.1312];
-  add(K.revolve(capTop, seg), CS.darkPlastic, cl(PART.none, MC.plastic));
-  // knurled metal collars gripping the glass (knurl band = PART.tankCap in the shader)
-  const collar = lowT ? [[0.0662, -0.1078], [0.0785, -0.1072], [0.0791, -0.0868], [0.0688, -0.0862]] : [[0.0662, -0.1078], [0.0774, -0.1078], [0.0788, -0.1066], [0.0792, -0.1048], [0.0792, -0.0894], [0.0787, -0.0876], [0.077, -0.0862], [0.0688, -0.0862]];
-  add(K.revolve(collar, seg + 4), CS.metal, cl(PART.tankCap, MC.metal));
-  add(K.revolve(collar.map(([r, y]) => [r, -y]).reverse(), seg + 4), CS.metal, cl(PART.tankCap, MC.metal));
-  if (lv >= 1) for (const y of [-0.0852, 0.0852]) { const r = K.torus(0.0689, 0.0025, lv >= 3 ? 6 : 3, seg + 4); r.rotateX(Math.PI / 2); r.translate(0, y, 0); add(r, CS.team, cl(PART.none, MC.rubber)); }
-  // socket-head bolts around both cap faces
-  if (T.bolts) for (const yy of [0.1292, -0.1292]) for (let k = 0; k < T.bolts; k++) {
-    const a = (k / T.bolts) * TAU + Math.PI / T.bolts;
-    const b = K.lathe([[0, 0], [0.0036, 0], [0.0036, 0.0012], [0.0031, 0.0019], [0.0016, 0.0019], [0.0016, 0.0008], [0, 0.0008]], 6);
-    if (yy < 0) b.rotateX(Math.PI);
-    b.translate(Math.sin(a) * 0.052, yy + (yy > 0 ? 0.0001 : -0.0001), Math.cos(a) * 0.052);
-    add(b, CS.metal, cl(PART.none, MC.metal));
+  // ---- pods: team lids (knurled rim), dark bottom cups
+  for (const x of P.xs) {
+    const lid = K.lathe([[0, P.y1 - 0.004], [P.r + 0.0022, P.y1 - 0.004], [P.r + 0.003, P.y1], [P.r + 0.0026, P.y1 + 0.011], [P.r * 0.8, P.y1 + 0.0142], [0, P.y1 + 0.0146]], seg);
+    lid.translate(x, 0, P.z); add(lid, CS.team, cl(PART.tankCap, MC.plastic, 1));
+    if (lv >= 2) { const tab = K.superEllipsoid(0.006, 0.004, 0.005, 0.5, 0.6, 6, 4); tab.translate(x, P.y1 + 0.006, P.z - P.r - 0.004); add(tab, CS.team, cl(PART.none, MC.plastic)); }
   }
-  // ---- side rails: bevelled bars with two lightening slots, bolted into the caps
-  for (const sx of [1, -1]) {
-    const rail = K.superEllipsoid(0.0064, 0.1, 0.0112, 0.34, 0.42, lv >= 3 ? 10 : 6, lv >= 3 ? 14 : 8, (q) => { for (const yc of [-0.042, 0.042]) { const d = Math.max(0, 1 - Math.hypot(q.z / 0.0062, (q.y - yc) / 0.026)); q.x -= Math.sign(q.x) * 0.0032 * Math.min(1, d * 3); } });
-    rail.translate(0.0748 * sx, 0, 0); add(rail, CS.darkPlastic, cl(PART.none, MC.plastic));
-    if (lv >= 1) for (const y of [-0.0915, 0.0915]) {
-      const bolt = K.lathe([[0, 0], [0.0047, 0], [0.0047, 0.0013], [0.0036, 0.0027], [0.0018, 0.0029], [0, 0.0029]], 6);
-      bolt.rotateZ(-sx * Math.PI / 2); bolt.translate(0.081 * sx, y, 0.0); add(bolt, CS.metal, cl(PART.none, MC.metal));
-    }
-  }
-  // ---- valve block + knurled team knob + quick-connect nozzle
-  add(K.lathe(prof([[0, 0.1308], [0.0118, 0.1308], [0.0118, 0.1352], [0.0102, 0.1368], [0.0068, 0.1372], [0.0068, 0.1426], [0, 0.1426]], 10), T.knob), CS.metal, cl(PART.none, MC.metal));
-  add(K.lathe(prof([[0, 0.1418], [0.0162, 0.1418], [0.0186, 0.1448], [0.0188, 0.1512], [0.0168, 0.1552], [0.0118, 0.1572], [0, 0.1574]], 10), T.knob + 4), CS.team, cl(PART.tankCap, MC.plastic, 1));
-  if (lv >= 1) {
-    const nz = K.lathe([[0, -0.012], [0.0042, -0.012], [0.0042, -0.004], [0.0052, -0.003], [0.0052, 0.0], [0.0034, 0.001], [0.0034, 0.009], [0.0026, 0.0095], [0, 0.0095]], 8);
-    K.alongAxis(nz, new V3(0.024, 0.132, 0.022), new V3(-0.55, -0.62, -0.56).normalize()); add(nz, CS.metal, cl(PART.none, MC.metal));
-  }
-  // ---- pressure gauge on the back-top of the upper cap
-  if (lv >= 1) {
-    const n = new V3(0, 0.62, -0.785).normalize();
-    const at = new V3(0, 0.113, -0.056);
-    const housing = K.lathe([[0, -0.006], [0.0142, -0.006], [0.0148, 0.0], [0.0142, 0.0035], [0, 0.0035]], lv >= 3 ? 18 : 10);
-    K.alongAxis(housing, at, n.clone().negate()); add(housing, CS.darkPlastic, cl(PART.none, MC.plastic));
-    const bez = K.torus(0.0128, 0.0021, 4, lv >= 3 ? 18 : 10); bez.lookAt(n); bez.translate(...at.clone().addScaledVector(n, 0.0036).toArray());
-    add(bez, CS.metal, cl(PART.none, MC.metal));
-    const face = K.gridGeo([Array.from({ length: 17 }, () => new V3()), ...[0.34, 0.67, 1].map((r) => Array.from({ length: 16 }, (_, i) => { const a = (i / 16) * TAU; return new V3(Math.cos(a) * 0.0118 * r, Math.sin(a) * 0.0118 * r, 0); }))].slice(1), { wrapU: true, poles: { start: new V3(0, 0, 0) }, outward: (p, o) => o.set(0, 0, -1), uv: (i, j) => [0, 0] });
-    const P = face.attributes.position; const uv = face.attributes.uv;
-    for (let i = 0; i < P.count; i++) { const x = P.getX(i), y = P.getY(i); uv.setXY(i, ((Math.atan2(-x, -y) / TAU + 0.5) - 0.12) / 0.76, Math.hypot(x, y) / 0.0118); }
-    K.placeBasis(face, new V3(1, 0, 0), new V3().crossVectors(n, new V3(1, 0, 0)), at.clone().addScaledVector(n, 0.0038));
-    add(face, CS.white, cl(PART.gauge, MC.plastic));
-    const needle = K.superEllipsoid(0.0007, 0.0052, 0.0006, 0.8, 0.8, 4, 4);
-    needle.translate(0, 0.0045, 0); needle.rotateZ(-0.9);
-    K.placeBasis(needle, new V3(1, 0, 0), new V3().crossVectors(n, new V3(1, 0, 0)), at.clone().addScaledVector(n, 0.0046));
-    add(needle, CS.white, cl(PART.none, MC.plastic), { color: new THREE.Color(0.9, 0.12, 0.08) });
+  // ---- tray: moulded cup row the pods stand in + the retaining strap round their middles
+  {
+    const tray = K.superEllipsoid(0.083, 0.02, 0.028, 0.35, 0.3, lv >= 3 ? 16 : 8, lv >= 3 ? 8 : 5);
+    tray.translate(0, P.y0 + 0.012, P.z + 0.002); add(tray, CS.darkPlastic, cl(PART.none, MC.plastic));
+    const band = K.superEllipsoid(0.0815, 0.0095, 0.0215, 0.3, 0.25, lv >= 3 ? 16 : 8, 4);
+    band.translate(0, -0.012, P.z + 0.004); add(band, CS.strap, cl(PART.none, MC.webbing));
+    // side-release buckle on the band
+    if (lv >= 1) { const bk = K.superEllipsoid(0.011, 0.0085, 0.004, 0.3, 0.35, 8, 4); bk.translate(0.038, -0.012, P.z - 0.0215); add(bk, CS.darkPlastic, cl(PART.none, MC.plastic)); }
   }
   // ---- moulded back frame + padded mesh cushion (front face sits just behind the compressed tee)
   {
@@ -1385,11 +1383,30 @@ function addTank(B, lv) {
     const frame = K.superEllipsoid(0.074, 0.101, 0.0078, 0.32, 0.42, lv >= 3 ? 18 : 10, lv >= 3 ? 16 : 8, (q) => { q.z += 0.0145 * (q.x / 0.074) ** 2; });
     frame.translate(0, 0, zF - 0.0118 - 0.0078); add(frame, CS.strap, cl(PART.none, MC.plastic, 1), { color: new THREE.Color(0.62, 0.62, 0.64) });
     const pad = K.superEllipsoid(0.066, 0.092, 0.0068, 0.5, 0.6, lv >= 3 ? 18 : 10, lv >= 3 ? 16 : 8, (q) => { q.z += 0.0135 * (q.x / 0.066) ** 2; });
-    const P = pad.attributes.position; const uv = new Float32Array(P.count * 2);
-    for (let i = 0; i < P.count; i++) { uv[i * 2] = P.getX(i); uv[i * 2 + 1] = P.getY(i); }
+    const Pp = pad.attributes.position; const uv = new Float32Array(Pp.count * 2);
+    for (let i = 0; i < Pp.count; i++) { uv[i * 2] = Pp.getX(i); uv[i * 2 + 1] = Pp.getY(i); }
     pad.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     pad.translate(0, 0, zF - 0.0068);
     add(pad, CS.strap, cl(PART.plate, MC.padding));
+  }
+}
+
+/** Waist belt of the pod harness: webbing round the jersey just above the hem, front side-release buckle. */
+function addBelt(B, lv) {
+  const R = RES[lv];
+  const y = 0.735, pts = [];
+  for (let k = 0; k <= 48; k++) pts.push(teeBase(-Math.PI + (k / 48) * TAU, y, new V3()));
+  const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+  const { geo } = webbing(curve, 0.0125, 0.0026, Math.max(24, R.web[0] * 2), R.web[1], R.fold, R.micro, { lift: () => 0.0012 });
+  B.add(geo, { ex: CS.strap, uv: true, v3: cl(PART.strap, MC.webbing), weights: (p) => onTeeWeights(p) });
+  if (lv >= 1) {
+    const c = teeBase(0, y, new V3()); const fr = teeFrameAt(c, R.fold, R.micro);
+    const n = fr.n.clone(); const X = new V3(1, 0, 0).addScaledVector(n, -n.x).normalize(); const Y = new V3().crossVectors(n, X).normalize();
+    const at = c.clone().addScaledVector(n, fr.D + 0.0072);
+    for (const [g2, x, ex] of [[K.superEllipsoid(0.016, 0.0145, 0.0048, 0.3, 0.34, 12, 6), 0.009, CS.darkPlastic], [K.superEllipsoid(0.011, 0.012, 0.0042, 0.35, 0.4, 10, 6), -0.014, CS.darkPlastic], [K.superEllipsoid(0.0065, 0.0065, 0.0012, 1, 1, 10, 3), 0.009, CS.team]]) {
+      g2.translate(x, 0, ex === CS.team ? 0.0052 : 0); K.placeBasis(g2, X, Y, at);
+      B.add(g2, { ex, v3: cl(PART.none, MC.plastic), weights: () => onTeeWeights(c) });
+    }
   }
 }
 
@@ -1402,6 +1419,7 @@ export function addOutfit(B, level = 3) {
   addSocks(B, lv);
   addShoes(B, lv);
   addTank(B, lv);
+  addBelt(B, lv);
 }
 
 // ------------------------------------------------------------------------------------------------

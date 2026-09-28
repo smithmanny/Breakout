@@ -56,6 +56,7 @@ export class Level {
       rail: !!d.rail,
       hidden: !!d.hidden || !!d.rail, // collision-only (prop colliders, rails)
       bevel: d.bevel,
+      round: !!d.round,           // soft body (inflatable bunkers): its bevel may reach 88 % of the half size, not 45 %
       faces: [-1, -1, -1, -1, -1, -1],
       aligned: true,
     };
@@ -282,7 +283,7 @@ export class Level {
       const ax = b.axes, h = [b.half.x, b.half.y, b.half.z];
       const minH = Math.min(h[0], h[1], h[2]);
       // bevel scales with the block: chunky rounded edges on big structures, finer on crates/ramps/rails
-      const bev = Math.min(b.bevel ?? Math.max(0.04, Math.min(0.13, minH * 0.14)), minH * 0.45);
+      const bev = Math.min(b.bevel ?? Math.max(0.04, Math.min(0.13, minH * 0.14)), minH * (b.round ? 0.88 : 0.45));
       // exposed-edge test (both faces rendered and nothing solid hugging the edge)
       const edgeCache = new Map();
       const bevelled = (k1, s1, k2, s2) => {

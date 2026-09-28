@@ -1,4 +1,4 @@
-// INKWAVE — procedural weapon models held by squidkids.
+// BREAKOUT — procedural paintball markers held by the players (kinds keep their INKWAVE ids).
 // Weapon space: grip centre at the origin, +Z = barrel forward, +Y = up, character's right = -X.
 // Each weapon: body (vertex-coloured physical plastic with per-vertex surface class aMat — satin, gloss, rubber,
 // metal, lens, LED, print), ink (team gloss), optional glow (charger coil) and drum (roller).
@@ -169,79 +169,6 @@ const GRIP_PISTOL = { pos: new V3(0, 0, 0), handZ: GRIP_AXIS.clone(), handY: new
 /** Trigger blade hinge (top of the blade, inside the frame): the trigger part squeezes back about +X here. */
 const TRIGGER_PIVOT = new V3(0, 0.0315, 0.0282);
 
-// ---------------------------------------------------------------------------------------------- shooter
-function buildShooter() {
-  const P = new Parts(), I = new Parts(), T = new Parts(), BOLT = new Parts(), CAN = new Parts(), LED = new Parts();
-  pistolGrip(P, { T });
-  // receiver: cream shell, dark lower frame, team-ink spine
-  const recv = superEllipsoid(0.0265, 0.034, 0.1, 0.42, 0.56, 14, 10, (q) => {
-    if (q.z > 0.045) q.y *= 1 - 0.3 * (q.z - 0.045) / 0.055;          // taper to the nose
-    if (q.y > 0) q.x *= 1 - 0.12 * (q.y / 0.034);                       // tumblehome
-  });
-  P.add(at(recv, 0, 0.068, 0.028), C.cream, M.satin);
-  const frame = superEllipsoid(0.0232, 0.012, 0.094, 0.4, 0.5, 12, 6);
-  P.add(at(frame, 0, 0.041, 0.03), C.dark, M.satin);
-  const spine = superEllipsoid(0.0165, 0.0065, 0.086, 0.5, 0.6, 12, 5);
-  I.add(at(spine, 0, 0.1005, 0.02));
-  // panel seams + screws on both flanks, squid decal + chevrons on the left flank
-  for (const sx of [1, -1]) {
-    const seam = superEllipsoid(0.0006, 0.0205, 0.0006, 1, 1, 4, 6); P.add(at(seam, sx * 0.0262, 0.069, 0.052), C.darker, M.print);
-    const seam2 = superEllipsoid(0.0006, 0.0006, 0.054, 1, 1, 4, 6); P.add(at(seam2, sx * 0.0258, 0.056, 0.016), C.darker, M.print);
-    for (const [y, z] of [[0.078, -0.052], [0.078, 0.036], [0.05, 0.094]]) screw(P, new V3(sx * 0.026, y, z), new V3(sx, 0, 0), 0.0028);
-  }
-  const sq = decal(squidShape(0.028)); placeXY(sq, new V3(0, 0, -1), new V3(0, 1, 0), new V3(0.0272, 0.074, -0.012)); P.add(sq, C.decal, M.print);
-  for (const s of chevronShape(0.03, 0.009, 3, 0.45)) { const g = decal(s); placeXY(g, new V3(0, 0, 1), new V3(0, 1, 0), new V3(0.0268, 0.052, 0.036)); I.add(g); }
-  // nozzle assembly: turned barrel, vented shroud, team ring, flared tip
-  const barrel = latheZ(smoothProfile([[0.0, 0.1], [0.0138, 0.1], [0.0138, 0.118], [0.0156, 0.121], [0.0156, 0.162], [0.0138, 0.166], [0.0125, 0.17], [0.0125, 0.184]], 10).concat([[0.0152, 0.187], [0.019, 0.199], [0.0198, 0.207], [0.0186, 0.2118], [0.0128, 0.2122], [0.0098, 0.207], [0.0082, 0.196], [0.0, 0.194]]), 12);
-  P.add(at(barrel, 0, 0.066, 0), C.gunmetal, M.metal);
-  for (let k = 0; k < 3; k++) { const v = torus(0.0158, 0.0013, 3, 12); P.add(at(v, 0, 0.066, 0.127 + k * 0.012), C.darker, M.satin); }
-  const nr = torus(0.0145, 0.0034, 4, 14); I.add(at(nr, 0, 0.066, 0.176));
-  // ink canister on top: team ink visible between cage bars, caps + valve
-  const can = latheZ(smoothProfile([[0.0, -0.052], [0.0178, -0.05], [0.0184, -0.04], [0.0184, 0.04], [0.0178, 0.05], [0.0, 0.052]], 7), 12);
-  CAN.add(at(can, 0, 0.123, 0.018));
-  for (let k = 0; k < 4; k++) {
-    const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
-    const bar = superEllipsoid(0.0026, 0.0026, 0.044, 0.6, 0.6, 4, 4);
-    P.add(at(bar, Math.cos(a) * 0.0196, 0.123 + Math.sin(a) * 0.0196, 0.018), C.dark, M.satin);
-  }
-  for (const [z, s] of [[-0.036, -1], [0.072, 1]]) {
-    const cap = latheZ([[0, -0.009 * s], [0.0206, -0.009 * s], [0.0218, -0.004 * s], [0.0218, 0.006 * s], [0.018, 0.0095 * s], [0, 0.01 * s]], 12);
-    P.add(at(cap, 0, 0.123, z), C.dark, M.gloss);
-  }
-  const valve = lathe([[0, 0], [0.0052, 0], [0.0052, 0.006], [0.0078, 0.0075], [0.0078, 0.011], [0, 0.0115]], 8);
-  P.add(at(valve, 0, 0.143, -0.028), C.metal, M.metal);
-  const mount = superEllipsoid(0.0118, 0.012, 0.05, 0.5, 0.6, 8, 5); P.add(at(mount, 0, 0.105, 0.018), C.dark, M.satin);
-  // sights + status LED
-  const rear = superEllipsoid(0.0105, 0.0065, 0.0052, 0.4, 0.4, 6, 4, (q) => { if (q.y > 0.002 && Math.abs(q.x) < 0.003) q.y = 0.002; });
-  P.add(at(rear, 0, 0.148, -0.03), C.darker, M.satin);
-  const front = superEllipsoid(0.0022, 0.0078, 0.004, 0.6, 0.6, 5, 4); P.add(at(front, 0, 0.1485, 0.068), C.darker, M.satin);
-  const led = superEllipsoid(0.0032, 0.0032, 0.0016, 1, 1, 8, 4); LED.add(orient(led, new V3(-1, 0, 0), new V3(-0.0268, 0.084, -0.046)), C.green, M.led);
-  const ledBezel = torus(0.0036, 0.0009, 3, 10); P.add(orient(ledBezel.rotateX(Math.PI / 2), new V3(-1, 0, 0), new V3(-0.0266, 0.084, -0.046)), C.darker, M.satin);
-  // rear cap + cocking knob
-  const back = superEllipsoid(0.0232, 0.028, 0.0095, 0.45, 0.55, 10, 6); P.add(at(back, 0, 0.068, -0.075), C.dark, M.gloss);
-  const knob = latheZ([[0, -0.0145], [0.0068, -0.0145], [0.0074, -0.01], [0.0074, 0.0], [0, 0.0]], 10); BOLT.add(at(knob, 0, 0.068, -0.078), C.metal, M.metal);
-  for (let k = 0; k < 3; k++) BOLT.add(at(torus(0.0075, 0.0007, 3, 10), 0, 0.068, -0.0905 + k * 0.0035), C.gunmetal, M.metal);   // knurl rings
-  const guide = latheZ([[0.0, -0.0835], [0.0086, -0.0835], [0.0092, -0.081], [0.0, -0.0805]], 12); P.add(at(guide, 0, 0.068, 0), C.darker, M.gloss);   // bolt guide collar
-  // support foregrip for the left hand (vertical, under the nose)
-  const fg = superEllipsoid(0.0118, 0.028, 0.0132, 0.55, 0.65, 10, 8, (q) => { if (q.z > 0) { const f = 0.5 + 0.5 * Math.cos((q.y / 0.0125) * Math.PI * 2); q.z -= 0.0012 * f; } });
-  fg.rotateX(-0.12); P.add(at(fg, 0, 0.016, 0.07), C.darker, M.satin);
-  const fgr = superEllipsoid(0.0124, 0.0175, 0.0095, 0.5, 0.55, 8, 6); fgr.rotateX(-0.12); P.add(at(fgr, 0, 0.012, 0.069), C.rubber, M.rubber);
-  const fgCap = superEllipsoid(0.0134, 0.0042, 0.0152, 0.5, 0.5, 10, 4); P.add(at(fgCap, 0, -0.0125, 0.074), C.dark, M.gloss);
-  return {
-    kind: 'shooter', body: P.build(), ink: I.build(),
-    parts: {
-      trigger: part(T, TRIGGER_PIVOT),
-      bolt: part(BOLT, new V3(0, 0.068, -0.078)),
-      can: part(CAN, new V3(0, 0.123, 0.018), 'ink'),
-      led: part(LED, new V3(-0.0268, 0.084, -0.046), 'lamp', { color: '#0f2a18', emissive: '#3dff7a', intensity: 1.3 }),
-    },
-    muzzle: new V3(0, 0.066, 0.212),
-    gripR: GRIP_PISTOL,
-    gripL: { pos: new V3(0, 0.02, 0.0705), handZ: new V3(0, 1, -0.12), handY: new V3(0.45, -0.05, -1) },
-    twirl: new V3(0, 0.03, 0.03),
-  };
-}
-
 // ---------------------------------------------------------------------------------------------- roller
 function buildRoller() {
   const P = new Parts(), I = new Parts(), LED = new Parts();
@@ -304,204 +231,6 @@ function buildRoller() {
   };
 }
 
-// ---------------------------------------------------------------------------------------------- charger
-function buildCharger() {
-  const P = new Parts(), I = new Parts(), G = new Parts(), T = new Parts(), BOLT = new Parts(), LENS = new Parts(), EYE = new Parts(), PORTS = new Parts();
-  pistolGrip(P, { T });
-  // receiver: long white body with a team-ink spine and dark rails
-  const rec = superEllipsoid(0.0255, 0.038, 0.13, 0.4, 0.56, 14, 10, (q) => { if (q.z > 0.07) q.y *= 1 - 0.3 * (q.z - 0.07) / 0.06; if (q.y > 0) q.x *= 1 - 0.1 * q.y / 0.038; });
-  P.add(at(rec, 0, 0.062, 0.035), C.white, M.satin);
-  const recLow = superEllipsoid(0.0225, 0.011, 0.12, 0.4, 0.5, 12, 5); P.add(at(recLow, 0, 0.034, 0.04), C.dark, M.satin);
-  const spine = superEllipsoid(0.0155, 0.0058, 0.11, 0.5, 0.6, 12, 5); I.add(at(spine, 0, 0.0975, 0.03));
-  for (const sx of [1, -1]) {
-    for (const [y, z] of [[0.07, -0.065], [0.07, 0.03], [0.07, 0.125]]) screw(P, new V3(sx * 0.0252, y, z), new V3(sx, 0, 0), 0.0026);
-    const seam = superEllipsoid(0.0006, 0.0006, 0.095, 1, 1, 4, 6); P.add(at(seam, sx * 0.0248, 0.05, 0.035), C.darker, M.print);
-  }
-  const sq = decal(squidShape(0.026)); placeXY(sq, new V3(0, 0, -1), new V3(0, 1, 0), new V3(0.026, 0.066, -0.02)); P.add(sq, C.decal, M.print);
-  // charging handle on the outer (right) flank: a machined slot with a T-knob that draws back as the charge builds
-  const slot = superEllipsoid(0.0014, 0.0034, 0.0215, 0.5, 0.5, 6, 6); P.add(at(slot, -0.0252, 0.079, -0.0255), C.darker, M.satin);
-  const slotRim = superEllipsoid(0.0009, 0.0048, 0.0235, 0.4, 0.5, 6, 6); P.add(at(slotRim, -0.0247, 0.079, -0.0255), C.gunmetal, M.metal);
-  const stem = latheZ([[0, 0], [0.0024, 0], [0.0024, 0.011], [0, 0.011]], 8); stem.rotateY(-Math.PI / 2); BOLT.add(at(stem, -0.0245, 0.079, -0.008), C.metal, M.metal);
-  const cap = superEllipsoid(0.0034, 0.0052, 0.0052, 0.6, 0.7, 8, 6); BOLT.add(at(cap, -0.0372, 0.079, -0.008), C.dark, M.gloss);
-  const capRing = torus(0.0046, 0.0008, 3, 12); capRing.rotateY(Math.PI / 2); BOLT.add(at(capRing, -0.0358, 0.079, -0.008), C.metal, M.metal);
-  // skeletal stock + rubber butt pad + cheek rest
-  const stockTop = superEllipsoid(0.0115, 0.009, 0.088, 0.5, 0.6, 8, 5); stockTop.rotateX(0.04); P.add(at(stockTop, 0, 0.066, -0.17), C.dark, M.satin);
-  const stockLow = sweep([new V3(0, 0.03, -0.09), new V3(0, 0.012, -0.16), new V3(0, 0.004, -0.228), new V3(0, 0.012, -0.252)], { seg: 8, radial: 6, capSteps: 2, radius: () => 0.0072, flat: 1.6, outward: (Pp, o) => o.set(1, 0, 0) });
-  P.add(stockLow.geo, C.dark, M.satin);
-  const cheek = superEllipsoid(0.0128, 0.006, 0.04, 0.5, 0.6, 8, 4); P.add(at(cheek, 0, 0.078, -0.16), C.rubber, M.rubber);
-  const pad = superEllipsoid(0.0138, 0.042, 0.0078, 0.45, 0.55, 8, 8); pad.rotateX(0.08); P.add(at(pad, 0, 0.038, -0.262), C.rubber, M.rubber);
-  // long barrel: fluted sleeve, charge coil (glow), muzzle brake with ports
-  const barrel = latheZ(smoothProfile([[0, 0.14], [0.0122, 0.14], [0.0122, 0.61], [0.0128, 0.622]], 6).concat([[0.0178, 0.626], [0.0182, 0.672], [0.0165, 0.684], [0.0096, 0.684], [0.0, 0.68]]), 10);
-  P.add(at(barrel, 0, 0.058, 0), C.gunmetal, M.metal);
-  for (let k = 0; k < 2; k++) { const port = superEllipsoid(0.0186, 0.0026, 0.004, 0.6, 0.6, 8, 4); PORTS.add(at(port, 0, 0.058, 0.642 + k * 0.016), C.darker, M.satin); }
-  const guard = superEllipsoid(0.0232, 0.026, 0.1, 0.42, 0.56, 12, 8, (q) => { if (q.y < 0) q.x *= 0.92; });
-  P.add(at(guard, 0, 0.046, 0.23), C.white, M.satin);
-  for (let k = 0; k < 3; k++) { const vent = superEllipsoid(0.0236, 0.0028, 0.012, 0.6, 0.6, 8, 4); P.add(at(vent, 0, 0.056, 0.196 + k * 0.026), C.darker, M.satin); }
-  for (let i = 0; i < 4; i++) { const c = torus(0.0232, 0.0056, 5, 14); G.add(at(c, 0, 0.058, 0.365 + i * 0.047), '#ffffff'); }
-  const coilCore = latheZ([[0.0168, 0.343], [0.0178, 0.35], [0.0178, 0.522], [0.0168, 0.53]], 12); P.add(at(coilCore, 0, 0.058, 0), C.darker, M.metal);
-  for (const z of [0.34, 0.534]) { const r = latheZ([[0.0122, z - 0.006], [0.028, z - 0.005], [0.029, z], [0.028, z + 0.005], [0.0122, z + 0.006]], 12); P.add(at(r, 0, 0.058, 0), C.dark, M.gloss); }
-  // underslung handguard for the left hand (horizontal grip)
-  const hg = latheZ(smoothProfile([[0.0, 0.176], [0.0112, 0.178], [0.0132, 0.186], [0.0134, 0.236], [0.0128, 0.252], [0.0, 0.256]], 8), 12);
-  P.add(at(hg, 0, 0.004, 0), C.rubber, M.rubber);
-  const hgMount = superEllipsoid(0.008, 0.012, 0.03, 0.5, 0.6, 6, 5); P.add(at(hgMount, 0, 0.018, 0.216), C.dark, M.satin);
-  // scope: tube, turrets, lens + sunshade, mounts
-  const scope = latheZ(smoothProfile([[0, -0.052], [0.0182, -0.051], [0.0196, -0.038], [0.0162, -0.022], [0.0162, 0.104], [0.021, 0.124], [0.0225, 0.158], [0.0205, 0.162], [0.0, 0.16]], 9), 14);
-  P.add(at(scope, 0, 0.122, 0), C.dark, M.satin);
-  const lens = superEllipsoid(0.0192, 0.0192, 0.003, 1, 1, 12, 4); LENS.add(at(lens, 0, 0.122, 0.1605), C.lens, M.lens);
-  const lensB = superEllipsoid(0.0158, 0.0158, 0.0024, 1, 1, 10, 4); EYE.add(at(lensB, 0, 0.122, -0.0525), C.lens, M.lens);
-  const reticle = superEllipsoid(0.0142, 0.0004, 0.0003, 1, 1, 6, 4); P.add(at(reticle.clone(), 0, 0.122, 0.1638), C.darker, M.print);
-  P.add(at(reticle.rotateZ(Math.PI / 2), 0, 0.122, 0.1638), C.darker, M.print);   // crosshair etched on the objective
-  I.add(at(torus(0.0212, 0.0022, 3, 14), 0, 0.122, 0.157));
-  for (const [dir, p] of [[new V3(0, 1, 0), new V3(0, 0.1375, 0.04)], [new V3(1, 0, 0), new V3(0.0155, 0.122, 0.04)]]) {
-    const t = lathe([[0, 0], [0.0074, 0], [0.0076, 0.006], [0.0066, 0.0085], [0, 0.009]], 10); P.add(orient(t, dir, p), C.metal, M.metal);
-  }
-  for (const z of [-0.005, 0.085]) { const m = superEllipsoid(0.0092, 0.0162, 0.0105, 0.5, 0.6, 6, 5); P.add(at(m, 0, 0.102, z), C.dark, M.satin); }
-  // visible ink cartridge under the receiver (windowed)
-  const can = superEllipsoid(0.0158, 0.0158, 0.036, 1, 1, 10, 7); I.add(at(can, 0, 0.012, 0.118));
-  for (let k = 0; k < 3; k++) { const a = (k / 3) * Math.PI * 2 + 0.5; const bar = superEllipsoid(0.0024, 0.0024, 0.032, 0.6, 0.6, 4, 4); P.add(at(bar, Math.cos(a) * 0.0172, 0.012 + Math.sin(a) * 0.0172, 0.118), C.dark, M.satin); }
-  for (const z of [0.082, 0.154]) { const c = latheZ([[0, z - 0.004], [0.0182, z - 0.004], [0.0186, z + 0.004], [0, z + 0.004]], 12); P.add(at(c, 0, 0.012, 0), C.dark, M.gloss); }
-  // coil rings light in order (rear → muzzle): per-vertex aSeg threshold for makeCoilMaterial
-  const glow = G.build();
-  {
-    const pz = glow.attributes.position, seg = new Float32Array(pz.count), TH = [0.22, 0.47, 0.72, 0.96];
-    for (let i = 0; i < pz.count; i++) seg[i] = TH[Math.max(0, Math.min(3, Math.round((pz.getZ(i) - 0.365) / 0.047)))];
-    glow.setAttribute('aSeg', new THREE.Float32BufferAttribute(seg, 1));
-  }
-  return {
-    kind: 'charger', body: P.build(), ink: I.build(), glow,
-    parts: {
-      trigger: part(T, TRIGGER_PIVOT),
-      bolt: part(BOLT, new V3(-0.0245, 0.079, -0.008)),
-      lens: part(LENS, new V3(0, 0.122, 0.1605), 'lamp', { color: '#0b0f16', emissive: '#ffffff', intensity: 0.2, roughness: 0.06 }),
-      eyepiece: part(EYE, new V3(0, 0.122, -0.0525), 'lamp', { color: '#0b0f16', emissive: '#ffffff', intensity: 0.05, roughness: 0.06 }),
-      ports: part(PORTS, new V3(0, 0.058, 0.65), 'lamp', { color: '#1b1e25', emissive: '#ffffff', intensity: 0, roughness: 0.5 }),
-    },
-    muzzle: new V3(0, 0.058, 0.686),
-    gripR: GRIP_PISTOL,
-    gripL: { pos: new V3(0, 0.004, 0.214), handZ: new V3(0, 0, 1), handY: new V3(0.75, -0.62, -0.1) },
-    twirl: new V3(0, 0.03, 0.03),
-  };
-}
-
-// ---------------------------------------------------------------------------------------------- blaster
-function buildBlaster() {
-  const P = new Parts(), I = new Parts(), T = new Parts(), PUMP = new Parts(), NEEDLE = new Parts(), BULB = new Parts();
-  pistolGrip(P, { baseCol: C.dark, T });
-  // pressurised ink bulb in a cream cage
-  const bulb = superEllipsoid(0.066, 0.063, 0.084, 0.85, 0.9, 18, 12); BULB.add(at(bulb, 0, 0.092, 0.072));
-  for (const z of [0.022, 0.072, 0.122]) { const r = torus(z === 0.072 ? 0.0655 : 0.058, 0.0068, 5, 20); P.add(at(r, 0, 0.092, z), C.cream, M.gloss); }
-  for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * Math.PI * 2;
-    const rib = sweep([new V3(Math.cos(a) * 0.05, 0.092 + Math.sin(a) * 0.05, -0.006), new V3(Math.cos(a) * 0.069, 0.092 + Math.sin(a) * 0.069, 0.072), new V3(Math.cos(a) * 0.052, 0.092 + Math.sin(a) * 0.052, 0.148)], {
-      seg: 8, radial: 4, capSteps: 2, radius: () => 0.0042, flat: 0.7, outward: (Pp, o) => o.set(Pp.x, Pp.y - 0.092, 0).normalize(),
-    });
-    P.add(rib.geo, C.cream, M.gloss);
-  }
-  const back = superEllipsoid(0.056, 0.056, 0.024, 0.6, 0.9, 14, 7); P.add(at(back, 0, 0.092, -0.016), C.cream, M.satin);
-  const gauge = latheZ([[0, -0.006], [0.0128, -0.006], [0.0132, 0.0], [0.011, 0.002], [0, 0.002]], 14); P.add(at(gauge, 0, 0.092, -0.042), C.metal, M.metal);
-  const face = superEllipsoid(0.0105, 0.0105, 0.001, 1, 1, 12, 4); P.add(at(face, 0, 0.092, -0.0445), C.white, M.gloss);
-  // dial: 9 ticks over a 250° sweep (major every other), a red over-pressure arc, the needle on its own pivot
-  for (let k = 0; k < 9; k++) {
-    const a = -2.18 + (k / 8) * 4.36, major = k % 2 === 0, len = major ? 0.0028 : 0.0017;
-    const tk = superEllipsoid(major ? 0.00055 : 0.0004, len / 2, 0.0003, 1, 1, 4, 4);
-    tk.translate(0, 0.0083 - len / 2, 0); tk.rotateZ(a); P.add(at(tk, 0, 0.092, -0.0457), C.darker, M.print);
-  }
-  const red = torus(0.0079, 0.0007, 3, 10, 0.7); red.rotateZ(Math.PI / 2 + 1.5); P.add(at(red, 0, 0.092, -0.0457), C.red, M.print);
-  const needle = superEllipsoid(0.00085, 0.0046, 0.00045, 0.7, 0.8, 5, 5, (q) => { q.x *= 1 - 0.75 * Math.max(0, q.y / 0.0046); });
-  needle.translate(0, 0.0036, 0); NEEDLE.add(at(needle, 0, 0.092, -0.0461), C.red, M.gloss);
-  const hub = lathe([[0, 0], [0.0014, 0], [0.0013, 0.0007], [0, 0.0011]], 8); hub.rotateX(-Math.PI / 2); NEEDLE.add(at(hub, 0, 0.092, -0.0459), C.dark, M.gloss);
-  // bell muzzle: flared cream horn, dark throat, team lip
-  const bell = latheZ(smoothProfile([[0.035, 0.13], [0.041, 0.16], [0.043, 0.2], [0.05, 0.24], [0.064, 0.29], [0.078, 0.325]], 9).concat([[0.082, 0.335], [0.078, 0.345], [0.066, 0.34], [0.05, 0.31], [0.034, 0.28], [0.0, 0.27]]), 18);
-  P.add(at(bell, 0, 0.092, 0), C.cream, M.gloss);
-  I.add(at(torus(0.078, 0.0068, 5, 18), 0, 0.092, 0.337));
-  const inner = latheZ([[0.0, 0.275], [0.03, 0.28], [0.05, 0.305], [0.068, 0.335], [0.0, 0.335]], 16); P.add(at(inner, 0, 0.092, 0.001), C.darker, M.satin);
-  for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2; const fin = superEllipsoid(0.0024, 0.0125, 0.034, 0.6, 0.6, 4, 5, (q) => { q.y += 0.25 * q.z; }); fin.rotateZ(a); P.add(at(fin, Math.cos(a + Math.PI / 2) * -0.05, 0.092 + Math.sin(a + Math.PI / 2) * -0.05, 0.215), C.bone, M.satin); }
-  // top carry rail + sight, side vents, decals
-  const rail = superEllipsoid(0.0078, 0.0085, 0.06, 0.5, 0.6, 8, 5); P.add(at(rail, 0, 0.165, 0.05), C.dark, M.satin);
-  const sight = superEllipsoid(0.0045, 0.0085, 0.006, 0.5, 0.5, 6, 4); P.add(at(sight, 0, 0.177, 0.088), C.darker, M.satin);
-  for (const sx of [1, -1]) {
-    for (let k = 0; k < 3; k++) { const v = superEllipsoid(0.002, 0.0026, 0.012, 0.6, 0.6, 4, 4); P.add(at(v, sx * 0.0548, 0.107 - k * 0.012, -0.012), C.darker, M.satin); }
-    screw(P, new V3(sx * 0.0562, 0.075, -0.01), new V3(sx, 0, 0), 0.003);
-  }
-  const sq = decal(squidShape(0.03)); placeXY(sq, new V3(0, 0, -1), new V3(0, 1, 0), new V3(0.0485, 0.098, -0.02)); P.add(sq, C.decal, M.print);
-  // pump foregrip for the left hand + slide tube
-  const tube = latheZ([[0, 0.04], [0.0092, 0.04], [0.0092, 0.19], [0, 0.19]], 10); P.add(at(tube, 0, 0.012, 0), C.metal, M.metal);
-  const stop = latheZ([[0.0092, 0.188], [0.0118, 0.19], [0.0118, 0.196], [0.0092, 0.198]], 12); P.add(at(stop, 0, 0.012, 0), C.dark, M.gloss);   // tube end stop
-  const pump = latheZ(smoothProfile([[0.0, 0.118], [0.0118, 0.12], [0.0138, 0.128], [0.0138, 0.176], [0.0126, 0.186], [0.0, 0.188]], 8), 12);
-  PUMP.add(at(pump, 0, 0.012, 0), C.rubber, M.rubber);
-  for (let k = 0; k < 4; k++) PUMP.add(at(torus(0.0139, 0.0012, 3, 12), 0, 0.012, 0.134 + k * 0.012), C.darker, M.satin);
-  const link = superEllipsoid(0.007, 0.022, 0.012, 0.5, 0.6, 6, 6); PUMP.add(at(link, 0, 0.034, 0.152), C.dark, M.satin);
-  return {
-    kind: 'blaster', body: P.build(), ink: I.build(),
-    parts: {
-      trigger: part(T, TRIGGER_PIVOT),
-      pump: part(PUMP, new V3(0, 0.012, 0.152)),
-      needle: part(NEEDLE, new V3(0, 0.092, -0.046)),
-      bulb: part(BULB, new V3(0, 0.092, 0.072), 'ink'),
-    },
-    muzzle: new V3(0, 0.092, 0.345),
-    gripR: GRIP_PISTOL,
-    gripL: { pos: new V3(0, 0.012, 0.152), handZ: new V3(0, 0, 1), handY: new V3(0.8, -0.55, -0.1) },
-    twirl: new V3(0, 0.03, 0.03),
-  };
-}
-
-// ---------------------------------------------------------------------------------------------- dualies (one pistol)
-// "Twinfin Dualies": a compact pistol per hand. Polymer frame + accessory rail, a cream slide that snaps back on every
-// shot of its own hand (team-ink dorsal fin + ink window ride on it), turned nozzle, an ink capsule slung under the
-// muzzle, rear status LED facing the player. The LEFT hand holds a second instance (def.dual: handL / inHandL below).
-function buildDualies() {
-  const P = new Parts(), I = new Parts(), T = new Parts(), SL = new Parts(), SLI = new Parts(), LED = new Parts();
-  pistolGrip(P, { T, baseCol: C.dark });
-  const frame = superEllipsoid(0.0185, 0.0105, 0.072, 0.4, 0.5, 12, 6, (q) => { if (q.z > 0.05) q.y *= 1 - 0.25 * (q.z - 0.05) / 0.022; });
-  P.add(at(frame, 0, 0.041, 0.034), C.dark, M.satin);
-  const rail = superEllipsoid(0.0105, 0.0035, 0.034, 0.4, 0.4, 8, 4); P.add(at(rail, 0, 0.0282, 0.086), C.darker, M.satin);
-  for (let k = 0; k < 4; k++) P.add(at(superEllipsoid(0.0112, 0.0012, 0.0022, 0.6, 0.6, 6, 4), 0, 0.0252, 0.072 + k * 0.009), C.gunmetal, M.metal);
-  // ink capsule under the muzzle
-  const cap = latheZ(smoothProfile([[0, -0.027], [0.0092, -0.025], [0.0098, -0.017], [0.0098, 0.017], [0.0092, 0.025], [0, 0.027]], 6), 12);
-  const CY = 0.0152;
-  I.add(at(cap, 0, CY, 0.1));
-  for (const z of [0.074, 0.126]) P.add(at(latheZ([[0, z - 0.0035], [0.011, z - 0.0035], [0.0114, z + 0.0035], [0, z + 0.0035]], 12), 0, CY, 0), C.dark, M.gloss);
-  for (let k = 0; k < 3; k++) { const a = (k / 3) * Math.PI * 2 + 0.6; P.add(at(superEllipsoid(0.0018, 0.0018, 0.024, 0.6, 0.6, 4, 4), Math.cos(a) * 0.0104, CY + Math.sin(a) * 0.0104, 0.1), C.dark, M.satin); }
-  for (const z of [0.08, 0.12]) P.add(at(superEllipsoid(0.0062, 0.0062, 0.0042, 0.6, 0.6, 6, 4), 0, 0.0245, z), C.dark, M.satin);   // clamp lugs to the rail
-  // turned nozzle (static; the slide rides over its root)
-  const noz = latheZ([[0.0, 0.098], [0.0102, 0.098], [0.0102, 0.126], [0.0118, 0.129], [0.0121, 0.14], [0.0109, 0.144], [0.0076, 0.1465], [0.0064, 0.141], [0.0, 0.14]], 12);
-  P.add(at(noz, 0, 0.0645, 0), C.gunmetal, M.metal);
-  I.add(at(torus(0.0112, 0.0026, 4, 14), 0, 0.0645, 0.1345));
-  // slide (moving): cream shell, serrations, sights, ink window + dorsal fin (ink, rides along)
-  const slide = superEllipsoid(0.0198, 0.0165, 0.078, 0.38, 0.55, 14, 8, (q) => { if (q.z > 0.05) q.y *= 1 - 0.22 * (q.z - 0.05) / 0.028; if (q.y > 0) q.x *= 1 - 0.1 * q.y / 0.0165; });
-  SL.add(at(slide, 0, 0.0645, 0.03), C.cream, M.satin);
-  for (const sx of [1, -1]) for (let k = 0; k < 5; k++) SL.add(at(superEllipsoid(0.0007, 0.0105, 0.0011, 0.8, 0.8, 4, 4), sx * 0.0194, 0.066, -0.043 + k * 0.0048), C.darker, M.satin);
-  const rear = superEllipsoid(0.0085, 0.0048, 0.0042, 0.4, 0.4, 6, 4, (q) => { if (q.y > 0.0015 && Math.abs(q.x) < 0.0024) q.y = 0.0015; });
-  SL.add(at(rear, 0, 0.0838, -0.036), C.darker, M.satin);
-  SL.add(at(superEllipsoid(0.0018, 0.0048, 0.003, 0.6, 0.6, 5, 4), 0, 0.0826, 0.097), C.darker, M.satin);
-  SLI.add(at(superEllipsoid(0.0007, 0.0052, 0.0145, 0.7, 0.7, 5, 6), -0.0196, 0.0685, 0.042));
-  SLI.add(at(superEllipsoid(0.0007, 0.0052, 0.0145, 0.7, 0.7, 5, 6), 0.0196, 0.0685, 0.042));
-  const fin = superEllipsoid(0.0031, 0.0105, 0.026, 0.6, 0.7, 6, 7, (q) => { const h = (q.y + 0.0105) / 0.021; q.z -= 0.024 * h; q.z *= 1 - 0.45 * h; q.x *= 1 - 0.4 * h; });
-  SLI.add(at(fin, 0, 0.0865, 0.012));
-  // decals + screws on the frame
-  const sq = decal(squidShape(0.02)); placeXY(sq, new V3(0, 0, -1), new V3(0, 1, 0), new V3(0.0188, 0.041, 0.02)); P.add(sq, C.decal, M.print);
-  for (const s of chevronShape(0.022, 0.0065, 3, 0.45)) { const g = decal(s); placeXY(g, new V3(0, 0, 1), new V3(0, 1, 0), new V3(-0.0188, 0.038, 0.012)); P.add(g, C.hazard, M.print); }
-  for (const sx of [1, -1]) screw(P, new V3(sx * 0.0186, 0.043, 0.07), new V3(sx, 0, 0), 0.0024);
-  // status LED on the back of the slide (faces the player)
-  const led = superEllipsoid(0.0028, 0.0028, 0.0014, 1, 1, 8, 4); LED.add(at(led, 0.009, 0.074, -0.049), C.green, M.led);
-  P.add(at(torus(0.0032, 0.0008, 3, 10), 0.009, 0.074, -0.0484), C.darker, M.satin);
-  return {
-    kind: 'dualies', body: P.build(), ink: I.build(),
-    parts: {
-      trigger: part(T, TRIGGER_PIVOT),
-      slide: part(SL, new V3(0, 0.0645, 0.03)),
-      slideInk: part(SLI, new V3(0, 0.0645, 0.03), 'ink'),
-      led: part(LED, new V3(0.009, 0.074, -0.049), 'lamp', { color: '#0f2a18', emissive: '#3dff7a', intensity: 1.3 }),
-    },
-    muzzle: new V3(0, 0.0645, 0.147),
-    gripR: GRIP_PISTOL,
-    gripL: GRIP_PISTOL,          // dual: the left hand holds its own pistol by the same grip (see getWeaponDef → dual)
-    dual: true,
-    twirl: new V3(0, 0.03, 0.03),
-  };
-}
-
 // ---------------------------------------------------------------------------------------------- slosher
 // "Tidebucket Slosher": a thick-walled pail on a pitcher handle (right hand), a rubber carry bar under the front of the
 // base (left hand, let go for the throw), hoops, a team-ink band, a pour lip, and the ink inside: a static fill plus a
@@ -561,60 +290,321 @@ function buildSlosher() {
   };
 }
 
+// ---------------------------------------------------------------------------------------------- BREAKOUT markers
+// Paintball markers keyed by the old weapon kinds (weapons.js reads muzzles / grips from these defs):
+//   shooter   "Vector" electro marker: milled receiver, vertical feed neck + rounded hopper, ported barrel, air tank as stock
+//   dualies   compact magazine-fed paintball pistols (one per hand)
+//   splatling "Stormline" full-auto: bigger receiver, big hopper with the rate meter on its back, long shrouded barrel
+//   charger   pump sniper: long barrel, scope, pump sleeve, side 10-round feed tube, tank stock, charge LEDs down the shroud
+//   blaster   stubby paint-grenade launcher: fat launch tube (grenade nose visible in the muzzle), pump + pressure gauge
+// Colours: dark anodised body, the team colour on the ink material (hopper dome, panels, rings, pods).
+const MK = { body: '#24272e', body2: '#31353e', anod: '#3b404a', tank: '#2c2f35', carbon: '#1d1f24' };
+
+/** Rounded paintball loader on top of a feed neck: dark lower shell, team (ink) dome, seam ring, speed-feed lid.
+ *  (cx, cy, cz) = hopper centre; (hx, hy, hz) = half sizes; neck from y0 (receiver top) up into the shell. */
+function hopper(P, D, cx, cy, cz, hx, hy, hz, y0, opt = {}) {
+  const shell = superEllipsoid(hx, hy * 0.62, hz, 0.8, 0.85, 18, 10, (q) => { if (q.y > 0) q.y *= 0.4; q.z *= 1 + 0.12 * (q.z < 0 ? 1 : 0); });
+  P.add(at(shell, cx, cy - hy * 0.25, cz), opt.shellCol || MK.body, M.gloss);
+  const dome = superEllipsoid(hx * 0.95, hy * 0.78, hz * 0.95, 0.85, 0.9, 20, 10, (q) => { if (q.y < 0) q.y *= 0.3; q.z *= 1 + 0.1 * (q.z < 0 ? 1 : 0); });
+  D.add(at(dome, cx, cy - hy * 0.12, cz));
+  // seam band + front speed-feed flap + a couple of grip ribs on the sides
+  const seam = torus(1, 0.035, 4, 28); seam.rotateX(Math.PI / 2); seam.scale(hx * 1.0, 1, hz * 1.04 * 1.06); seam.scale(1, 0.1, 1);
+  P.add(at(seam, cx, cy - hy * 0.12, cz - hz * 0.03), C.darker, M.satin);
+  const flap = superEllipsoid(hx * 0.42, 0.005, hz * 0.28, 0.4, 0.5, 10, 4, (q) => { q.y += 0.25 * q.z * (q.z > 0 ? 1 : 0); });
+  P.add(at(flap, cx, cy + hy * 0.62, cz + hz * 0.55), C.darker, M.satin);
+  for (const sx of [1, -1]) P.add(at(superEllipsoid(0.0022, hy * 0.28, hz * 0.4, 0.6, 0.6, 4, 6), cx + sx * hx * 0.97, cy - hy * 0.2, cz - hz * 0.2), C.rubber, M.rubber);
+  // feed neck + clamp
+  const nh = cy - hy * 0.55 - y0;
+  P.add(at(latheZ([[0.0118, 0], [0.0118, nh]], 12).rotateX(-Math.PI / 2), cx, y0, cz + (opt.neckZ || 0)), C.gunmetal, M.metal);
+  const clamp = torus(0.0135, 0.0032, 4, 14); clamp.rotateX(Math.PI / 2); P.add(at(clamp, cx, y0 + nh * 0.35, cz + (opt.neckZ || 0)), C.darker, M.satin);
+  P.add(at(superEllipsoid(0.004, 0.005, 0.004, 0.6, 0.6, 5, 4), cx - 0.015, y0 + nh * 0.35, cz + (opt.neckZ || 0)), C.metal, M.metal);
+}
+/** Compressed-air bottle lying along -Z from z0 (regulator end) at height y: carbon wrap, team label band, gauge. */
+function airTank(P, I, y, z0, len, r, opt = {}) {
+  const z1 = z0 - len;
+  P.add(latheZ(smoothProfile([[0, z1 - 0.004], [r * 0.7, z1 - 0.002], [r * 0.97, z1 + r * 0.45], [r, z1 + r * 0.9], [r, z0 - 0.018], [r * 0.82, z0 - 0.006], [0.012, z0], [0, z0]], 12), 16).translate(0, y, 0), MK.carbon, M.satin);
+  I.add(at(latheZ([[r + 0.0012, z1 + len * 0.42], [r + 0.0012, z1 + len * 0.58]], 16), 0, y, 0));
+  for (const zz of [z1 + len * 0.4, z1 + len * 0.6]) P.add(at(torus(r + 0.0006, 0.0014, 3, 16), 0, y, zz), C.decal, M.print);
+  // regulator + pin valve + gauge
+  P.add(latheZ([[0, z0 - 0.004], [0.0125, z0 - 0.004], [0.0132, z0 + 0.006], [0.0118, z0 + 0.03], [0, z0 + 0.03]], 12).translate(0, y, 0), C.metal, M.metal);
+  const g = lathe([[0, 0], [0.0078, 0], [0.0082, 0.004], [0.0074, 0.006], [0, 0.006]], 10);
+  P.add(orient(g, new V3(0.7, 0.7, 0).normalize(), new V3(0.009, y + 0.009, z0 + 0.012)), C.metal, M.metal);
+  P.add(orient(superEllipsoid(0.0062, 0.0062, 0.0006, 1, 1, 10, 3), new V3(0.7, 0.7, 0).normalize(), new V3(0.0133, y + 0.0133, z0 + 0.012)), C.white, M.gloss);
+  if (opt.butt) P.add(at(superEllipsoid(r * 1.05, r * 1.05, 0.006, 0.6, 0.8, 14, 5), 0, y, z1 - 0.004), C.rubber, M.rubber);
+}
+/** Ported paintball barrel along +Z from z0 to z1 at height y: back section, porting holes near the tip, team tip ring. */
+function markerBarrel(P, I, y, z0, z1, r, opt = {}) {
+  const L = z1 - z0;
+  P.add(latheZ(smoothProfile([[0, z0], [r * 1.35, z0], [r * 1.35, z0 + 0.03], [r * 1.12, z0 + 0.04], [r, z0 + 0.06]], 6).concat([[r, z1 - 0.012], [r * 1.12, z1 - 0.006], [r * 1.12, z1], [r * 0.72, z1], [0, z1 - 0.004]]), 14).translate(0, y, 0), opt.col || C.gunmetal, M.metal);
+  // porting: rows of small dark holes over the last third
+  const nP = opt.ports ?? 5;
+  for (let k = 0; k < nP; k++) for (let a = 0; a < 4; a++) {
+    const ang = (a / 4) * Math.PI * 2 + (k % 2) * Math.PI / 4, zz = z1 - 0.02 - k * 0.013;
+    const h = superEllipsoid(0.0024, 0.0024, 0.0016, 1, 1, 6, 4);
+    P.add(orient(h, new V3(Math.cos(ang), Math.sin(ang), 0), new V3(Math.cos(ang) * r, y + Math.sin(ang) * r, zz)), C.darker, M.satin);
+  }
+  I.add(at(torus(r * 1.14, 0.0022, 4, 14), 0, y, z1 - 0.0035));
+  I.add(at(latheZ([[r * 1.36, z0 + 0.004], [r * 1.36, z0 + 0.02]], 14), 0, y, 0));
+  if (L > 0.2) P.add(at(torus(r * 1.05, 0.0012, 3, 12), 0, y, z0 + L * 0.5), C.darker, M.satin);
+}
+/** Milled marker receiver: rounded box, side milling grooves, team (ink) side panels. */
+function receiver(P, I, y, z, hw, hh, hd, opt = {}) {
+  const rec = superEllipsoid(hw, hh, hd, 0.3, 0.42, 14, 10, (q) => { if (q.z > hd * 0.6) q.y *= 1 - 0.25 * (q.z - hd * 0.6) / (hd * 0.4); });
+  P.add(at(rec, 0, y, z), opt.col || MK.body, M.satin);
+  for (const sx of [1, -1]) {
+    const pan = superEllipsoid(0.0012, hh * 0.55, hd * 0.62, 0.35, 0.4, 4, 8, (q) => { q.y += (q.z / hd) * hh * 0.25; });
+    I.add(at(pan, sx * (hw + 0.0002), y + hh * 0.1, z - hd * 0.05));
+    for (let k = 0; k < 3; k++) P.add(at(superEllipsoid(0.0007, 0.0007, hd * 0.2, 1, 1, 4, 5), sx * (hw + 0.0006), y - hh * 0.55, z + hd * (0.2 + 0.2 * k) - hd * 0.1), C.darker, M.print);
+    screw(P, new V3(sx * (hw + 0.0003), y + hh * 0.55, z - hd * 0.75), new V3(sx, 0, 0), 0.0024);
+    screw(P, new V3(sx * (hw + 0.0003), y + hh * 0.55, z + hd * 0.75), new V3(sx, 0, 0), 0.0024);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------- shooter
+function buildShooter() {
+  const P = new Parts(), I = new Parts(), T = new Parts(), BOLT = new Parts(), CAN = new Parts(), LED = new Parts();
+  pistolGrip(P, { T });
+  const RY = 0.07;
+  receiver(P, I, RY, 0.03, 0.0172, 0.026, 0.078);
+  // lower frame (trigger frame) + front grip frame
+  P.add(at(superEllipsoid(0.0145, 0.011, 0.07, 0.35, 0.45, 10, 5), 0, 0.04, 0.03), MK.body2, M.satin);
+  // hopper on a vertical feed neck (the team dome = 'can', it jolts as each ball drops)
+  hopper(P, CAN, 0, 0.158, 0.012, 0.045, 0.04, 0.066, RY + 0.024, { neckZ: 0.012 });
+  // barrel
+  markerBarrel(P, I, RY, 0.105, 0.3, 0.0098);
+  // bolt / cocking pin at the back
+  const knob = latheZ([[0, -0.012], [0.0062, -0.012], [0.0068, -0.008], [0.0068, 0.0], [0, 0.0]], 10); BOLT.add(at(knob, 0, RY + 0.006, -0.05), C.metal, M.metal);
+  for (let k = 0; k < 3; k++) BOLT.add(at(torus(0.0069, 0.0006, 3, 10), 0, RY + 0.006, -0.059 + k * 0.003), C.gunmetal, M.metal);
+  // air tank as the stock, on a stock-thru adapter
+  P.add(at(superEllipsoid(0.014, 0.017, 0.012, 0.4, 0.5, 8, 6), 0, RY + 0.006, -0.054), MK.body2, M.satin);
+  airTank(P, I, RY + 0.006, -0.064, 0.17, 0.024, { butt: true });
+  // status LED on the left (player-facing) flank + eye cover
+  const led = superEllipsoid(0.0028, 0.0028, 0.0014, 1, 1, 8, 4); LED.add(orient(led, new V3(-1, 0, 0), new V3(-0.0178, RY + 0.012, -0.035)), C.green, M.led);
+  P.add(orient(torus(0.0032, 0.0008, 3, 10).rotateX(Math.PI / 2), new V3(-1, 0, 0), new V3(-0.0176, RY + 0.012, -0.035)), C.darker, M.satin);
+  // support foregrip (vertical, under the nose) + the macroline hose to the grip
+  const fg = superEllipsoid(0.0118, 0.028, 0.0132, 0.55, 0.65, 10, 8, (q) => { if (q.z > 0) { const f = 0.5 + 0.5 * Math.cos((q.y / 0.0125) * Math.PI * 2); q.z -= 0.0012 * f; } });
+  fg.rotateX(-0.12); P.add(at(fg, 0, 0.016, 0.07), C.darker, M.satin);
+  const fgr = superEllipsoid(0.0124, 0.0175, 0.0095, 0.5, 0.55, 8, 6); fgr.rotateX(-0.12); P.add(at(fgr, 0, 0.012, 0.069), C.rubber, M.rubber);
+  P.add(at(superEllipsoid(0.0134, 0.0042, 0.0152, 0.5, 0.5, 10, 4), 0, -0.0125, 0.074), C.dark, M.gloss);
+  const hose = sweep([new V3(-0.009, -0.01, 0.06), new V3(-0.013, -0.03, 0.04), new V3(-0.012, -0.045, 0.012), new V3(-0.009, -0.058, -0.008)], { seg: 8, radial: 5, capSteps: 1, radius: () => 0.0026 });
+  P.add(hose.geo, C.gunmetal, M.metal);
+  // sight rail on the receiver
+  P.add(at(superEllipsoid(0.0062, 0.0035, 0.034, 0.4, 0.5, 6, 4), 0, RY + 0.027, 0.075), C.darker, M.satin);
+  return {
+    kind: 'shooter', body: P.build(), ink: I.build(),
+    parts: {
+      trigger: part(T, TRIGGER_PIVOT),
+      bolt: part(BOLT, new V3(0, RY + 0.006, -0.05)),
+      can: part(CAN, new V3(0, 0.158, 0.012), 'ink'),
+      led: part(LED, new V3(-0.0178, RY + 0.012, -0.035), 'lamp', { color: '#0f2a18', emissive: '#3dff7a', intensity: 1.3 }),
+    },
+    muzzle: new V3(0, RY, 0.302),
+    gripR: GRIP_PISTOL,
+    gripL: { pos: new V3(0, 0.02, 0.0705), handZ: new V3(0, 1, -0.12), handY: new V3(0.45, -0.05, -1) },
+    twirl: new V3(0, 0.03, 0.03),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------- charger
+function buildCharger() {
+  const P = new Parts(), I = new Parts(), G = new Parts(), T = new Parts(), BOLT = new Parts(), LENS = new Parts(), EYE = new Parts(), PORTS = new Parts();
+  pistolGrip(P, { T });
+  const RY = 0.058;
+  receiver(P, I, 0.062, 0.035, 0.0185, 0.03, 0.105);
+  P.add(at(superEllipsoid(0.016, 0.011, 0.1, 0.4, 0.5, 12, 5), 0, 0.034, 0.04), MK.body2, M.satin);
+  // cocking handle on the right flank (draws back with the charge)
+  const slot = superEllipsoid(0.0014, 0.0034, 0.0215, 0.5, 0.5, 6, 6); P.add(at(slot, -0.0192, 0.079, -0.0255), C.darker, M.satin);
+  const stem = latheZ([[0, 0], [0.0024, 0], [0.0024, 0.011], [0, 0.011]], 8); stem.rotateY(-Math.PI / 2); BOLT.add(at(stem, -0.0185, 0.079, -0.008), C.metal, M.metal);
+  const cap = superEllipsoid(0.0034, 0.0052, 0.0052, 0.6, 0.7, 8, 6); BOLT.add(at(cap, -0.0312, 0.079, -0.008), C.dark, M.gloss);
+  // tank stock
+  P.add(at(superEllipsoid(0.014, 0.018, 0.014, 0.4, 0.5, 8, 6), 0, 0.066, -0.075), MK.body2, M.satin);
+  airTank(P, I, 0.066, -0.087, 0.17, 0.024, { butt: true });
+  P.add(at(superEllipsoid(0.0128, 0.006, 0.04, 0.5, 0.6, 8, 4), 0, 0.093, -0.14), C.rubber, M.rubber);   // cheek pad on the tank
+  // long barrel: back section, shroud with the charge LEDs, ported tip (ports = hot-glow part)
+  markerBarrel(P, I, RY, 0.14, 0.684, 0.0105, { ports: 0 });
+  for (let k = 0; k < 3; k++) { const port = superEllipsoid(0.0118, 0.0022, 0.0034, 0.6, 0.6, 8, 4); PORTS.add(at(port, 0, RY, 0.636 + k * 0.014), C.darker, M.satin); }
+  const guard = superEllipsoid(0.0178, 0.02, 0.1, 0.42, 0.56, 12, 8); P.add(at(guard, 0, 0.05, 0.23), MK.body, M.satin);
+  for (let i = 0; i < 4; i++) { const c = torus(0.0158, 0.0036, 5, 14); G.add(at(c, 0, RY, 0.365 + i * 0.047), '#ffffff'); }
+  P.add(at(latheZ([[0.0128, 0.343], [0.0134, 0.35], [0.0134, 0.522], [0.0128, 0.53]], 12), 0, RY, 0), C.darker, M.metal);
+  // pump sleeve under the barrel (left hand)
+  P.add(at(latheZ(smoothProfile([[0.0, 0.176], [0.0112, 0.178], [0.0132, 0.186], [0.0134, 0.236], [0.0128, 0.252], [0.0, 0.256]], 8), 12), 0, 0.004, 0), C.rubber, M.rubber);
+  for (let k = 0; k < 5; k++) P.add(at(torus(0.0135, 0.0011, 3, 12), 0, 0.004, 0.19 + k * 0.011), C.darker, M.satin);
+  P.add(at(superEllipsoid(0.008, 0.012, 0.03, 0.5, 0.6, 6, 5), 0, 0.018, 0.216), C.dark, M.satin);
+  // scope: tube, turrets, lens + sunshade, mounts
+  const scope = latheZ(smoothProfile([[0, -0.052], [0.0182, -0.051], [0.0196, -0.038], [0.0162, -0.022], [0.0162, 0.104], [0.021, 0.124], [0.0225, 0.158], [0.0205, 0.162], [0.0, 0.16]], 9), 14);
+  P.add(at(scope, 0, 0.122, 0), MK.body, M.satin);
+  LENS.add(at(superEllipsoid(0.0192, 0.0192, 0.003, 1, 1, 12, 4), 0, 0.122, 0.1605), C.lens, M.lens);
+  EYE.add(at(superEllipsoid(0.0158, 0.0158, 0.0024, 1, 1, 10, 4), 0, 0.122, -0.0525), C.lens, M.lens);
+  I.add(at(torus(0.0212, 0.0022, 3, 14), 0, 0.122, 0.157));
+  for (const [dir, p] of [[new V3(0, 1, 0), new V3(0, 0.1375, 0.04)], [new V3(1, 0, 0), new V3(0.0155, 0.122, 0.04)]]) {
+    const t = lathe([[0, 0], [0.0074, 0], [0.0076, 0.006], [0.0066, 0.0085], [0, 0.009]], 10); P.add(orient(t, dir, p), C.metal, M.metal);
+  }
+  for (const z of [-0.005, 0.085]) P.add(at(superEllipsoid(0.0092, 0.0162, 0.0105, 0.5, 0.6, 6, 5), 0, 0.102, z), C.dark, M.satin);
+  // 10-round feed tube angled up off the left flank (team cap)
+  {
+    const d = new V3(0.62, 0.78, 0).normalize(), base = new V3(0.012, 0.084, 0.098);
+    P.add(orient(lathe([[0, 0], [0.0112, 0], [0.0112, 0.075], [0, 0.075]], 12), d, base), C.gunmetal, M.metal);
+    I.add(orient(lathe([[0, 0], [0.0138, 0], [0.0142, 0.012], [0.0112, 0.016], [0, 0.017]], 12), d, base.clone().addScaledVector(d, 0.072)));
+    P.add(orient(torus(0.0122, 0.0026, 4, 12).rotateX(Math.PI / 2), d, base.clone().addScaledVector(d, 0.012)), C.darker, M.satin);
+  }
+  const glow = G.build();
+  {
+    const pz = glow.attributes.position, seg = new Float32Array(pz.count), TH = [0.22, 0.47, 0.72, 0.96];
+    for (let i = 0; i < pz.count; i++) seg[i] = TH[Math.max(0, Math.min(3, Math.round((pz.getZ(i) - 0.365) / 0.047)))];
+    glow.setAttribute('aSeg', new THREE.Float32BufferAttribute(seg, 1));
+  }
+  return {
+    kind: 'charger', body: P.build(), ink: I.build(), glow,
+    parts: {
+      trigger: part(T, TRIGGER_PIVOT),
+      bolt: part(BOLT, new V3(-0.0185, 0.079, -0.008)),
+      lens: part(LENS, new V3(0, 0.122, 0.1605), 'lamp', { color: '#0b0f16', emissive: '#ffffff', intensity: 0.2, roughness: 0.06 }),
+      eyepiece: part(EYE, new V3(0, 0.122, -0.0525), 'lamp', { color: '#0b0f16', emissive: '#ffffff', intensity: 0.05, roughness: 0.06 }),
+      ports: part(PORTS, new V3(0, RY, 0.65), 'lamp', { color: '#1b1e25', emissive: '#ffffff', intensity: 0, roughness: 0.5 }),
+    },
+    muzzle: new V3(0, RY, 0.686),
+    gripR: GRIP_PISTOL,
+    gripL: { pos: new V3(0, 0.004, 0.214), handZ: new V3(0, 0, 1), handY: new V3(0.75, -0.62, -0.1) },
+    twirl: new V3(0, 0.03, 0.03),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------- blaster
+function buildBlaster() {
+  const P = new Parts(), I = new Parts(), T = new Parts(), PUMP = new Parts(), NEEDLE = new Parts(), BULB = new Parts();
+  pistolGrip(P, { baseCol: C.dark, T });
+  const TY = 0.092;
+  // receiver block under the tube
+  P.add(at(superEllipsoid(0.02, 0.022, 0.07, 0.3, 0.4, 10, 6), 0, 0.05, 0.02), MK.body2, M.satin);
+  // fat launch tube with reinforcing rings, team bands and a flared, lipped muzzle
+  P.add(latheZ(smoothProfile([[0, -0.052], [0.036, -0.052], [0.043, -0.044], [0.044, -0.03]], 6).concat([[0.044, 0.25], [0.047, 0.262], [0.05, 0.29], [0.049, 0.302], [0.044, 0.304], [0.039, 0.296], [0.038, 0.26], [0.0, 0.258]]), 22).translate(0, TY, 0), MK.body, M.satin);
+  for (const z of [0.02, 0.1, 0.18]) P.add(at(torus(0.0448, 0.003, 4, 22), 0, TY, z), MK.anod, M.metal);
+  for (const z of [0.06, 0.14]) I.add(at(latheZ([[0.0452, z - 0.012], [0.0452, z + 0.012]], 22), 0, TY, 0));
+  I.add(at(torus(0.049, 0.0035, 5, 22), 0, TY, 0.3));
+  // the paint grenade's nose seated in the muzzle ('bulb': squeezes / rebounds on each shot)
+  BULB.add(at(superEllipsoid(0.034, 0.034, 0.03, 0.9, 1, 16, 10, (q) => { if (q.z < 0) q.z *= 0.4; }), 0, TY, 0.272));
+  P.add(at(torus(0.034, 0.0028, 4, 18), 0, TY, 0.268), C.darker, M.satin);
+  // rear cap with the pressure gauge (needle part)
+  P.add(at(superEllipsoid(0.04, 0.04, 0.012, 0.6, 0.9, 16, 7), 0, TY, -0.05), MK.body2, M.satin);
+  const gauge = latheZ([[0, -0.006], [0.0128, -0.006], [0.0132, 0.0], [0.011, 0.002], [0, 0.002]], 14); P.add(at(gauge, 0, TY, -0.058), C.metal, M.metal);
+  P.add(at(superEllipsoid(0.0105, 0.0105, 0.001, 1, 1, 12, 4), 0, TY, -0.0605), C.white, M.gloss);
+  for (let k = 0; k < 9; k++) {
+    const a = -2.18 + (k / 8) * 4.36, major = k % 2 === 0, len = major ? 0.0028 : 0.0017;
+    const tk = superEllipsoid(major ? 0.00055 : 0.0004, len / 2, 0.0003, 1, 1, 4, 4);
+    tk.translate(0, 0.0083 - len / 2, 0); tk.rotateZ(a); P.add(at(tk, 0, TY, -0.0617), C.darker, M.print);
+  }
+  const red = torus(0.0079, 0.0007, 3, 10, 0.7); red.rotateZ(Math.PI / 2 + 1.5); P.add(at(red, 0, TY, -0.0617), C.red, M.print);
+  const needle = superEllipsoid(0.00085, 0.0046, 0.00045, 0.7, 0.8, 5, 5, (q) => { q.x *= 1 - 0.75 * Math.max(0, q.y / 0.0046); });
+  needle.translate(0, 0.0036, 0); NEEDLE.add(at(needle, 0, TY, -0.0621), C.red, M.gloss);
+  const hub = lathe([[0, 0], [0.0014, 0], [0.0013, 0.0007], [0, 0.0011]], 8); hub.rotateX(-Math.PI / 2); NEEDLE.add(at(hub, 0, TY, -0.0619), C.dark, M.gloss);
+  // ladder sight + carry rail on top, hazard chevrons on the flanks
+  P.add(at(superEllipsoid(0.0078, 0.006, 0.07, 0.5, 0.6, 8, 5), 0, TY + 0.047, 0.1), MK.body2, M.satin);
+  const ladder = superEllipsoid(0.012, 0.014, 0.003, 0.35, 0.4, 8, 5, (q) => { if (Math.abs(q.x) < 0.007 && q.y > -0.006) q.z *= 0.3; });
+  P.add(at(ladder, 0, TY + 0.06, 0.03), C.darker, M.satin);
+  P.add(at(superEllipsoid(0.0035, 0.009, 0.004, 0.5, 0.5, 6, 4), 0, TY + 0.056, 0.2), C.darker, M.satin);
+  for (const sx of [1, -1]) for (const s of chevronShape(0.04, 0.012, 3, 0.45)) { const g = decal(s); placeXY(g, new V3(0, 0, sx), new V3(0, 1, 0), new V3(sx * 0.0447, TY - 0.006, sx > 0 ? 0.2 : 0.16)); P.add(g, C.hazard, M.print); }
+  // pump foregrip for the left hand + slide tube
+  P.add(at(latheZ([[0, 0.04], [0.0092, 0.04], [0.0092, 0.19], [0, 0.19]], 10), 0, 0.012, 0), C.metal, M.metal);
+  P.add(at(latheZ([[0.0092, 0.188], [0.0118, 0.19], [0.0118, 0.196], [0.0092, 0.198]], 12), 0, 0.012, 0), C.dark, M.gloss);
+  PUMP.add(at(latheZ(smoothProfile([[0.0, 0.118], [0.0118, 0.12], [0.0138, 0.128], [0.0138, 0.176], [0.0126, 0.186], [0.0, 0.188]], 8), 12), 0, 0.012, 0), C.rubber, M.rubber);
+  for (let k = 0; k < 4; k++) PUMP.add(at(torus(0.0139, 0.0012, 3, 12), 0, 0.012, 0.134 + k * 0.012), C.darker, M.satin);
+  PUMP.add(at(superEllipsoid(0.007, 0.018, 0.012, 0.5, 0.6, 6, 6), 0, 0.03, 0.152), C.dark, M.satin);
+  return {
+    kind: 'blaster', body: P.build(), ink: I.build(),
+    parts: {
+      trigger: part(T, TRIGGER_PIVOT),
+      pump: part(PUMP, new V3(0, 0.012, 0.152)),
+      needle: part(NEEDLE, new V3(0, TY, -0.062)),
+      bulb: part(BULB, new V3(0, TY, 0.272), 'ink'),
+    },
+    muzzle: new V3(0, TY, 0.305),
+    gripR: GRIP_PISTOL,
+    gripL: { pos: new V3(0, 0.012, 0.152), handZ: new V3(0, 0, 1), handY: new V3(0.8, -0.55, -0.1) },
+    twirl: new V3(0, 0.03, 0.03),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------- dualies (one pistol)
+// Compact magazine-fed paintball pistol per hand: polymer frame + rail, dark slide that snaps back on every shot of its
+// own hand (team stripes ride on it), threaded ported barrel, team magazine base plate under the grip, rear LED.
+function buildDualies() {
+  const P = new Parts(), I = new Parts(), T = new Parts(), SL = new Parts(), SLI = new Parts(), LED = new Parts();
+  pistolGrip(P, { T, baseCol: C.dark });
+  const frame = superEllipsoid(0.0165, 0.0105, 0.072, 0.4, 0.5, 12, 6, (q) => { if (q.z > 0.05) q.y *= 1 - 0.25 * (q.z - 0.05) / 0.022; });
+  P.add(at(frame, 0, 0.041, 0.034), MK.body2, M.satin);
+  P.add(at(superEllipsoid(0.0095, 0.0035, 0.034, 0.4, 0.4, 8, 4), 0, 0.0282, 0.086), C.darker, M.satin);
+  for (let k = 0; k < 4; k++) P.add(at(superEllipsoid(0.0102, 0.0012, 0.0022, 0.6, 0.6, 6, 4), 0, 0.0252, 0.072 + k * 0.009), C.gunmetal, M.metal);
+  // magazine: extended base plate (team) below the grip + the CO2 key at the back
+  const magBase = superEllipsoid(0.0148, 0.0085, 0.021, 0.4, 0.45, 10, 5); magBase.rotateX(Math.atan2(GRIP_AXIS.z, GRIP_AXIS.y));
+  I.add(at(magBase, 0, -0.074, -0.021));
+  P.add(at(superEllipsoid(0.0125, 0.008, 0.0175, 0.5, 0.5, 8, 4).rotateX(0.245), 0, -0.066, -0.019), MK.body, M.satin);
+  // barrel (threaded, ported) + team tip ring
+  P.add(at(latheZ([[0.0, 0.098], [0.0098, 0.098], [0.0098, 0.15], [0.0108, 0.153], [0.0108, 0.165], [0.0072, 0.166], [0.0, 0.162]], 12), 0, 0.0645, 0), C.gunmetal, M.metal);
+  for (let k = 0; k < 3; k++) for (const sx of [1, -1]) P.add(at(superEllipsoid(0.001, 0.0022, 0.0022, 1, 1, 4, 4), sx * 0.0098, 0.0645, 0.14 - k * 0.011), C.darker, M.satin);
+  I.add(at(torus(0.0106, 0.0022, 4, 14), 0, 0.0645, 0.162));
+  // slide (moving): dark shell, serrations, sights, team side stripes (ink, rides along)
+  const slide = superEllipsoid(0.0182, 0.0158, 0.078, 0.36, 0.52, 14, 8, (q) => { if (q.z > 0.05) q.y *= 1 - 0.22 * (q.z - 0.05) / 0.028; if (q.y > 0) q.x *= 1 - 0.1 * q.y / 0.0158; });
+  SL.add(at(slide, 0, 0.0645, 0.03), MK.body, M.satin);
+  for (const sx of [1, -1]) for (let k = 0; k < 5; k++) SL.add(at(superEllipsoid(0.0007, 0.0098, 0.0011, 0.8, 0.8, 4, 4), sx * 0.0178, 0.066, -0.043 + k * 0.0048), C.darker, M.satin);
+  SL.add(at(superEllipsoid(0.0085, 0.0048, 0.0042, 0.4, 0.4, 6, 4, (q) => { if (q.y > 0.0015 && Math.abs(q.x) < 0.0024) q.y = 0.0015; }), 0, 0.0818, -0.036), C.darker, M.satin);
+  SL.add(at(superEllipsoid(0.0018, 0.0048, 0.003, 0.6, 0.6, 5, 4), 0, 0.0806, 0.097), C.darker, M.satin);
+  for (const sx of [1, -1]) SLI.add(at(superEllipsoid(0.0007, 0.0032, 0.042, 0.7, 0.7, 5, 6), sx * 0.018, 0.068, 0.04));
+  SLI.add(at(superEllipsoid(0.0042, 0.0008, 0.03, 0.7, 0.7, 6, 3), 0, 0.0802, 0.03));
+  for (const sx of [1, -1]) screw(P, new V3(sx * 0.0166, 0.043, 0.07), new V3(sx, 0, 0), 0.0022);
+  // status LED on the back of the slide (faces the player)
+  LED.add(at(superEllipsoid(0.0028, 0.0028, 0.0014, 1, 1, 8, 4), 0.009, 0.074, -0.049), C.green, M.led);
+  P.add(at(torus(0.0032, 0.0008, 3, 10), 0.009, 0.074, -0.0484), C.darker, M.satin);
+  return {
+    kind: 'dualies', body: P.build(), ink: I.build(),
+    parts: {
+      trigger: part(T, TRIGGER_PIVOT),
+      slide: part(SL, new V3(0, 0.0645, 0.03)),
+      slideInk: part(SLI, new V3(0, 0.0645, 0.03), 'ink'),
+      led: part(LED, new V3(0.009, 0.074, -0.049), 'lamp', { color: '#0f2a18', emissive: '#3dff7a', intensity: 1.3 }),
+    },
+    muzzle: new V3(0, 0.0645, 0.167),
+    gripR: GRIP_PISTOL,
+    gripL: GRIP_PISTOL,          // dual: the left hand holds its own pistol by the same grip (see getWeaponDef → dual)
+    dual: true,
+    twirl: new V3(0, 0.03, 0.03),
+  };
+}
+
 // ---------------------------------------------------------------------------------------------- splatling
-// "Gyre Splatling": rear pistol grip + vertical foregrip, a vented motor housing, a windowed ink drum on top with an
-// 8-segment charge meter on its back face (per-vertex aSeg → makeCoilMaterial, faces the player), and a six-barrel
-// cluster ('barrels') that spins up with the charge and screams while it streams.
+// "Stormline" full-auto marker: long receiver, big hopper whose back face carries the 8-segment rate meter (aSeg →
+// makeCoilMaterial, faces the player, fills during spin-up), a long shrouded barrel ('barrels': recoils each ball),
+// vertical foregrip, big air tank as the stock.
 function buildSplatling() {
   const P = new Parts(), I = new Parts(), T = new Parts(), BAR = new Parts(), G = new Parts();
   pistolGrip(P, { T });
-  const hous = superEllipsoid(0.031, 0.04, 0.115, 0.38, 0.55, 14, 10, (q) => { if (q.z > 0.07) q.y *= 1 - 0.28 * (q.z - 0.07) / 0.045; if (q.y > 0) q.x *= 1 - 0.1 * q.y / 0.04; });
-  P.add(at(hous, 0, 0.07, 0.055), C.white, M.satin);
-  const low = superEllipsoid(0.027, 0.012, 0.105, 0.4, 0.5, 12, 5); P.add(at(low, 0, 0.036, 0.06), C.dark, M.satin);
-  const spine = superEllipsoid(0.0165, 0.006, 0.08, 0.5, 0.6, 12, 5); I.add(at(spine, 0, 0.1085, 0.085));
-  for (const sx of [1, -1]) {
-    for (let k = 0; k < 4; k++) P.add(at(superEllipsoid(0.0012, 0.0062, 0.0105, 0.6, 0.6, 4, 5), sx * 0.0305, 0.07, 0.012 + k * 0.024), C.darker, M.satin);
-    for (const [y, z] of [[0.09, -0.04], [0.09, 0.14], [0.046, 0.15]]) screw(P, new V3(sx * 0.0302, y, z), new V3(sx, 0, 0), 0.0026);
-  }
-  const sq = decal(squidShape(0.026)); placeXY(sq, new V3(0, 0, -1), new V3(0, 1, 0), new V3(0.0308, 0.066, 0.12)); P.add(sq, C.decal, M.print);
-  // ink drum on top: windowed cylinder along Z, cage bars, end caps; the charge meter ring on the rear cap
-  const DY = 0.148, DZ = 0.045;
-  I.add(at(latheZ([[0, -0.052], [0.0395, -0.051], [0.0405, -0.044], [0.0405, 0.044], [0.0395, 0.051], [0, 0.052]], 18), 0, DY, DZ));
-  for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2 + 0.26; P.add(at(superEllipsoid(0.0034, 0.0034, 0.047, 0.6, 0.6, 4, 4), Math.cos(a) * 0.0425, DY + Math.sin(a) * 0.0425, DZ), C.dark, M.satin); }
-  for (const [z, s] of [[DZ - 0.056, -1], [DZ + 0.056, 1]]) P.add(at(latheZ([[0, -0.007 * s], [0.0455, -0.007 * s], [0.047, -0.002 * s], [0.047, 0.005 * s], [0.042, 0.0085 * s], [0, 0.009 * s]], 20), 0, DY, z), C.dark, M.gloss);
+  const AX = 0.07;
+  receiver(P, I, AX, 0.06, 0.0205, 0.03, 0.105);
+  P.add(at(superEllipsoid(0.017, 0.012, 0.1, 0.4, 0.5, 12, 5), 0, 0.036, 0.06), MK.body2, M.satin);
+  // big hopper + rate meter ring on its back
+  const HY = 0.178, HZ = 0.035;
+  hopper(P, I, 0, HY, HZ, 0.056, 0.05, 0.08, AX + 0.03, { neckZ: 0.02 });
   for (let i = 0; i < 8; i++) {
-    const a0 = Math.PI / 2 - (i / 8) * Math.PI * 2 - 0.06, seg = torus(0.03, 0.0042, 4, 6, (Math.PI * 2) / 8 - 0.12);
-    seg.rotateZ(a0 - (Math.PI * 2) / 8 + 0.12); G.add(at(seg, 0, DY, DZ - 0.0655), '#ffffff');
+    const a0 = Math.PI / 2 - (i / 8) * Math.PI * 2 - 0.06, seg = torus(0.022, 0.0036, 4, 6, (Math.PI * 2) / 8 - 0.12);
+    seg.rotateZ(a0 - (Math.PI * 2) / 8 + 0.12); G.add(at(seg, 0, HY - 0.004, HZ - 0.092), '#ffffff');
   }
-  P.add(at(torus(0.03, 0.0062, 4, 24).translate(0, 0, 0.002), 0, DY, DZ - 0.063), C.darker, M.satin);
-  // drum feed neck into the housing
-  P.add(at(latheZ([[0.012, 0], [0.014, 0.004], [0.014, 0.02], [0.012, 0.024]], 12).rotateX(-Math.PI / 2), 0, 0.104, 0.1), C.metal, M.metal);
-  // barrel cluster (spins about Z at y 0.07): six barrels, hex clamp plates, spindle, crown
-  const AX = 0.07, R = 0.019;
-  for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * Math.PI * 2;
-    const b = latheZ([[0, 0.17], [0.0074, 0.17], [0.0074, 0.452], [0.0082, 0.456], [0.0082, 0.462], [0.0048, 0.4625], [0, 0.46]], 8);
-    BAR.add(at(b, Math.cos(a) * R, AX + Math.sin(a) * R, 0), C.gunmetal, M.metal);
-  }
-  for (const [z, th] of [[0.19, 0.008], [0.33, 0.006], [0.435, 0.007]]) {
-    const plate = latheZ([[0, z - th], [0.031, z - th], [0.0325, z], [0.031, z + th], [0, z + th]], 6); BAR.add(at(plate, 0, AX, 0), C.dark, M.gloss);
-  }
-  BAR.add(at(latheZ([[0, 0.17], [0.006, 0.17], [0.006, 0.45], [0, 0.45]], 8), 0, AX, 0), C.metal, M.metal);
-  I.add(at(torus(0.0325, 0.0028, 4, 18), 0, AX, 0.4375));
-  // static shroud + cooling jacket over the barrel roots
-  P.add(at(latheZ(smoothProfile([[0.03, 0.165], [0.036, 0.17], [0.037, 0.19], [0.036, 0.255], [0.031, 0.262]], 6), 16), 0, AX, 0), C.white, M.satin);
-  for (let k = 0; k < 4; k++) P.add(at(torus(0.0368, 0.0016, 3, 18), 0, AX, 0.2 + k * 0.016), C.darker, M.satin);
+  P.add(at(superEllipsoid(0.03, 0.03, 0.006, 0.7, 1, 16, 5), 0, HY - 0.004, HZ - 0.086), C.darker, M.satin);
+  // long barrel + cooling shroud (one part: nudged back by every ball)
+  markerBarrel(BAR, I, AX, 0.16, 0.466, 0.0108, { ports: 6 });
+  BAR.add(at(latheZ(smoothProfile([[0.02, 0.165], [0.022, 0.17], [0.022, 0.3], [0.019, 0.31]], 6), 16), 0, AX, 0), MK.body2, M.satin);
+  for (let k = 0; k < 6; k++) BAR.add(at(superEllipsoid(0.0224, 0.0026, 0.0085, 0.6, 0.6, 10, 4), 0, AX, 0.185 + k * 0.021), C.darker, M.satin);
   // vertical foregrip for the left hand
   const fg = superEllipsoid(0.0118, 0.03, 0.0132, 0.55, 0.65, 10, 8, (q) => { if (q.z > 0) { const f = 0.5 + 0.5 * Math.cos((q.y / 0.0125) * Math.PI * 2); q.z -= 0.0012 * f; } });
   fg.rotateX(-0.12); P.add(at(fg, 0, 0.0, 0.152), C.darker, M.satin);
   P.add(at(superEllipsoid(0.0124, 0.019, 0.0095, 0.5, 0.55, 8, 6).rotateX(-0.12), 0, -0.004, 0.151), C.rubber, M.rubber);
   P.add(at(superEllipsoid(0.0134, 0.0042, 0.0152, 0.5, 0.5, 10, 4), 0, -0.031, 0.155), C.dark, M.gloss);
+  // tank stock
+  P.add(at(superEllipsoid(0.015, 0.019, 0.013, 0.4, 0.5, 8, 6), 0, AX + 0.004, -0.05), MK.body2, M.satin);
+  airTank(P, I, AX + 0.004, -0.062, 0.19, 0.027, { butt: true });
   const glow = G.build();
   {
-    // meter segments light clockwise from the top as the charge builds: aSeg = segment index / 8 threshold
     const pz = glow.attributes.position, seg = new Float32Array(pz.count);
     for (let i = 0; i < pz.count; i++) {
-      let a = Math.atan2(pz.getY(i) - DY, pz.getX(i)); let u = (Math.PI / 2 - a) / (Math.PI * 2); u -= Math.floor(u);
+      let a = Math.atan2(pz.getY(i) - (HY - 0.004), pz.getX(i)); let u = (Math.PI / 2 - a) / (Math.PI * 2); u -= Math.floor(u);
       seg[i] = (Math.floor(u * 8) + 1) / 8 - 0.02;
     }
     glow.setAttribute('aSeg', new THREE.Float32BufferAttribute(seg, 1));
@@ -622,7 +612,7 @@ function buildSplatling() {
   return {
     kind: 'splatling', body: P.build(), ink: I.build(), glow,
     parts: { trigger: part(T, TRIGGER_PIVOT), barrels: part(BAR, new V3(0, AX, 0.3)) },
-    muzzle: new V3(0, AX, 0.466),
+    muzzle: new V3(0, AX, 0.468),
     gripR: GRIP_PISTOL,
     gripL: { pos: new V3(0, 0.0, 0.1515), handZ: new V3(0, 1, -0.12), handY: new V3(0.45, -0.05, -1) },
     twirl: new V3(0, 0.03, 0.05),
@@ -720,7 +710,7 @@ export function animateWeapon(w, st) {
   if (kind === 'shooter') {
     P.bolt.position.z = P.bolt.userData.rest.z - 0.0095 * shotK;
     const ck = pulseE(ts, 0.01, 18);
-    P.can.scale.set(1 + 0.07 * ck, 1 + 0.07 * ck, 1 - 0.035 * ck);
+    P.can.scale.set(1 + 0.02 * ck, 1 - 0.03 * ck, 1 + 0.02 * ck);   // hopper dome: balls drop into the neck
     ledShot(P.led, st, shotK, t);
   } else if (kind === 'dualies') {
     // each pistol's slide snaps back 13 mm on its own shot and rides home; LED blinks per shot / red when low
@@ -781,8 +771,8 @@ export function animateWeapon(w, st) {
     if (R) want = R.charging ? 14 + 46 * R.charge : R.streaming ? 64 : 0;
     else want = st.firing ? 30 + 30 * (st.charge || 0) : 0;
     w.spinW = dampE(w.spinW, want, want > w.spinW ? 5 : 1.6, dt);
-    w.spinA = (w.spinA + w.spinW * dt) % (Math.PI * 2);
-    P.barrels.rotation.z = w.spinA;
+    w.spinA = (w.spinA + w.spinW * dt) % (Math.PI * 2);   // (BREAKOUT: single barrel — the spin only feeds the buzz)
+    P.barrels.rotation.z = 0;
     P.barrels.position.z = P.barrels.userData.rest.z - 0.004 * shotK;   // each round nudges the cluster back
   }
 }
@@ -803,10 +793,10 @@ function buildBomb() {
   P.add(lathe(smoothProfile([[0, -0.03], [0.022, -0.029], [0.0215, -0.019], [0.0142, -0.0145], [0, -0.014]], 6), 16), C.dark, M.gloss);
   const bulb = lathe(smoothProfile([[0, -0.118], [0.03, -0.114], [0.047, -0.098], [0.052, -0.074], [0.046, -0.05], [0.031, -0.034], [0.0185, -0.027], [0, -0.026]], 14), 20);
   I.add(bulb);
-  P.add(at(torus(0.0515, 0.0042, 5, 20), 0, 0, 0).rotateX(Math.PI / 2).translate(0, -0.074, 0), C.cream, M.gloss);
-  for (let k = 0; k < 3; k++) { const a = (k / 3) * Math.PI * 2; const fin = superEllipsoid(0.0035, 0.018, 0.012, 0.6, 0.6, 4, 5); fin.rotateY(a); P.add(at(fin, Math.sin(a) * 0.043, -0.052, Math.cos(a) * 0.043), C.cream, M.gloss); }
+  // paint grenade: a taped bladder — two dark retaining bands and a pull-ring at the cap (BREAKOUT)
+  for (const y of [-0.052, -0.09]) P.add(at(torus(0.05, 0.0035, 5, 20), 0, 0, 0).rotateX(Math.PI / 2).translate(0, y, 0), C.darker, M.satin);
+  P.add(at(torus(0.009, 0.0016, 4, 12), 0.012, 0.012, 0).rotateY(Math.PI / 2), C.metal, M.metal);
   const led = superEllipsoid(0.0028, 0.0028, 0.0028, 1, 1, 8, 5); P.add(at(led, 0, -0.022, 0.0205), C.red, M.led);
-  const sq = decal(squidShape(0.026)); placeXY(sq, new V3(1, 0, 0), new V3(0, 1, 0), new V3(0, -0.075, 0.0548)); P.add(sq, C.decal, M.print);
   return { kind: 'bomb', body: P.build(), ink: I.build(), grip: { pos: new V3(0, 0, 0), handZ: new V3(0, 1, 0), handY: new V3(0.3, 0.1, -1) } };
 }
 const _subCache = new Map();

@@ -43,17 +43,33 @@ vec3 iwBumpN(vec3 n, float h, vec3 pos){
 }
 `;
 
+// Paintball hits: discrete paint splats in the enemy colour stamped in bind space (so they ride the body), one more per
+// ~14 % of damage taken, in a per-character order (uHurtSeed) over torso, arms, legs, back and the mask. Each splat: a
+// wobbly disc with satellite droplets and a short run-down drip; glossy wet paint (iwHurtM drives roughness/clearcoat).
 const HURT_FRAG = /* glsl */`
   float iwHurtM = 0.0;
   if (uHurt.w > 0.002) {
-    vec3 hp = vBindPos * vec3(10.0, 6.5, 10.0) + vec3(uHurtSeed);
-    hp.y += 0.35 * iwNoise(vBindPos * 23.0);
-    float n = iwFbm(hp);
-    float th = mix(1.0, 0.47, clamp(uHurt.w, 0.0, 1.0));
-    float w = max(fwidth(n) * 0.9, 0.004);
-    iwHurtM = smoothstep(th - w, th + w, n);
-    float rim = smoothstep(th - 0.05, th - w, n) * (1.0 - iwHurtM);
-    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.8, rim * 0.6);
+    float nS = uHurt.w * 7.0 + 0.35;
+    float m = 0.0, rimK = 0.0;
+    for (int k = 0; k < 7; k++) {
+      float fk = float(k);
+      float on = clamp(nS - fk, 0.0, 1.0);
+      if (on <= 0.0) break;
+      float id = mod(fk * 3.0 + floor(uHurtSeed), 8.0);
+      vec3 c = id < 0.5 ? vec3(0.035, 0.865, 0.11) : id < 1.5 ? vec3(-0.05, 0.765, 0.11) : id < 2.5 ? vec3(0.15, 0.93, 0.03) : id < 3.5 ? vec3(-0.18, 0.82, 0.0)
+             : id < 4.5 ? vec3(0.09, 0.5, 0.07) : id < 5.5 ? vec3(-0.04, 0.9, -0.13) : id < 6.5 ? vec3(0.07, 1.25, 0.18) : vec3(-0.085, 0.3, 0.06);
+      vec3 d = vBindPos - c;
+      float R = 0.046 * (0.55 + 0.45 * on) * (0.85 + 0.3 * fract(fk * 0.618 + uHurtSeed));
+      vec3 dd = d; dd.y = dd.y < 0.0 ? dd.y * mix(1.0, 0.42, exp(-pow(dd.x / (R * 0.28), 2.0))) : dd.y;   // one drip runs down
+      float wob = iwNoise(vBindPos * 42.0 + fk * 7.3) - 0.5;
+      float sd = length(dd) - R * (1.0 + 0.55 * wob);
+      float drops = step(0.78, iwNoise(vBindPos * 150.0 + fk * 3.1)) * (1.0 - smoothstep(R * 1.1, R * 1.9, length(d)));
+      float w = max(fwidth(sd) * 0.8, 0.0008);
+      m = max(m, max(1.0 - smoothstep(-w, w, sd), drops * on));
+      rimK = max(rimK, (1.0 - smoothstep(0.0, 0.006, abs(sd))) * 0.5);
+    }
+    iwHurtM = m;
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.8, rimK * (1.0 - m));
     diffuseColor.rgb = mix(diffuseColor.rgb, uHurt.rgb, iwHurtM);
   }
 `;
@@ -97,6 +113,8 @@ export function makeCharUniforms() {
     uOpacity: { value: 1 },
     uMouth: { value: new THREE.Vector4(0.75, 1, 0, 0) },
     uFreckle: { value: 0 },
+    uHairCol: { value: new THREE.Color('#3a2417') },   // natural hair colour (character-style.js hairColor)
+    uMasked: { value: 0 },                              // 1 = a paintball mask covers the face (skin: no visor paint)
     // Face hooks (driven per frame by character.js). All additive to the legacy drivers (eye-bone Y scale, uLook, uMouth).
     uLid: { value: new THREE.Vector4(0, 0, 0, 0) },    // lid close 0…1: upper L, upper R, lower L, lower R
     uGaze: { value: new THREE.Vector4(0, 0, 0, 0) },   // eyeball yaw/pitch (rad): L.x L.y R.x R.y (+x = kid's left, +y = up)
@@ -182,7 +200,9 @@ export function makeSkinMaterial(u, skinHex) {
   const sssW = new THREE.Vector3(0.46, 0.22, 0.15).multiplyScalar(lerpN(1.0, 0.75, clampN((0.62 - lum) / 0.45)));
   const sssTint = new THREE.Color(1.0, 0.38, 0.26).lerp(new THREE.Color(0.75, 0.3, 0.2), clampN((0.6 - lum) / 0.4));
   m.onBeforeCompile = (shader) => {
-    for (const k of ['uHurt', 'uHurtSeed', 'uFlash', 'uMouth', 'uTeam', 'uFreckle']) shader.uniforms[k] = u[k];
+    for (const k of ['uHurt', 'uHurtSeed', 'uFlash', 'uMouth', 'uTeam', 'uFreckle', 'uShirt', 'uShorts', 'uStrap', 'uPattern']) shader.uniforms[k] = u[k];
+    shader.uniforms.uHairCol = u.uHairCol || { value: new THREE.Color('#3a2417') };
+    shader.uniforms.uMasked = u.uMasked || { value: 0 };
     shader.uniforms.uLid = u.uLid || { value: new THREE.Vector4() };
     shader.uniforms.uMouth2 = u.uMouth2 || { value: new THREE.Vector4() };
     shader.uniforms.uSkinLum = { value: lum };
@@ -197,6 +217,8 @@ export function makeSkinMaterial(u, skinHex) {
       vBegin: bodyVBegin + 'vHead = aHead; vFace = aFace; vIwUv = uv; transformed = iwPos;',
       fPars: bodyFPars + /* glsl */`
         uniform vec4 uMouth; uniform vec4 uMouth2; uniform vec3 uTeam; uniform float uFreckle; uniform float uSkinLum;
+        uniform vec3 uShirt; uniform vec3 uShorts; uniform vec3 uStrap; uniform float uPattern; uniform vec3 uHairCol; uniform float uMasked;
+        float iwFab = 0.0;
         uniform vec3 uSSSW; uniform vec3 uSSSTint; uniform vec3 uMouthC; uniform vec3 uMouthF;
         varying vec3 vHead; varying vec4 vFace; varying vec2 vIwUv;
         float iwSSS = 1.0; float iwThin = 0.0;` + FACE_GLSL,
@@ -220,6 +242,52 @@ export function makeSkinMaterial(u, skinHex) {
           float gap = (1.0 - smoothstep(0.015, 0.05, g)) * step(0.2, abs(vIwUv.x) * 3.3);
           diffuseColor.rgb = vec3(0.96, 0.95, 0.92) * (1.0 - 0.18 * gap) * mix(0.82, 1.0, smoothstep(1.0, 0.6, abs(vIwUv.x)));
           iwTooth = 1.0; iwSSS = 0.25;
+        } else if (iwSub > 3.5 && iwSub < 6.5) {          // BREAKOUT kit over the limbs: 4 jersey sleeve · 5 padded pants · 6 glove
+          iwFab = 1.0; iwSSS = 0.0;
+          float s = vIwUv.y, th = vIwUv.x;                  // limb uv: (around, arc length from the shoulder / hip)
+          float lat = cos(th * 6.2831), fwd = sin(th * 6.2831);
+          float dLat = min(fract(th), 1.0 - fract(th)) * (iwSub < 4.5 ? 0.2 : 0.28);   // metres round the limb from the outer seam
+          vec3 c;
+          if (iwSub < 4.5) {
+            // sleeve: shirt colour, team cuff at the wrist, padded elbow patch, pattern accents
+            float pat = floor(uPattern + 0.5);
+            c = uShirt;
+            if (pat == 1.0) c = mix(c, uTeam, iwFill(dLat - 0.012));                       // sash: team stripe down the outside
+            else if (pat == 2.0) c = mix(c, uTeam, 1.0 - smoothstep(0.17, 0.175, s));                        // yoke: team upper sleeve
+            else if (pat == 3.0) { vec3 q = vBindPos * vec3(15.0, 11.0, 15.0); c = mix(c, c * 0.55, iwFill(0.575 - iwFbm(q + 3.1))); c = mix(c, uTeam, iwFill(0.655 - iwFbm(q * 0.85 + 27.3))); }
+            else c = mix(c, uTeam, iwFill(dLat - 0.0045));                                // pro: thin team piping
+            float cuff = smoothstep(0.358, 0.362, s);
+            c = mix(c, uTeam, cuff);
+            c = mix(c, vec3(0.95), iwStroke(s - 0.356, 0.0022));
+            // padded elbow: quilted dark patch on the back of the elbow
+            float pad = iwFill(length(vec2((s - 0.215) / 0.045, (fwd + 1.0) / 0.9)) - 1.0);
+            vec2 qp = vec2(th * 30.0, s * 60.0);
+            float quilt = iwStroke(fract(qp.x + qp.y) - 0.5, 0.06) + iwStroke(fract(qp.x - qp.y) - 0.5, 0.06);
+            c = mix(c, uStrap * 1.2 + 0.02, pad);
+            iwH += pad * (0.0012 - 0.0006 * quilt);
+            iwH += 0.0009 * sin(th * 6.2831 * 4.0 + s * 70.0) * smoothstep(0.24, 0.3, s) * smoothstep(0.36, 0.32, s);  // forearm bunching
+          } else if (iwSub < 5.5) {
+            // padded pants: knee pads, team side stripe, quilted thighs, elastic cuff
+            c = uShorts;
+            c = mix(c, uTeam, iwFill(dLat - 0.0075) * step(s, 0.47));
+            float knee = iwFill(length(vec2((s - 0.28) / 0.055, (fwd - 1.0) / 0.95)) - 1.0);
+            vec2 qk = vec2(th * 36.0, s * 70.0);
+            float quiltK = iwStroke(fract(qk.y) - 0.5, 0.08);
+            c = mix(c, uStrap * 1.3 + 0.03, knee);
+            iwH += knee * (0.0016 - 0.0009 * quiltK);
+            float thighQ = iwStroke(fract(s * 28.0) - 0.5, 0.05) * step(0.16, s) * step(s, 0.22) * step(0.0, fwd);
+            iwH -= 0.0005 * thighQ;
+            iwH += 0.0011 * sin(th * 6.2831 * 5.0 + s * 40.0) * smoothstep(0.34, 0.42, s) * smoothstep(0.5, 0.44, s);  // bunched over the cleat
+          } else {
+            // gloves: dark padded shell, team knuckle guard (back of the hand)
+            vec3 hp = vBindPos;
+            c = uStrap * 1.15 + 0.025;
+            float back = smoothstep(0.004, 0.01, abs(hp.x) - 0.184);
+            c = mix(c, uTeam, back * step(0.49, hp.y) * step(hp.y, 0.53));
+            iwH += 0.0003 * (iwNoise(hp * 700.0) - 0.5);
+          }
+          diffuseColor.rgb = c * (0.96 + 0.08 * iwNoise(vBindPos * 300.0));
+          iwH += 0.00005 * sin((vBindPos.y + vBindPos.x) * 5200.0) * iwLod(vBindPos.y * 5200.0, 6.2831);   // weave
         } else if (iwSub > 11.5 && iwSub < 12.5) {        // tongue
           float groove = exp(-pow(vIwUv.x / 0.12, 2.0));
           diffuseColor.rgb = vec3(0.96, 0.44, 0.42) * (1.0 - 0.2 * groove) * (0.94 + 0.12 * iwNoise(vBindPos * 900.0));
@@ -236,7 +304,7 @@ export function makeSkinMaterial(u, skinHex) {
           iwHairP = smoothstep(-hw, hw, hs);
           float capShadow = smoothstep(-0.09, 0.0, hs) * (1.0 - iwHairP);
           diffuseColor.rgb *= 1.0 - 0.22 * capShadow;
-          diffuseColor.rgb = mix(diffuseColor.rgb, uTeam * 0.55, iwHairP);
+          diffuseColor.rgb = mix(diffuseColor.rgb, uHairCol * 0.9, iwHairP);
           // ---- blush: soft warm gradient over the cheek apples (+ uMouth2.w flush), stronger on fair skin
           float bl = exp(-pow((abs(az) - 0.6) / 0.2, 2.0) - pow((el + 0.3) / 0.13, 2.0));
           float blushK = bl * mix(0.3, 0.12, smoothstep(0.35, 0.8, 1.0 - uSkinLum)) * (1.0 + 1.5 * clamp(uMouth2.w, 0.0, 1.0));
@@ -267,9 +335,10 @@ export function makeSkinMaterial(u, skinHex) {
           diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.42, 0.26, 0.28), lineK * 0.85);
           // ---- mask: pigment in the skin (not a lacquered band): near-black with a faint cool tint, satin, a soft
           //      ~1.5 mm feathered edge (plus AA), a whisper of a recess in the geometry, and a little of the skin's scatter
+          // (BREAKOUT: no Inkling mask paint — only a soft darker eye area / lash line stays so the eyes still read)
           float sd = iwVisorSD(az, el);
           float w = max(fwidth(sd), 1e-4);
-          iwVisor = smoothstep(-0.008 - w, 0.008 + w, sd);
+          iwVisor = smoothstep(-0.008 - w, 0.008 + w, sd) * (1.0 - smoothstep(-0.02, 0.1, -sd - 0.0)) * 0.0;
           vec3 vc = mix(vec3(0.012, 0.0135, 0.02), vec3(0.018, 0.021, 0.032), smoothstep(-0.1, 0.5, el));
           diffuseColor.rgb = mix(diffuseColor.rgb, vc, iwVisor);
           iwSSS *= 1.0 - 0.88 * iwVisor;
@@ -287,7 +356,7 @@ export function makeSkinMaterial(u, skinHex) {
           }
         }
       ` + HURT_FRAG,
-      fRough: 'roughnessFactor = mix(roughnessFactor, 0.16, iwHurtM); roughnessFactor = mix(roughnessFactor, 0.48, iwVisor); roughnessFactor = mix(roughnessFactor, 0.35, iwHairP); roughnessFactor = mix(roughnessFactor, 0.22, iwNail); roughnessFactor = mix(roughnessFactor, 0.14, iwWet); roughnessFactor = mix(roughnessFactor, 0.28, iwTooth);',
+      fRough: 'roughnessFactor = mix(roughnessFactor, 0.82, iwFab); roughnessFactor = mix(roughnessFactor, 0.16, iwHurtM); roughnessFactor = mix(roughnessFactor, 0.48, iwVisor); roughnessFactor = mix(roughnessFactor, 0.35, iwHairP); roughnessFactor = mix(roughnessFactor, 0.22, iwNail); roughnessFactor = mix(roughnessFactor, 0.14, iwWet); roughnessFactor = mix(roughnessFactor, 0.28, iwTooth);',
       fNormal: 'normal = iwBumpN(normal, iwH, -vViewPosition);',
       fEmissive: 'totalEmissiveRadiance += uFlash;',
       fLights: /* glsl */`
@@ -297,6 +366,7 @@ export function makeSkinMaterial(u, skinHex) {
           material.clearcoatRoughness = mix(0.45, 0.06, iwWet);
         #endif
         #ifdef USE_SHEEN
+          material.sheenColor = mix(material.sheenColor, (diffuseColor.rgb * 1.3 + 0.12) * 3.0, iwFab);
           material.sheenColor *= (1.0 - 0.85 * iwVisor) * (1.0 - iwHairP) * (1.0 - iwWet) * (1.0 - iwTooth) * mix(0.4, 0.22, uSkinLum);
         #endif`,
       fAO: 'reflectedLight.indirectDiffuse *= iwAO; reflectedLight.indirectSpecular *= mix(1.0, iwAO, 0.8);',
@@ -388,23 +458,13 @@ vec2 iwEmblem(vec2 q, float R) {
   splat = min(splat, length(q - vec2(R * 1.18, R * 0.62)) - R * 0.13);
   splat = min(splat, length(q - vec2(-R * 1.12, -R * 0.7)) - R * 0.1);
   splat = min(splat, length(q - vec2(R * 0.5, -R * 1.22)) - R * 0.08);
-  // glyph: one silhouette — arrowhead mantle with swept fins flowing into a tall body, low oval eyes, four tentacles
+  // glyph (BREAKOUT): a paintball crosshair — ring, centre ball, four ticks
   vec2 g = q / R;
-  float fins = max(abs(g.x) * 1.02 + (g.y - 0.7) * 0.95, -(g.y - 0.22));
-  float body = iwSdBox(g - vec2(0.0, 0.06), vec2(0.17, 0.3), 0.15);
-  float glyph = iwSmin(fins, body, 0.08);
-  float tent = 1e3;
-  for (int i = 0; i < 4; i++) {
-    float fi = float(i) - 1.5;
-    vec2 tq = g - vec2(fi * 0.1, -0.2);
-    tq.x -= fi * 0.1 * smoothstep(0.0, -0.3, tq.y) + 0.03 * sin(tq.y * 13.0 + fi) * smoothstep(-0.05, -0.3, tq.y);
-    float w = mix(0.052, 0.03, smoothstep(-0.02, -0.3, tq.y));
-    tent = min(tent, iwSdBox(tq - vec2(0.0, -0.15), vec2(w, 0.15), 0.028));
-  }
-  glyph = iwSmin(glyph, tent, 0.05);
-  vec2 e1 = (g - vec2(0.075, 0.0)) / vec2(0.04, 0.062), e2 = (g - vec2(-0.075, 0.0)) / vec2(0.04, 0.062);
-  float eyes = (min(length(e1), length(e2)) - 1.0) * 0.04;
-  glyph = max(glyph, -eyes);
+  float ring = abs(length(g) - 0.46) - 0.075;
+  float ball = length(g) - 0.17;
+  float ticks = min(iwSdBox(g, vec2(0.62, 0.045), 0.02), iwSdBox(g, vec2(0.045, 0.62), 0.02));
+  ticks = max(ticks, -(length(g) - 0.3));
+  float glyph = min(min(ring, ball), ticks);
   return vec2(iwFill(splat), iwFill(glyph * R));
 }
 `;
@@ -446,23 +506,8 @@ float iwShirtPattern(vec3 p) {
 }
 // ---- outfit patterns 4+ (appended; 0–3 above stay byte-identical so saved looks keep their graphics) -------------
 // collar rib / sleeve cuff colours per pattern
-vec3 iwTrimCol() {
-  float pat = floor(uPattern + 0.5);
-  if (pat < 0.5 || pat == 3.0) return uTeam;
-  if (pat < 2.5) return iwContrast(uShirt);
-  if (pat == 6.0) return uShirt * 0.55;            // camo: dark olive rib
-  if (pat == 7.0) return uShirt;                   // dip-dye: undyed collar
-  return uTeam;                                    // breton, splatter, jersey, track
-}
-vec3 iwCuffCol() {
-  float pat = floor(uPattern + 0.5);
-  if (pat < 0.5 || pat == 3.0) return uTeam;
-  if (pat < 2.5) return iwContrast(uShirt);
-  if (pat == 4.0 || pat == 5.0) return uShirt;     // breton / splatter: plain cuff
-  if (pat == 6.0) return uShirt * 0.55;
-  if (pat == 7.0) return uTeam * 0.9;              // dip-dyed ends
-  return uTeam;                                    // jersey, track
-}
+vec3 iwTrimCol() { return uTeam; }
+vec3 iwCuffCol() { return uTeam; }
 // ink splat stamped on the (roughly cylindrical) torso/sleeve around surface point c: wobbly rim + satellite drops
 float iwSplat3(vec3 p, vec3 c, float R, float seed) {
   vec3 d = p - c;
@@ -494,92 +539,54 @@ float iwDigitSD(vec2 q, int dgt) {
   if ((bits & 64) != 0) d = min(d, iwSdBox(q, vec2(0.36, 0.13), 0.07));
   return d;
 }
-/** Base colour of shirt-slot fragments (tee body = part 1, sleeves = part 2). */
+/** Base colour of shirt-slot fragments (jersey body = part 1, short over-sleeves = part 2). BREAKOUT paintball jerseys:
+ *  pattern 0 PRO side panels + V insert · 1 SASH diagonal team band · 2 YOKE team shoulders + chest band · 3 SPLAT CAMO
+ *  with team side panels (older saved pattern ids ≥ 4 fold onto these). */
 vec3 iwShirtCol(vec3 p, vec2 uv, float part) {
-  if (uPattern < 3.5) return mix(uShirt, uTeam, iwShirtPattern(p));
-  float pat = floor(uPattern + 0.5);
+  float pat = mod(floor(uPattern + 0.5), 4.0);
   vec3 c = uShirt;
   float ax = abs(p.x), zc = p.z + 0.012;
-  if (pat == 4.0) {                        // BRETON: team stripes on the body and around the sleeves, plain yoke
-    float sy, P, lo, hi;
-    if (part < 1.5) { sy = p.y; P = 0.026; lo = 0.703; hi = 0.938; }
-    else { sy = uv.y; P = 0.0235; lo = 0.036; hi = vCloth.z - 0.024; }
-    float f = abs(fract((sy - lo) / P) - 0.5);
-    float band = iwFill((f - 0.21) * P) * step(lo, sy) * step(sy, hi);
-    float m = mix(0.42 * step(lo, sy) * step(sy, hi), band, iwLod(sy, P));
-    c = mix(uShirt, uTeam, m);
-  } else if (pat == 5.0) {                 // SPLATTER: team ink splats, drips and speckles on a dark tee
-    float m = 0.0;
-    m = max(m, iwSplat3(p, vec3(0.062, 0.93, 0.072), 0.042, 1.3));
-    m = max(m, iwSplat3(p, vec3(-0.058, 0.768, 0.086), 0.025, 4.1));
-    m = max(m, iwSplat3(p, vec3(-0.096, 0.952, -0.052), 0.04, 2.2));
-    m = max(m, iwSplat3(p, vec3(0.03, 0.742, -0.088), 0.027, 5.7));
-    m = max(m, iwSplat3(p, vec3(0.2, 0.872, 0.004), 0.028, 3.3));
-    if (part < 1.5 && p.z > 0.0) {
-      for (int k = 0; k < 3; k++) {
-        float fk = float(k);
-        float x0 = 0.04 + 0.019 * fk; float y1 = 0.905 - 0.018 * fk; float y0 = y1 - (0.07 + 0.04 * fract(fk * 0.618 + 0.3));
-        float w = 0.0056 - 0.0012 * fk;
-        float dd = iwSdSeg(vec2(p.x, p.y), vec2(x0, y0), vec2(x0, y1)) - w * mix(1.0, 0.7, (y1 - p.y) / (y1 - y0));
-        dd = min(dd, length(vec2(p.x - x0, (p.y - y0) * 0.85)) - w * 1.5);
-        m = max(m, iwFill(dd));
-      }
-    }
-    vec3 cp = p * 75.0; vec3 cell = floor(cp); vec3 fr = fract(cp) - 0.5;
-    float rnd = iwHash(cell);
-    m = max(m, iwFill((length(fr) - 0.24 * rnd) / 75.0) * step(0.87, rnd) * iwLod(p.y * 75.0, 1.0));
-    c = mix(uShirt, uTeam, m);
-  } else if (pat == 6.0) {                 // SPLAT CAMO: sand + shadow blobs over olive, with a few team-ink patches
+  vec3 pipeC = iwLum(uShirt) > 0.5 ? vec3(0.1, 0.11, 0.13) : vec3(0.95);
+  if (pat == 3.0) {                        // camo base (body + sleeves)
     vec3 q = p * vec3(15.0, 11.0, 15.0);
     float n1 = iwFbm(q + 3.1), n2 = iwFbm(q * 1.15 + 11.7), n3 = iwFbm(q * 0.85 + 27.3);
-    c = mix(c, mix(uShirt, vec3(0.8, 0.76, 0.62), 0.5), iwFill(0.585 - n2));
+    c = mix(c, mix(uShirt, vec3(0.8, 0.76, 0.62), 0.45), iwFill(0.585 - n2));
     c = mix(c, uShirt * 0.5, iwFill(0.575 - n1));
-    c = mix(c, uTeam, iwFill(0.655 - n3));
-  } else if (pat == 7.0) {                 // DIP-DYE: team dye soaked up from the hem with a bleeding waterline
-    float wav = 0.011 * sin(uv.x * 6.2831 * 3.0 + 1.1) + 0.024 * (iwFbm(p * 26.0) - 0.5);
-    vec3 pale = mix(uTeam, uShirt, 0.42);
-    if (part < 1.5) {
-      float line = 0.792 + wav;
-      float k = 1.0 - smoothstep(line - 0.026, line + 0.004, p.y);
-      c = mix(uShirt, mix(pale, uTeam * 0.92, 1.0 - smoothstep(0.7, line, p.y)), k);
-      float streak = smoothstep(0.62, 0.9, iwNoise(vec3(p.x * 170.0, p.y * 7.0, p.z * 170.0))) * (1.0 - smoothstep(line, line + 0.04, p.y)) * step(line - 0.004, p.y);
-      c = mix(c, mix(uShirt, uTeam, 0.3), streak * 0.65);
-    } else {
-      float L = vCloth.z;
-      float k = smoothstep(L - 0.075 + wav, L - 0.035 + wav, uv.y);
-      c = mix(uShirt, mix(pale, uTeam * 0.92, smoothstep(L - 0.05, L, uv.y)), k);
+    c = mix(c, uTeam, iwFill(0.66 - n3) * 0.85);
+  }
+  if (part < 1.5) {
+    float side = step(0.07, ax);
+    if (pat == 0.0 || pat == 3.0) {        // team side panels with piping (+ V-neck insert on PRO)
+      side *= 1.0 - smoothstep(0.89, 0.9, p.y);
+      float panel = iwFill(abs(zc) - 0.046) * side;
+      float pipe = iwStroke(abs(zc) - 0.046, 0.0018) * side;
+      c = mix(c, uTeam, panel);
+      c = mix(c, pipeC, pipe);
+      if (pat == 0.0) {
+        float vneck = iwSdSeg(vec2(ax, p.y), vec2(0.06, 1.0), vec2(0.0, 0.925));
+        float v = iwFill(vneck - 0.009) * step(0.0, p.z);
+        c = mix(c, uTeam, v);
+        c = mix(c, pipeC, iwStroke(vneck - 0.009, 0.0016) * step(0.0, p.z));
+        c = mix(c, uTeam, smoothstep(0.962, 0.966, p.y));
+      }
+    } else if (pat == 1.0) {               // sash: shoulder (+x) to opposite hip, front and back, piped
+      vec2 dir = normalize(vec2(-0.22, -0.24));
+      vec2 q = vec2(p.x - 0.1, p.y - 0.955);
+      float dl = abs(q.x * dir.y - q.y * dir.x);
+      float band = iwFill(dl - 0.034);
+      c = mix(c, uTeam, band);
+      c = mix(c, pipeC, iwStroke(dl - 0.034, 0.0018) + iwStroke(dl - 0.041, 0.0012));
+    } else if (pat == 2.0) {               // yoke: team shoulders over a white-piped chest band, team hem band
+      float yk = smoothstep(0.9, 0.904, p.y + 0.012 * cos(p.x * 14.0));
+      c = mix(c, uTeam, yk);
+      c = mix(c, pipeC, iwStroke(p.y + 0.012 * cos(p.x * 14.0) - 0.895, 0.0024));
+      c = mix(c, uTeam, iwBand(p.y, 0.8, 0.842) * (1.0 - side * 0.0));
+      c = mix(c, uTeam, 1.0 - smoothstep(0.716, 0.72, p.y));
     }
-  } else if (pat == 8.0) {                 // JERSEY: team side panels with white piping, V-neck insert, shoulder yoke
-    if (part < 1.5) {
-      float side = step(0.07, ax);
-      float panel = iwFill(abs(zc) - 0.043) * side * step(p.y, 0.95);
-      float pipe = iwStroke(abs(zc) - 0.043, 0.0017) * side * step(p.y, 0.95);
-      float vneck = iwSdSeg(vec2(ax, p.y), vec2(0.056, 1.0), vec2(0.0, 0.93));
-      float v = iwFill(vneck - 0.0085) * step(0.0, p.z);
-      float vpipe = iwStroke(vneck - 0.0085, 0.0015) * step(0.0, p.z);
-      float yoke = smoothstep(0.962, 0.966, p.y) * (1.0 - v);
-      c = mix(c, uTeam, max(max(panel, v), yoke));
-      c = mix(c, vec3(0.96), max(pipe, vpipe));
-    } else {
-      float L = vCloth.z;
-      float pipe = iwStroke(uv.y - (L - 0.03), 0.0016);
-      c = mix(c, uTeam, smoothstep(0.02, 0.024, uv.y) * (1.0 - smoothstep(0.034, 0.038, uv.y)));   // shoulder yoke continues
-      c = mix(c, vec3(0.96), pipe);
-    }
-  } else {                                 // TRACK TOP: twin white stripes down the sides and sleeves, team yoke
-    vec3 sc = vec3(0.95);
-    if (part < 1.5) {
-      float st = (iwStroke(zc - 0.0085, 0.0032) + iwStroke(zc + 0.0085, 0.0032)) * step(0.07, ax);
-      float yoke = smoothstep(0.955, 0.959, p.y);
-      c = mix(c, uTeam, yoke);
-      c = mix(c, sc, clamp(st, 0.0, 1.0));
-      c = mix(c, sc, iwStroke(p.y - 0.957, 0.0014));
-    } else {
-      float dx = (fract(uv.x + 0.5) - 0.5) * 0.31;
-      float st = iwStroke(dx - 0.0085, 0.0032) + iwStroke(dx + 0.0085, 0.0032);
-      c = mix(c, uTeam, 1.0 - smoothstep(0.03, 0.034, uv.y));
-      c = mix(c, sc, clamp(st, 0.0, 1.0) * smoothstep(0.03, 0.034, uv.y));
-    }
+  } else {
+    // short over-sleeve: continues into the long padded sleeve (skin sub-material 4)
+    if (pat == 2.0) c = uTeam;
+    else if (pat == 0.0) c = mix(c, uTeam, smoothstep(0.02, 0.024, uv.y) * (1.0 - smoothstep(0.034, 0.038, uv.y)));
   }
   return c;
 }
@@ -642,62 +649,40 @@ export function makeClothMaterial(u) {
             // fine creases riding on the sculpted folds (geometry carries the big ones): waist compression, underarm
             // crease fans, short vertical hem creases — per pixel, faded with footprint
             iwH += iwTeeCrease(p, th) * iwLod(p.y, 0.012);
-            // chest emblem (pattern-dependent placement)
+            // jersey number (stable per character: from the per-character seed): team fill, contrast outline
             if (p.z > 0.0) {
-              vec2 q; float R; float on = 1.0;
-              if (uPattern < 0.5) { q = vec2(p.x, p.y - 0.826); R = 0.038; }
-              else if (uPattern < 1.5) { q = vec2(p.x, p.y - 0.927); R = 0.0135; }
-              else if (uPattern < 2.5) { q = vec2(p.x, p.y - 0.818); R = 0.032; }
-              else if (uPattern < 3.5) { q = vec2(p.x, p.y - 0.8); R = 0.028; }
-              else if (uPattern < 4.5) { q = vec2(p.x, p.y - 0.927); R = 0.0135; }          // breton: small logo under the collar
-              else if (uPattern < 5.5) { q = vec2(0.0); R = 1.0; on = 0.0; }                  // splatter: the splats are the graphic
-              else if (uPattern < 6.5) { q = vec2(p.x - 0.05, p.y - 0.905); R = 0.0125; }     // camo: chest patch
-              else if (uPattern < 7.5) { q = vec2(p.x, p.y - 0.862); R = 0.03; }              // dip-dye: emblem above the dye line
-              else if (uPattern < 8.5) { q = vec2(0.0); R = 1.0; on = 0.0; }                  // jersey: number instead
-              else { q = vec2(p.x - 0.048, p.y - 0.925); R = 0.0115; }                        // track: small chest logo
-              if (on > 0.5) {
-                vec2 e = iwEmblem(q, R);
-                vec3 ink = uTeam;
-                base = mix(base, ink, e.x);
-                base = mix(base, uShirt * 1.02 + 0.02, e.y * e.x);
-                iwH += 0.00018 * e.x;             // screen print sits slightly proud
-                iwShine += 0.35 * e.x;            // plastisol print: a touch glossier
-              }
-              if (uPattern > 7.5 && uPattern < 8.5) {
-                // jersey number (stable per character: derived from the per-character seed), team fill + dark outline
-                float no = floor(fract(uHurtSeed * 0.6180339 + 0.137) * 98.0) + 1.0;
-                float d1 = floor(no / 10.0), d0 = no - d1 * 10.0;
-                vec2 nq = vec2(p.x, p.y - 0.8) / 0.029;
-                float sd = d1 > 0.5 ? min(iwDigitSD(nq - vec2(-0.6, 0.0), int(d1)), iwDigitSD(nq - vec2(0.6, 0.0), int(d0))) : iwDigitSD(nq, int(d0));
-                sd *= 0.029;
-                float nf = iwFill(sd), no2 = iwFill(sd - 0.0034);
-                base = mix(base, vec3(0.09, 0.1, 0.12), no2);
-                base = mix(base, uTeam, nf);
-                iwH += 0.00016 * no2; iwShine += 0.3 * no2;
-              } else if (uPattern > 8.5) {
-                // track top: centre-front zip — dark tape, metal teeth, pull tab at the collar
-                float zx = abs(p.x);
-                float tape = iwFill(zx - 0.0046) * step(p.y, 0.994);
-                base = mix(base, uShirt * 0.45 + 0.01, tape);
-                float teeth = iwFill(zx - 0.0021) * mix(0.6, step(0.5, fract(p.y / 0.0034)), iwLod(p.y, 0.0034)) * step(p.y, 0.992);
-                base = mix(base, vec3(0.74, 0.76, 0.8), teeth);
-                float pull = iwFill(iwSdBox(vec2(p.x - 0.0036, p.y - 0.968), vec2(0.0034, 0.0088), 0.0022));
-                base = mix(base, vec3(0.8, 0.82, 0.86), pull);
-                iwH += 0.00025 * (teeth + pull) - 0.0002 * tape;
-                iwShine += teeth + pull;
-              }
+              float pat = mod(floor(uPattern + 0.5), 4.0);
+              float no = floor(fract(uHurtSeed * 0.6180339 + 0.137) * 98.0) + 1.0;
+              float d1 = floor(no / 10.0), d0 = no - d1 * 10.0;
+              vec2 nc = pat == 1.0 ? vec2(0.052, 0.772) : pat == 2.0 ? vec2(0.0, 0.768) : vec2(0.0, 0.812);
+              float S = pat == 1.0 ? 0.022 : 0.027;
+              vec2 nq = (vec2(p.x, p.y) - nc) / S;
+              float sd = d1 > 0.5 ? min(iwDigitSD(nq - vec2(-0.6, 0.0), int(d1)), iwDigitSD(nq - vec2(0.6, 0.0), int(d0))) : iwDigitSD(nq, int(d0));
+              sd *= S;
+              float nf = iwFill(sd), no2 = iwFill(sd - 0.0034);
+              vec3 outl = iwLum(uShirt) > 0.5 ? vec3(0.09, 0.1, 0.12) : vec3(0.95);
+              vec3 fillC = pat == 2.0 ? outl : uTeam;
+              base = mix(base, pat == 2.0 ? uTeam * 0.6 : outl, no2);
+              base = mix(base, fillC, nf);
+              iwH += 0.00016 * no2; iwShine += 0.3 * no2;
+            }
+            // quilted padding over the shoulders and down the sides (light bump + stitch shade)
+            {
+              float zc = p.z + 0.012, ax = abs(p.x);
+              vec2 qp = vec2(atan(p.x, zc) * 9.0, p.y * 60.0);
+              float quilt = iwStroke(fract(qp.x + qp.y) - 0.5, 0.05) + iwStroke(fract(qp.x - qp.y) - 0.5, 0.05);
+              float zone = max(smoothstep(0.93, 0.96, p.y) * smoothstep(0.06, 0.1, ax), smoothstep(0.09, 0.12, ax) * step(p.y, 0.86));
+              iwH += zone * (0.0005 - 0.0006 * quilt) * iwLod(p.y * 60.0, 1.0);
+
             }
             // lower-back print (visible around the tank from the gameplay camera)
-            if (p.z < 0.0 && uPattern > 0.5 && uPattern < 3.5) {
-              float band = iwBand(p.y, 0.735, 0.748) * step(0.06, abs(p.x));
-              base = mix(base, uTeam, band * 0.9);
-            }
+
             // tank-strap pressure shading on the shoulders (strap sits on top)
             iwAO *= 1.0 - 0.18 * exp(-pow((abs(p.x) - 0.075) / 0.018, 2.0)) * smoothstep(0.9, 0.98, p.y);
           } else if (iwPart == 2.0) { // SLEEVE: uv = (theta, s along from shoulder)
             float s = uv.y, L = vCloth.z;
             float cuff = smoothstep(L - 0.02, L - 0.018, s);
-            base = mix(base, slot == 2.0 ? iwCuffCol() : base, cuff);
+            cuff = 0.0; // BREAKOUT: the jersey sleeve continues past it (skin sub-material 4)
             float circ = 0.3;
             float st = iwStroke(s - (L - 0.024), 0.0005) * iwDash(uv.x * circ, 0.005, 0.6);
             float st2 = iwStroke(s - 0.012, 0.0005) * iwDash(uv.x * circ, 0.005, 0.6);
@@ -720,9 +705,7 @@ export function makeClothMaterial(u) {
             float dxs = iwPart == 4.0 ? min(abs(dx0), abs(dx1)) : abs(th - 0.5) * circ;   // legs: uv.x 0 = inseam, 0.5 = outer seam
             iwH -= 0.0005 * exp(-pow(dxs / 0.0016, 2.0));
             float stripe = 0.0; vec3 stripeC = uTeam;
-            if (uPattern > 0.5 && uPattern < 2.5) stripe = iwStroke(dxs, 0.0065);
-            else if (uPattern > 7.5 && uPattern < 8.5) stripe = iwStroke(dxs, 0.011);                                   // jersey: wide team panel
-            else if (uPattern > 8.5) { stripe = iwStroke(dxs - 0.0075, 0.0026); stripeC = vec3(0.95); }                // track: twin white stripes
+            stripe = iwStroke(dxs, 0.0075);                                                                            // BREAKOUT pants: team side stripe
             base = mix(base, stripeC, stripe);
             float ss = iwStroke(dxs - 0.0045, 0.00045) * iwDash(p.y, 0.005, 0.6);
             base = mix(base, base * 0.75 + 0.02, ss * iwLod(p.y, 0.005));
@@ -1017,6 +1000,74 @@ void iwHatShade(float cls, vec2 uv, vec3 bp, inout vec3 col, inout float h, inou
     }
   }
 }
+// ---- BREAKOUT paintball mask (hair-mesh gear classes 10–14; uv layout in character-geo.js buildMask) ----
+// 10 shell: jaw (uv.y 10..11: vents, chin mark), inner / edges (20), goggle frame (30..31) · 11 thermal lens (polar uv)
+// 12 strap webbing (along, 40 + across) · 13 headwrap (dome uv) · 14 buzz crop (natural hair colour)
+void iwMaskShade(float cls, vec2 uv, vec3 bp, vec3 team, inout vec3 col, inout float h, inout float ao) {
+  float v = uv.y;
+  if (cls < 10.5) {
+    if (v > 9.5 && v < 11.5) {
+      float u = uv.x - 0.5, y = v - 10.0;
+      // front breathing vents: stacked horizontal slots over the mouth, rounded ends
+      float slot = 1e3;
+      for (int k = 0; k < 5; k++) {
+        float yc = 0.3 + 0.075 * float(k); float hw = 0.13 - 0.012 * abs(float(k) - 2.0);
+        slot = min(slot, iwSdBox(vec2(u * 1.0, (y - yc) * 0.62), vec2(hw, 0.012), 0.012));
+      }
+      // cheek vents: short vertical slots either side
+      for (int k = 0; k < 3; k++) {
+        float xc = 0.25 + 0.045 * float(k);
+        slot = min(slot, iwSdBox(vec2((abs(u) - xc), (y - 0.36) * 0.62), vec2(0.011, 0.07), 0.01));
+      }
+      float vent = iwFill(slot * 0.05);
+      col = mix(col, vec3(0.025, 0.026, 0.03), vent);
+      ao *= 1.0 - 0.55 * vent; h -= 0.0012 * vent;
+      h += 0.0006 * iwStroke(slot, 0.012) * (1.0 - vent);            // raised lip round every vent
+      // moulded centre ridge down the snout + a contrasting chevron at the chin
+      h += 0.0009 * exp(-pow(u / 0.03, 2.0)) * smoothstep(0.1, 0.25, y) * (1.0 - vent);
+      float chev = iwFill(abs(abs(u) * 1.6 - (0.86 - y) * 0.9 + 0.0) - 0.02) * step(0.7, y) * step(y, 0.9) * step(abs(u), 0.1);
+      vec3 cc = distance(col, team) < 0.12 ? vec3(0.95) : team;
+      col = mix(col, cc, chev);
+    } else if (v > 29.5 && v < 31.5) {
+      float j = v - 30.0;
+      col *= mix(1.0, 0.8, smoothstep(0.55, 0.85, j));               // foam seal toward the face
+      h += 0.0003 * iwNoise(bp * 900.0) * smoothstep(0.6, 0.9, j);
+    } else if (v > 19.5 && v < 21.5) {
+      ao *= 0.7;
+    }
+  } else if (cls < 11.5) {
+    // thermal lens: smoked gradient (darker brow band), a faint cool tint, soft rim darkening at the frame
+    float r = length(uv);
+    col = mix(vec3(0.03, 0.036, 0.05), vec3(0.012, 0.014, 0.02), smoothstep(-0.6, 0.9, uv.y));
+    col += team * 0.018;
+    ao *= mix(1.0, 0.7, smoothstep(0.8, 1.0, r));
+  } else if (cls < 12.5) {
+    float x = uv.x, a = v - 40.0;
+    h += 0.00006 * sin(x * 2600.0) * iwLod(x * 2600.0, 6.2831);
+    col *= mix(0.72, 1.0, smoothstep(0.0, 0.12, a) * smoothstep(1.0, 0.88, a));   // rolled edges
+    // brand print: bold bars along the centre, repeated
+    float px = fract(x * 5.0) - 0.5;
+    float logo = iwFill(iwSdBox(vec2(px, a - 0.5), vec2(0.28, 0.16), 0.05) * 0.2) * (1.0 - iwFill(iwSdBox(vec2(px - 0.05, a - 0.5), vec2(0.06, 0.07), 0.02) * 0.2));
+    col = mix(col, distance(col, team) < 0.15 ? vec3(0.95) : vec3(0.93), logo * 0.9);
+  } else if (cls < 13.5) {
+    // headwrap: stretch jersey with a tonal diagonal print
+    float d = fract(uv.x * 26.0 + uv.y * 3.5);
+    float stripe = iwBand(d, 0.0, 0.32) * iwLod(uv.x * 26.0, 1.0);
+    col *= 1.0 - 0.22 * stripe;
+    h += 0.00012 * (iwNoise(bp * 700.0) - 0.5);
+    ao *= mix(0.75, 1.0, smoothstep(0.0, 0.03, uv.y));
+  } else {
+    // buzz crop: dense short hair — speckled, darker at the roots, fine direction noise
+    vec3 hd = normalize(bp - vec3(0.0, 1.214, 0.012));
+    float n = iwNoise(bp * vec3(1100.0, 1300.0, 1100.0));
+    float fl = iwLod(bp.y * 1100.0, 1.0);
+    float strk = sin(atan(hd.x, hd.z) * 140.0 + 9.0 * iwNoise(bp * 60.0)) * 0.5 + 0.5;   // combed-back grain
+    col *= mix(1.0, 0.7 + 0.45 * n, fl) * (0.85 + 0.35 * strk * iwLod(atan(hd.x, hd.z) * 140.0, 6.2831));
+    col += (col + 0.03) * 0.25 * smoothstep(0.5, 0.9, hd.y);
+    h += 0.00012 * (n - 0.5) * fl + 0.0001 * strk;
+    ao *= mix(0.7, 1.0, smoothstep(0.0, 0.04, uv.y));
+  }
+}
 `;
 
 // ================================================================================================
@@ -1063,6 +1114,7 @@ export function makeHairMaterial(u) {
   const m = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.34, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.05, sheen: 1, sheenRoughness: 0.4, sheenColor: new THREE.Color(1, 1, 1), specularIntensity: 1 });
   m.onBeforeCompile = (shader) => {
     for (const k of ['uHurt', 'uHurtSeed', 'uFlash', 'uTeam', 'uGlow', 'uShirt', 'uShorts', 'uStrap']) shader.uniforms[k] = u[k];
+    shader.uniforms.uHairCol = u.uHairCol || { value: new THREE.Color('#3a2417') };
     inject(shader, {
       vPars: `varying vec3 vBindPos; attribute float aTint; varying float vTint; varying vec4 vStrand; varying float vSinA; varying vec3 vGearCol;
         attribute vec3 aHair; varying vec3 vHair;
@@ -1070,7 +1122,7 @@ export function makeHairMaterial(u) {
         attribute vec3 color;
         #endif`,
       vBegin: 'vBindPos = position; vTint = aTint; vStrand = vec4(color.r, color.g, uv.x, uv.y); vSinA = color.b * 2.0 - 1.0; vGearCol = color; vHair = aHair;',
-      fPars: bodyFPars.replace('varying float vEx;', '') + 'uniform vec3 uTeam; uniform vec3 uGlow; uniform vec3 uShirt; uniform vec3 uShorts; uniform vec3 uStrap; varying float vTint; varying vec4 vStrand; varying float vSinA; varying vec3 vGearCol; varying vec3 vHair;' + EMBLEM + HAT_GLSL + GUMMY_PARS,
+      fPars: bodyFPars.replace('varying float vEx;', '') + 'uniform vec3 uTeam; uniform vec3 uGlow; uniform vec3 uShirt; uniform vec3 uShorts; uniform vec3 uStrap; uniform vec3 uHairCol; varying float vTint; varying vec4 vStrand; varying float vSinA; varying vec3 vGearCol; varying vec3 vHair;' + EMBLEM + HAT_GLSL + GUMMY_PARS,
       fColor: /* glsl */`
         float iwSuck = 0.0; float iwGear = 0.0; float iwGearCls = 0.0; float iwH = 0.0; float iwTipK = 0.0; float iwAO = 1.0; float iwCup = 0.0;
         {
@@ -1084,14 +1136,16 @@ export function makeHairMaterial(u) {
           if (vTint <= -1.5) {
             // ---------------- gear accessory ----------------
             iwGear = 1.0; iwGearCls = floor(-vTint - 2.0 + 0.5);
-            // colour code in r: >= 0 literal rgb; -1 team, -2 shirt, -3 strap, -4 shorts (each × g)
+            // colour code in r: >= 0 literal rgb; -1 team, -2 shirt, -3 strap, -4 shorts, -5 hair (each × g)
             vec3 gc = vGearCol;
-            if (gc.r < -0.5) { float code = floor(-gc.r + 0.5); gc = (code == 1.0 ? tc : code == 2.0 ? uShirt : code == 3.0 ? uStrap : uShorts) * gc.g; }
+            if (gc.r < -0.5) { float code = floor(-gc.r + 0.5); gc = (code == 1.0 ? tc : code == 2.0 ? uShirt : code == 3.0 ? uStrap : code == 5.0 ? uHairCol : uShorts) * gc.g; }
             diffuseColor.rgb = gc;
             if (iwGearCls == 2.0) { // terry / knit fabric
               iwH += 0.00018 * iwNoise(vBindPos * 1400.0) * iwLod(vBindPos.y * 1400.0, 1.0);
-            } else if (iwGearCls > 3.5) { // headgear fabrics (uv: around, rim-relative height | bill / brim)
+            } else if (iwGearCls > 3.5 && iwGearCls < 9.5) { // headgear fabrics (uv: around, rim-relative height | bill / brim)
               iwHatShade(iwGearCls, vStrand.zw, vBindPos, diffuseColor.rgb, iwH, iwAO);
+            } else if (iwGearCls > 9.5) {
+              iwMaskShade(iwGearCls, vStrand.zw, vBindPos, tc, diffuseColor.rgb, iwH, iwAO);
             }
           } else if (vGearCol.b >= 1.5) {
             // ---------------- scalp cap: tentacle bundles radiating from the crown (or the style's gather point) ----
@@ -1104,84 +1158,54 @@ export function makeHairMaterial(u) {
             iwH -= 0.0016 * groove;
             iwAO *= (1.0 - 0.3 * groove) * vHair.z;
             float edge = smoothstep(0.0, 0.25, vGearCol.g); // g = distance above the hairline (0 at the rolled lip)
-            diffuseColor.rgb = mix(mix(core, tc, 0.5), tc, 0.45 + 0.55 * edge);
-            diffuseColor.rgb = mix(diffuseColor.rgb, mix(tc, light, 0.3), 0.3 * smoothstep(0.8, 1.5, el) * (1.0 - groove));
+            vec3 hc = uHairCol;
+            diffuseColor.rgb = hc * mix(0.78, 1.0, edge);
+            diffuseColor.rgb = mix(diffuseColor.rgb, hc * 1.25 + 0.02, 0.25 * smoothstep(0.8, 1.5, el) * (1.0 - groove));
+            // combed strand striations running along the bundles
+            float fib = sin(az * 190.0 + 3.0 * iwNoise(vec3(az * 9.0, el * 14.0, 0.0)));
+            iwH += 0.00012 * fib * iwLod(az * 190.0, 6.2831);
+            diffuseColor.rgb *= 1.0 + 0.1 * fib * iwLod(az * 190.0, 6.2831);
             diffuseColor.rgb *= mix(0.62, 1.0, vHair.z);
-            iwGumOn = 1.0; iwGumThin = 0.12 * (1.0 - edge) + 0.05; iwGumTrans = tsat * 1.05;
+            iwGumOn = 0.0;
           } else {
-            // ---------------- strand / sculpted lock / modelled cup ----------------
-            float t = vStrand.x, on = vStrand.y, dist = vStrand.z, cs = vStrand.w;
-            float thick = vHair.x; iwCup = vHair.y;
-            vec3 base = vTint >= 0.0 ? mix(tc, light, vTint) : mix(tc, dark, -vTint);
-            // how much jelly the view ray crosses: deep, saturated core facing the viewer, lighter wet skin at grazing
-            float path = thick * (0.25 + 0.75 * nv);
-            float deep = smoothstep(0.002, 0.012, path);
-            diffuseColor.rgb = mix(base, mix(base, core, 0.62), deep);
-            // root → tip: denser at the root (in the cap's shade), clearer and brighter toward the tip
-            iwTipK = smoothstep(0.55, 1.0, t);
-            diffuseColor.rgb *= mix(0.8, 1.0, smoothstep(0.0, 0.3, t));
-            diffuseColor.rgb = mix(diffuseColor.rgb, mix(base, light, 0.22), 0.4 * iwTipK);
-            // defined strand edges: a slightly darker crease where the ribbon turns under
-            float edgeK = smoothstep(0.7, 0.98, abs(vSinA)) * smoothstep(0.02, 0.12, t) * step(iwCup, 0.5);
-            diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * mix(vec3(0.8), core / max(tc, vec3(1e-3)), 0.5), edgeK * 0.7);
-            iwAO *= 1.0 - 0.25 * edgeK;
-            // soft highlight ridge along the top, a slightly paler sucker side underneath
-            float ridge = smoothstep(0.75, 1.0, cs) * (1.0 - smoothstep(0.2, 0.5, abs(vSinA)));
-            diffuseColor.rgb = mix(diffuseColor.rgb, mix(diffuseColor.rgb, light, 0.3), ridge * 0.45);
-            diffuseColor.rgb = mix(diffuseColor.rgb, mix(base, light, 0.2), 0.22 * smoothstep(-0.3, -0.85, cs) * step(iwCup, 0.5));
-            // faint wet unevenness so the reflections wobble instead of sliding like on a pipe
-            iwH += 0.00009 * (iwNoise(vBindPos * vec3(55.0, 70.0, 55.0)) - 0.5);
-            iwAO *= vHair.z;
-            iwGumOn = 1.0;
-            iwGumThin = 1.0 - smoothstep(0.0015, 0.013, thick);
-            iwGumTrans = mix(tsat, mix(tsat, vec3(1.0), 0.15), iwTipK);
-            if (iwCup > 0.5) {
-              // modelled suction cup: ring 0 = dish centre, 1 = rim top, → 1.4 = foot on the skin
-              float ring = iwCup - 1.0;
-              vec3 rimC = mix(tc, vec3(1.0), 0.42);
-              vec3 dish = mix(core * 0.38, core * 0.8, smoothstep(0.15, 0.6, ring));   // dark mouth → deep dish wall
-              vec3 cupC = ring < 1.0 ? mix(dish, rimC, smoothstep(0.55, 0.9, ring)) : mix(rimC, diffuseColor.rgb, smoothstep(1.02, 1.3, ring));
-              // cups only a few pixels wide melt into the arm (no shimmering rims at mid distance)
-              float cupLod = 1.0 - smoothstep(0.3, 0.7, fwidth(ring));
-              diffuseColor.rgb = mix(mix(diffuseColor.rgb, rimC, 0.35), cupC, cupLod);
-              iwAO *= mix(1.0, ring < 1.0 ? mix(0.55, 1.0, smoothstep(0.1, 0.8, ring)) : mix(1.0, 0.5, smoothstep(1.12, 1.4, ring)), cupLod);
-              iwGumThin = ring < 1.0 ? 0.35 + 0.5 * smoothstep(0.4, 1.0, ring) : 0.6;
-              iwSuck = 1.0;
-            } else if (on > 0.75 && t > 0.3 && t < 0.97 && cs < -0.15) {
-              // printed suction cups (low detail tiers only): two staggered rows along the underside
-              float side = vSinA;
-              float row = side > 0.0 ? 0.5 : 0.0;
-              float fa = fract(dist / 0.021 + row) - 0.5;
-              float lat = (abs(side) - 0.42) / 0.24;
-              float size = mix(0.58, 0.34, smoothstep(0.35, 0.96, t));
-              float d = length(vec2(fa * 1.2, lat));
-              float w = max(fwidth(d), 1e-3);
-              float under = smoothstep(-0.15, -0.5, cs);
-              iwSuck = (1.0 - smoothstep(size - w, size + w, d)) * under;
-              float ring = smoothstep(size * 0.35, size * 0.8, d) * iwSuck;
-              float cup = (1.0 - smoothstep(size * 0.25, size * 0.6, d)) * iwSuck;
-              diffuseColor.rgb = mix(diffuseColor.rgb, mix(tc, vec3(1.0), 0.45), iwSuck * 0.8);
-              diffuseColor.rgb *= 1.0 - cup * 0.22;
-              iwH += 0.0009 * ring - 0.0006 * cup;
-            }
+            // ---------------- strand / sculpted lock: a natural hair lock (team-dyed tips) ----------------
+            float t = vStrand.x, dist = vStrand.z, cs = vStrand.w;
+            iwCup = 0.0;
+            vec3 hc = uHairCol;
+            vec3 base = vTint >= 0.0 ? mix(hc, hc * 1.5 + 0.05, vTint) : hc * mix(1.0, 0.7, -vTint);
+            iwTipK = smoothstep(0.62, 0.97, t);
+            diffuseColor.rgb = base * mix(0.72, 1.0, smoothstep(0.0, 0.35, t));
+            diffuseColor.rgb = mix(diffuseColor.rgb, mix(uTeam, hc, 0.25), 0.8 * iwTipK);
+            // hair fibres: fine grooves along the lock (section angle), a darker parting where the lock turns under
+            float fib = sin(asin(clamp(vSinA, -1.0, 1.0)) * 22.0 + cs * 9.0 + 2.0 * iwNoise(vec3(dist * 30.0, cs * 3.0, t)));
+            float fl = iwLod(dist * 60.0, 1.0);
+            iwH += 0.00016 * fib * fl;
+            diffuseColor.rgb *= 1.0 + 0.12 * fib * fl;
+            float edgeK = smoothstep(0.7, 0.98, abs(vSinA)) * smoothstep(0.02, 0.12, t);
+            diffuseColor.rgb *= 1.0 - 0.28 * edgeK;
+            iwAO *= (1.0 - 0.25 * edgeK) * vHair.z;
+            // soft highlight band along the top of the lock
+            float ridge = smoothstep(0.6, 1.0, cs) * (1.0 - smoothstep(0.2, 0.6, abs(vSinA)));
+            diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 1.35 + 0.03, ridge * 0.4);
+            iwGumOn = 0.0;
             // crevices: the baked occlusion also darkens the direct light a little (shadow maps miss them)
             diffuseColor.rgb *= mix(0.66, 1.0, vHair.z);
           }
         }
       ` + HURT_FRAG,
-      fRough: 'roughnessFactor = iwGear > 0.5 ? (iwGearCls == 1.0 ? 0.26 : iwGearCls == 2.0 ? 0.85 : iwGearCls == 3.0 ? 0.7 : iwGearCls > 3.5 ? 0.84 : 0.3) : roughnessFactor; roughnessFactor = mix(roughnessFactor, 0.2, iwHurtM); roughnessFactor = mix(roughnessFactor, 0.42, iwSuck * (1.0 - step(0.5, iwCup)));',
+      fRough: 'roughnessFactor = iwGear > 0.5 ? (iwGearCls == 1.0 ? 0.26 : iwGearCls == 2.0 ? 0.85 : iwGearCls == 3.0 ? 0.7 : iwGearCls == 10.0 ? 0.36 : iwGearCls == 11.0 ? 0.05 : iwGearCls == 12.0 ? 0.78 : iwGearCls == 13.0 ? 0.72 : iwGearCls == 14.0 ? 0.8 : iwGearCls > 3.5 ? 0.84 : 0.3) : 0.48; roughnessFactor = mix(roughnessFactor, 0.2, iwHurtM);',
       fMetal: 'metalnessFactor = (iwGear > 0.5 && iwGearCls == 1.0) ? 1.0 : 0.0;',
       fNormal: 'normal = iwBumpN(normal, iwH, -vViewPosition);',
-      fEmissive: 'totalEmissiveRadiance += uFlash + (1.0 - iwGear) * uGlow * (0.6 + 0.4 * clamp(vTint + 0.5, 0.0, 1.0)) * (0.7 + 0.6 * iwGumThin);',
+      fEmissive: 'totalEmissiveRadiance += uFlash + (1.0 - iwGear) * 0.0 * uGlow * (0.6 + 0.4 * clamp(vTint + 0.5, 0.0, 1.0)) * (0.7 + 0.6 * iwGumThin);',
       fLights: /* glsl */`
         #ifdef USE_CLEARCOAT
-          if (iwGear > 0.5) { material.clearcoat = iwGearCls == 0.0 ? 1.0 : iwGearCls == 1.0 ? 0.3 : 0.0; material.clearcoatRoughness = 0.12; }
-          else { material.clearcoat = mix(1.0, 0.55, iwSuck * (1.0 - step(0.5, iwCup))) * mix(0.35, 1.0, iwAO); material.clearcoatRoughness = min((iwCup > 0.5 ? 0.09 : 0.06) + geometryRoughness, 1.0); }
+          if (iwGear > 0.5) { material.clearcoat = iwGearCls == 0.0 ? 1.0 : iwGearCls == 1.0 ? 0.3 : iwGearCls == 10.0 ? 0.55 : iwGearCls == 11.0 ? 1.0 : 0.0; material.clearcoatRoughness = iwGearCls == 11.0 ? 0.02 : 0.12; }
+          else { material.clearcoat = 0.12 * iwAO; material.clearcoatRoughness = 0.35; }
         #endif
         // the soft base-layer lobe is light scattered back out of the jelly: tinted by it (the clearcoat stays white)
         if (iwGumOn > 0.5) { vec3 iwST = mix(vec3(1.0), iwGumTrans / max(max(iwGumTrans.r, max(iwGumTrans.g, iwGumTrans.b)), 1e-3), 0.6); material.specularColor *= iwST; material.specularColorBlended *= iwST; }
         #ifdef USE_SHEEN
-          material.sheenColor = iwGear > 0.5 ? (iwGearCls == 2.0 ? vec3(0.6) : iwGearCls > 3.5 ? mix(vec3(1.0), diffuseColor.rgb, 0.5) * 0.45 : vec3(0.0)) : mix(vec3(0.1), mix(uTeam, vec3(1.0), 0.6) * 0.22, iwTipK) * iwAO;
+          material.sheenColor = iwGear > 0.5 ? (iwGearCls == 2.0 ? vec3(0.6) : iwGearCls == 11.0 ? vec3(0.25, 0.45, 0.95) * 0.7 : iwGearCls == 14.0 ? (uHairCol * 1.4 + 0.12) * 0.5 : (iwGearCls > 3.5 && iwGearCls != 10.0) ? mix(vec3(1.0), diffuseColor.rgb, 0.5) * 0.45 : vec3(0.0)) : (uHairCol * 1.3 + 0.16) * 0.55 * iwAO;
           material.sheenRoughness = 0.35;
         #endif
       `,
@@ -1415,7 +1439,7 @@ export function getGlassMaterial() {
             float sa = max(fwidth(s), 1e-5);
             float spine = 1.0 - smoothstep(0.0004 - sa, 0.0004 + sa, abs(s - 0.004));
             float tick2 = tick; float spine2 = spine;
-            iwTick = clamp(max(tick2, spine2) * inStrip, 0.0, 1.0);
+            iwTick = 0.0 * clamp(max(tick2, spine2) * inStrip, 0.0, 1.0);   // (BREAKOUT pods: no etched gauge)
           }
         `,
         fOpaque: /* glsl */`
@@ -1458,7 +1482,7 @@ export function makeInkFillMaterial() {
           vec3 up = normalize(uUpL);
           float tilt = -(up.x * transformed.x + up.z * transformed.z) / max(up.y, 0.35);
           float k = clamp(transformed.y, 0.0, 1.0);
-          transformed.y = clamp(transformed.y + k * tilt / uSY, 0.0, 0.186 / uSY);
+          transformed.y = clamp(transformed.y + k * tilt / uSY, 0.0, 0.146 / uSY);
           vIwTop = smoothstep(0.93, 1.0, position.y);
           vIwP = position;
         }
@@ -1467,19 +1491,21 @@ export function makeInkFillMaterial() {
       fColor: /* glsl */`
         vec3 iwFillEmit = vec3(0.0);
         {
-          float depth = 1.0 - clamp(vIwP.y, 0.0, 1.0);
-          diffuseColor.rgb *= mix(1.0, 0.72, depth);          // deeper ink reads darker
-          // suspended bubbles
-          vec3 bp = vec3(vIwP.x * 60.0, vIwP.y * 9.0, vIwP.z * 60.0);
-          vec3 bc = floor(bp); vec3 bf = fract(bp) - 0.5;
-          float rnd = iwHash(bc);
-          float bub = (1.0 - smoothstep(0.12, 0.17, length(bf * vec3(1.0, 1.0, 1.0)) - 0.12 * rnd)) * step(0.82, rnd);
-          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 1.5 + 0.12, bub * 0.7);
-          // meniscus: bright rim where the surface meets the glass
-          float r = length(vIwP.xz) / 0.0615;
-          float men = vIwTop * smoothstep(0.82, 1.0, r);
-          iwFillEmit = diffuseColor.rgb * men * 0.35;
-          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 1.35 + 0.1, men);
+          // BREAKOUT: stacked paintballs in each pod — ball cells round the pod axis, shaded as little spheres
+          float podX = floor((vIwP.x + 0.078) / 0.039);
+          float cx = -0.0585 + podX * 0.039;
+          vec2 q = vec2(vIwP.x - cx, vIwP.z - 0.026);
+          float ang = atan(q.y, q.x);
+          float hy = vIwP.y * 0.14 / 0.0165;                            // ball rows along the pod (≈ 16.5 mm balls)
+          float row = floor(hy);
+          float ca = ang / 6.2831 * 6.0 + 0.5 * mod(row, 2.0);
+          vec2 cell = vec2(fract(ca) - 0.5, fract(hy) - 0.5);
+          float rr = length(cell * vec2(1.05, 1.0));
+          float ball = sqrt(max(0.0, 1.0 - 4.0 * rr * rr));
+          diffuseColor.rgb *= mix(0.45, 1.15, ball);
+          diffuseColor.rgb += 0.18 * pow(ball, 8.0);
+          float hi = smoothstep(0.93, 1.0, vIwP.y) * vIwTop;
+          iwFillEmit = diffuseColor.rgb * 0.04 * hi;
         }
       `,
       fEmissive: 'totalEmissiveRadiance += iwFillEmit;',

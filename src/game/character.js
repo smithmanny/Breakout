@@ -430,6 +430,9 @@ export class Character {
       u.uIris.value.set(IRIS[this.style.eyes][0]); u.uIris2.value.set(IRIS[this.style.eyes][1]);
     }
     u.uHurtSeed.value = (seed % 997) * 0.37;
+    // BREAKOUT: a paintball mask hides the face (eyes mesh off, ears folded flat under the ear pieces)
+    this.masked = typeof STYLE.isMasked === 'function' ? STYLE.isMasked(this.style) : false;
+    if (u.uMasked) u.uMasked.value = this.masked ? 1 : 0;
     this.mats = {
       skin: makeSkinMaterial(u, SKIN_TONES[this.style.skin]),
       cloth: makeClothMaterial(u),
@@ -599,6 +602,7 @@ export class Character {
       jaw: opt('jaw'), lidL: opt('lidL'), lidR: opt('lidR'), tank: opt('tank'), hem: opt('hem'), hemF: opt('hemF'), hemB: opt('hemB'),
       toeL: opt('toeL'), toeR: opt('toeR'), earL: opt('earL'), earR: opt('earR'), cheekL: opt('cheekL'), cheekR: opt('cheekR'),
     };
+    for (const e of [this.xb.earL, this.xb.earR]) if (e) e.scale.setScalar(this.masked ? 0.02 : 0.62);
     this.cheekRest = [this.xb.cheekL ? this.xb.cheekL.position.clone() : null, this.xb.cheekR ? this.xb.cheekR.position.clone() : null];
     // articulated hands (docs/RIG.md → Fingers): rest = power grip, curl about local Z (sign flips per side)
     this.fing = [null, null];
@@ -762,7 +766,7 @@ export class Character {
       m.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0.75, 0), 1.3);
       m.frustumCulled = true; m.renderOrder = p.order || 0; m.visible = false;
       m.name = 'kid:' + p.key + ':' + TIERS[t];
-      m.userData.iwMat = p.mat; m.userData.iwShadow = p.shadow;
+      m.userData.iwMat = p.mat; m.userData.iwShadow = p.shadow; m.userData.iwKey = p.key;
       this.kid.add(m); S.meshes[p.key] = m; S.list.push(m);
     }
     // far: sit out override passes (GTAO normals) — a 60 px kid's AO is invisible and it saves a draw per part. Only on
@@ -800,7 +804,7 @@ export class Character {
     const L = this.lod, S = this._tierSet(t);
     for (let i = 0; i < 3; i++) {
       const X = this.lodSets[i]; if (!X) continue;
-      for (const m of X.list) { m.visible = i === t; m.material = this._matFor(m.userData.iwMat); m.castShadow = m.userData.iwShadow; }
+      for (const m of X.list) { m.visible = i === t && !(this.masked && m.userData.iwKey === 'eyes'); m.material = this._matFor(m.userData.iwMat); m.castShadow = m.userData.iwShadow; }
     }
     L.tier = t; L.to = -1; L.f = 0; L.fadeOut.value.x = L.fadeIn.value.x = 0;
     this.meshes = S.meshes;
@@ -874,7 +878,7 @@ export class Character {
     if (L.to >= 0 || t === L.tier) return;
     const A = this.lodSets[L.tier], B = this._tierSet(t);
     for (const m of A.list) { m.material = this._ditherMat(m.userData.iwMat, 0); m.castShadow = false; }
-    for (const m of B.list) { m.material = this._ditherMat(m.userData.iwMat, 1); m.castShadow = m.userData.iwShadow; m.visible = true; }
+    for (const m of B.list) { m.material = this._ditherMat(m.userData.iwMat, 1); m.castShadow = m.userData.iwShadow; m.visible = !(this.masked && m.userData.iwKey === 'eyes'); }
     L.to = t; L.f = 0; L.props = false; L.fadeOut.value.x = L.fadeIn.value.x = 1e-4;
   }
 
@@ -1629,6 +1633,12 @@ export class Character {
       // hunches forward. The stabilised head stays level, so the lean reads as drive, not as falling over.
       const lean = gw * (lerp(0.05, 0.3, rn) * (1 - bk * 1.3) * (1 - 0.55 * this.wAim) + 0.14 * this.wGoo);
       P[HIPS] += lean * 0.3; P[SPINE] += lean * 0.45; P[CHEST] += lean * 0.25;
+      // BREAKOUT sprint (actor.sprinting, or any run well past run speed): a committed, low forward lean with the chin
+      // tucked (the stabilised head keeps the eyes level) and a bigger arm pump below
+      const spT = (s.sprinting ? 1 : sstep(PLAYER.runSpeed * 1.08, PLAYER.sprintSpeed || PLAYER.runSpeed * 1.45, this.gs)) * gw * (1 - bk);
+      this.wSprint = damp(this.wSprint || 0, spT, spT > (this.wSprint || 0) ? 7 : 4, dt);
+      const spW = this.wSprint;
+      P[HIPS] += 0.06 * spW; P[SPINE] += 0.13 * spW; P[CHEST] += 0.08 * spW; P[NECK] -= 0.07 * spW; P[HEAD] -= 0.06 * spW;
       // strafing leans into the direction of travel (a sideways shuffle-run banks, it doesn't stay bolt upright)
       const lat = clamp(this.kgx / 6, -1, 1) * gw * (1 - 0.3 * this.wGoo);
       P[SPINE + 2] -= 0.07 * lat; P[CHEST + 2] -= 0.04 * lat; P[HIPS + 2] -= 0.03 * lat;
@@ -1677,7 +1687,7 @@ export class Character {
     // pumping forward-in to chin height and back-out past the hip; a walk just swings loose.
     {
       const two = this.wTwo, rn = this.runW;
-      const armA = gw * lerp(0.3, 0.95, rn) * (1 - 0.35 * this.wGoo);
+      const armA = gw * lerp(0.3, 0.95, rn) * (1 - 0.35 * this.wGoo) * (1 + 0.3 * (this.wSprint || 0));
       const tgt = armA * Math.cos(TAU * (pL - 0.03));
       const aL = spr(sp, S_ARML, tgt, lerp(3.2, 4.8, rn), 0.5, dt);
       const aR = spr(sp, S_ARMR, -tgt, lerp(3.2, 4.8, rn), 0.5, dt);
@@ -3298,6 +3308,10 @@ export class Character {
       const eHi = hd ? hd + 0.08 : 0.35, eLo = hd ? hd - 0.3 : -0.45;
       if (xb.earL) xb.earL.rotation.z = clamp(aL, eLo, eHi);
       if (xb.earR) xb.earR.rotation.z = -clamp(aR, eLo, eHi);
+      // BREAKOUT: under a paintball mask the ears fold flat into the ear pieces; bare heads get small rounded ears
+      const es = this.masked ? 0.02 : 0.62;
+      if (xb.earL) xb.earL.scale.setScalar(es);
+      if (xb.earR) xb.earR.scale.setScalar(es);
     }
   }
 

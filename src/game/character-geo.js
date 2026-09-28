@@ -588,7 +588,7 @@ function buildSkin(lod = 'hero') {
     const wr = R['hand' + s];
     for (const part of handParts(s, sx, bodyLevel(lod))) {
       part.geo.translate(wr.x, wr.y, wr.z);
-      B.add(part.geo, { v3: [0, 0, 0], ex: part.ex, weights: part.weights });
+      B.add(part.geo, { v3: [0, 0, 0], ex: 6, weights: part.weights });   // BREAKOUT: gloved (skin sub-material 6; nails under the glove)
     }
   }
   return B.build('aEx', 'aHead');
@@ -1119,6 +1119,32 @@ export const HAT_KINDS = [
   },
 ];
 
+// ---- BREAKOUT paintball masks (appended: indices 4–6). A snug dome under the mask (headwrap / knit beanie / buzz crop)
+// that drops every strand (exitMax < 0), plus the mask itself (buildMask): goggle frame + thermal lens, vented jaw
+// guard, ear pieces and the head strap. `mask` = shell colour (gcol code), `acc` = accent, `strapCol` = strap colour.
+// the scalp cap is 13.5 mm thicker at the back (capOffset): level it out toward the crown so the dome has no peak/dent
+const MASK_CROWN = (az, el) => 0.0135 * (1 - Math.max(0, -Math.cos(az))) * sstep(0.7, 1.45, el) * sstep(-0.7, 0.4, el);
+const MASK_RIM = rimTable([[0, 0.5], [0.6, 0.5], [1.0, 0.45], [1.2, 0.3], [1.5, 0.1], [2.3, -0.12], [Math.PI, -0.3]]);
+HAT_KINDS.push(
+  { // headwrap: thin stretch fabric in the team colour, knotted at the back (two tails)
+    name: 'mask', mask: { shell: [0.07, 0.075, 0.085], acc: -1, strap: -1, wrap: true }, cls: 13, col: [-1, 0.92], thick: 0.0042, exitMax: -1, flare: 0.004,
+    rows: [0, 0.02, 0.06, 0.12, 0.2, 0.3], crown: 7, rim: MASK_RIM,
+    lift: (az, el) => 0.0015 + 0.004 * Math.max(0, -Math.cos(az)) * sstep(0.2, 1.0, el) * (1 - sstep(1.0, 1.5, el)) + MASK_CROWN(az, el), shape: () => 0,
+  },
+  { // knit beanie (no pom) under a team-coloured shell
+    name: 'maskBeanie', mask: { shell: -1, acc: [0.06, 0.065, 0.075], strap: [0.07, 0.075, 0.085] }, cls: 5, col: [-3, 1.35], thick: 0.0075, exitMax: -1, flare: 0.006,
+    rows: [0, 0.012, 0.09, 0.17, 0.186, 0.196, 0.206, 0.22, 0.27, 0.3], crown: 7, rim: MASK_RIM,
+    lift: (az, el) => 0.004 + 0.01 * Math.max(0, -Math.cos(az)) * sstep(0.3, 1.1, el) * (1 - sstep(1.1, 1.5, el)) + MASK_CROWN(az, el),
+    shape: (az, e) => 0.0062 * sstep(-0.01, 0.012, e) * (1 - sstep(0.188, 0.206, e)) + 0.0012 * gauss(e - 0.197, 0.008),
+  },
+  { // buzz crop: short natural hair right on the scalp (+ spiky tufts at the crown) under a white shell
+    name: 'maskCrop', mask: { shell: [0.9, 0.9, 0.88], acc: -1, strap: -1, crop: true }, cls: 14, col: [-5, 1.0], thick: 0.0032, exitMax: -1, flare: 0.003,
+    rows: [0, 0.02, 0.06, 0.12, 0.2, 0.3], crown: 7,
+    rim: rimTable([[0, 0.5], [0.6, 0.46], [1.1, 0.34], [1.5, 0.26], [2.2, -0.05], [Math.PI, -0.32]]),
+    lift: (az, el) => 0.0005 + MASK_CROWN(az, el), shape: () => 0,
+  },
+);
+
 /** Classify every strand against a dome hat and build the clearance field the hat's inner surface follows. */
 function analyseHat(hat, specs) {
   const N = 180; const tmp = new V3(), d = new V3(), sk = new V3();
@@ -1284,6 +1310,175 @@ function buildHat(B, hat, ctx, D = null) {
   }
 }
 
+// ------------------------------------------------------------------------------------------------
+// Paintball mask (hat kinds with `mask`), rigid on the head bone, built into the hair mesh (gear classes of the hair
+// material: 10 shell · 11 thermal lens · 12 strap webbing; colour codes as gcol, -5 = natural hair colour).
+//  • lens: a superellipse in (az, el) round the eyes on its own smooth wrap surface (lensR), 2–3 cm off the face;
+//  • goggle frame: a rounded rim swept round the lens outline that folds back onto the face (foam seal);
+//  • jaw guard: a thick vented shell from under the goggle to below the chin with a moulded snout;
+//  • ear pieces at the ears (character.js folds the ears flat under them), strap round the back over the dome.
+// Mask uv: lens (u, v ∈ [-1, 1]); frame (i, 30 + profile); jaw outer (u, 10 + v), inner/edges (u, 20); strap (along, 40 + across).
+// ------------------------------------------------------------------------------------------------
+export const MASK = { A: 1.16, H: 0.3, c0: 0.165, n: 3.2 };
+const spow = (v, e) => Math.sign(v) * Math.pow(Math.abs(v), e);
+const lensC = (az) => MASK.c0 + 0.05 * (az / MASK.A) ** 2;
+const lensR = (az, el) => 0.2 - 0.0075 * az * az + 0.01 * (el - 0.16) ** 2;
+const headR = (az, el) => { const d = dirAE(az, el, new V3()); return headShape(d.x, d.y, d.z, new V3()).length(); };
+const maskPt = (az, el, R, out = new V3()) => dirAE(az, el, out).multiplyScalar(R).add(HEAD_C);
+/** Lens outline point at angle th (0 = +az end, π/2 = top) scaled by r (0 = centre … 1 = edge). */
+function lensAE(th, r) { const a = MASK.A * r * spow(Math.cos(th), 2 / MASK.n); return [a, lensC(a) + MASK.H * r * spow(Math.sin(th), 2 / MASK.n)]; }
+/** Bottom edge of the lens at azimuth az (el), for |az| < A; the lens centre line beyond. */
+function lensBottom(az) { const x = Math.min(1, Math.abs(az) / MASK.A); return lensC(az) - MASK.H * Math.pow(Math.max(0, 1 - x ** MASK.n), 1 / MASK.n); }
+/** Grid whose normals face away from each vertex's `c` (set on the V3 rows before calling). */
+function gridAway(rows, opt = {}) { return gridGeo(rows, { ...opt, outward: (p, out) => out.copy(p.c) }); }
+
+function buildMask(B, hat, ctx, D = null) {
+  const lo = !!D && D.lod === 'far', mid = !!D && D.lod === 'game';
+  const M = hat.mask;
+  const col = (c, k = 1) => (Array.isArray(c) ? _c.setRGB(c[0] * k, c[1] * k, c[2] * k).clone() : gcol(c, k));
+  const SHELL = -2 - 10, LENS = -2 - 11, STRAP = -2 - 12;
+  const add = (g, ex, color, extra = {}) => B.add(g, { ex, uv: !!g.attributes.uv, color, bone: 'head', ...extra });
+  // ---- lens
+  {
+    const g = polarPatch(lo ? 4 : mid ? 6 : 9, lo ? 20 : mid ? 36 : 56, (u, v, r, out) => { const [a, e] = lensAE(Math.atan2(v, u), r); return maskPt(a, e, lensR(a, e) + 0.0006, out); });
+    orientAway(g, HEAD_C);
+    add(g, LENS, _c.setRGB(0.03, 0.035, 0.045).clone());
+  }
+  // ---- goggle frame: profile rows (s = metres outward from the lens edge, dr = radial off the lens surface | 'skin')
+  {
+    const N = lo ? 24 : mid ? 44 : 72;
+    const prof = lo ? [[-0.004, 0.001], [0.0, 0.011], [0.016, 0.011], [0.021, -0.004], [0.016, 'skin'], [0.0, 'skin']]
+      : [[-0.0045, 0.0012], [-0.0032, 0.0072], [0.0, 0.0112], [0.009, 0.0128], [0.017, 0.0108], [0.0215, 0.004], [0.0225, -0.006], [0.02, 'skin'], [0.004, 'skin']];
+    const rows = prof.map(() => []);
+    const e2 = 1e-3;
+    for (let i = 0; i < N; i++) {
+      const th = (i / N) * TAU;
+      const [a, e] = lensAE(th, 1), [a1, e1] = lensAE(th + e2, 1);
+      const R0 = lensR(a, e), ce = Math.cos(e);
+      // outward normal of the outline in metric (az·cos el, el) space
+      let ta = (a1 - a) * ce, te = e1 - e; const tl = Math.hypot(ta, te) || 1; ta /= tl; te /= tl;
+      let na = te, ne = -ta; if (na * a * ce + ne * (e - lensC(a)) < 0) { na = -na; ne = -ne; }
+      const cen = maskPt(a, e, R0 + 0.004);
+      prof.forEach(([sOut, dr], j) => {
+        const aa = a + (na * sOut) / (R0 * ce), ee = e + (ne * sOut) / R0;
+        const R = dr === 'skin' ? headR(aa, ee) + 0.004 : lensR(aa, ee) + dr;
+        const p = maskPt(aa, ee, R); p.c = cen; rows[j].push(p);
+      });
+    }
+    const g = gridAway(rows, { wrapU: true, uv: (i, j) => [i / N, 30 + j / (prof.length - 1)] });
+    add(g, SHELL, col([0.05, 0.052, 0.06]));
+  }
+  // ---- jaw guard: outer shell, inner shell, edge band
+  {
+    const nU = lo ? 10 : mid ? 18 : 28, nV = lo ? 6 : mid ? 10 : 16;
+    const Aj = (v) => lerp(1.3, 0.6, Math.pow(v, 1.5));
+    const top = (az) => lensBottom(az) - 0.035, bot = (az) => -0.82 + 0.2 * (az / 1.3) ** 2;
+    const Rj = (az, el) => {
+      let R = 0.197 - 0.0085 * az * az + 0.017 * Math.exp(-((az / 0.5) ** 2)) * Math.exp(-(((el + 0.36) / 0.3) ** 2)) - 0.012 * sstep(-0.55, -0.85, el);
+      return Math.max(R, headR(az, el) + 0.011);
+    };
+    const AE = (u, v) => { const az = lerp(-Aj(v), Aj(v), u); return [az, lerp(top(az), bot(az), v)]; };
+    const cen = maskPt(0, -0.35, 0.12);
+    const outer = [], inner = [];
+    for (let j = 0; j <= nV; j++) {
+      const ro = [], ri = [];
+      for (let i = 0; i <= nU; i++) {
+        const [az, el] = AE(i / nU, j / nV), R = Rj(az, el);
+        const po = maskPt(az, el, R); po.c = HEAD_C; ro.push(po);
+        const pi = maskPt(az, el, R - 0.0055); pi.c = maskPt(az, el, R + 1); ri.push(pi);
+      }
+      outer.push(ro); inner.push(ri);
+    }
+    add(gridAway(outer, { wrapU: false, uv: (i, j) => [i / nU, 10 + j / nV] }), SHELL, col(M.shell));
+    add(gridAway(inner, { wrapU: false, uv: () => [0, 20] }), SHELL, col([0.05, 0.05, 0.055]));
+    // edge band round the boundary (left side down, bottom across, right side up, top back)
+    const loop = [];
+    for (let j = 0; j <= nV; j++) loop.push([0, j]);
+    for (let i = 1; i <= nU; i++) loop.push([i, nV]);
+    for (let j = nV - 1; j >= 0; j--) loop.push([nU, j]);
+    for (let i = nU - 1; i >= 1; i--) loop.push([i, 0]);
+    const eo = [], ei = [];
+    for (const [i, j] of loop) { const a = outer[j][i].clone(), b = inner[j][i].clone(); a.c = b.c = cen; eo.push(a); ei.push(b); }
+    add(gridAway([eo, ei], { wrapU: true, uv: () => [0, 20] }), SHELL, col(M.acc === -1 ? -1 : M.acc, 0.9));
+    // chin bumper + forehead-to-jaw hinge bosses at the temples
+    if (!lo) for (const sx of [1, -1]) {
+      const az = sx * 1.12, el = lensC(az) - 0.02, n = new V3();
+      const p = maskPt(az, el, lensR(az, el) + 0.008); dirAE(az, el, n);
+      const boss = superEllipsoid(0.017, 0.017, 0.006, 0.7, 1, 12, 6);
+      placeBasis(boss, new V3().crossVectors(new V3(0, 1, 0), n), new V3(0, 1, 0), p);
+      add(boss, SHELL, col(M.acc === -1 ? -1 : M.acc));
+    }
+  }
+  // ---- ear pieces (vented shells over the ears) + grilles
+  for (const sx of [1, -1]) {
+    const az = sx * 1.52, el = -0.02, n = new V3(), p = new V3();
+    headSurf(az, el, 0.016, p, n);
+    const X = new V3().crossVectors(new V3(0, 1, 0), n).normalize();
+    const shell = superEllipsoid(0.048, 0.066, 0.015, 0.55, 0.7, lo ? 8 : 16, lo ? 6 : 10);
+    placeBasis(shell, X, new V3(0, 1, 0), p); add(shell, SHELL, col(M.shell));
+    if (!lo) {
+      const gr = superEllipsoid(0.026, 0.04, 0.006, 0.4, 0.5, 10, 6);
+      placeBasis(gr, X, new V3(0, 1, 0), p.clone().addScaledVector(n, 0.0115)); add(gr, SHELL, col([0.04, 0.042, 0.05]), { uv: false });
+      const ring = torus(0.036, 0.0032, 4, 18); ring.scale(0.82, 1.1, 1);
+      placeBasis(ring, X, new V3(0, 1, 0), p.clone().addScaledVector(n, 0.012)); add(ring, SHELL, col(M.acc === -1 ? -1 : M.acc));
+    }
+  }
+  // ---- strap: round the back of the head over the dome, from ear piece to ear piece
+  {
+    const N = lo ? 14 : mid ? 26 : 40, a0 = 1.34, a1 = TAU - 1.34;
+    const across = lo ? [-1, 1] : [-1, -0.5, 0, 0.5, 1];
+    const loopP = [...across.map((x) => [x, 1]), ...[...across].reverse().map((x) => [x, 0])];
+    loopP.push(loopP[0]);
+    const rows = loopP.map(() => []);
+    for (let k = 0; k <= N; k++) {
+      let az = lerp(a0, a1, k / N); if (az > Math.PI) az -= TAU;
+      const back = Math.max(0, -Math.cos(az));
+      const ec = 0.165 + 0.05 * back, R0 = headR(az, ec);
+      const halfW = 0.021 / R0;
+      loopP.forEach(([x, o], j) => {
+        const el = ec + x * halfW;
+        const off = (ctx ? ctx.offIn(az, el) + hat.thick : capOffset(az, el) + 0.006) + 0.0012 + o * 0.0028;
+        const q = headSurf(az, el, off, new V3()); q.c = headSurf(az, ec, off - 0.02, new V3()); rows[j].push(q);
+      });
+    }
+    const g = gridAway(rows, { wrapU: false, uv: (i, j) => [i / N, 40 + (loopP[Math.min(j, loopP.length - 1)][0] * 0.5 + 0.5)] });
+    add(g, STRAP, col(M.strap));
+  }
+  // ---- headwrap knot + tails at the back, crop tufts at the crown
+  if (M.wrap && ctx) {
+    const at = (el, extra) => headSurf(Math.PI, el, ctx.offIn(Math.PI, el) + hat.thick + extra, new V3());
+    const knot = superEllipsoid(0.022, 0.017, 0.014, 0.7, 0.8, lo ? 8 : 12, lo ? 5 : 8);
+    const kp = at(-0.05, 0.008); knot.translate(kp.x, kp.y, kp.z);
+    add(knot, -2 - hat.cls, gcol(-1, 0.85), { uv: false });
+    for (const sx of [1, -1]) {
+      const pts = [at(-0.06, 0.006), at(-0.2, 0.01).add(new V3(0.018 * sx, 0, -0.004)), at(-0.34, 0.02).add(new V3(0.034 * sx, -0.01, -0.012))];
+      const tail = sweep(pts, { seg: lo ? 4 : 8, radial: lo ? 4 : 6, capSteps: 1, radius: (t) => lerp(0.011, 0.016, t), flat: 0.22, outward: (P, o) => o.set(0, 0, -1) });
+      add(tail.geo, -2 - hat.cls, gcol(-1, 0.8), { uv: false });
+    }
+  }
+  if (M.crop && ctx && !lo) {
+    const rng = (k) => { const x = Math.sin(k * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+    for (let k = 0; k < 34; k++) {
+      const az = (rng(k) * 2 - 1) * 1.9, el = lerp(0.6, 1.5, Math.sqrt(rng(k + 50)));
+      if (el < hat.rim(az) + 0.1) continue;
+      const n = new V3(), p = headSurf(az, el, ctx.offIn(az, el) + hat.thick - 0.002, new V3(), n);
+      const h = 0.008 + 0.007 * rng(k + 90), r = 0.009 + 0.004 * rng(k + 20);
+      const tuft = lathe([[0, 0], [r, 0], [r * 0.9, h * 0.35], [r * 0.55, h * 0.75], [r * 0.15, h], [0, h * 1.02]], 6);
+      tuft.scale(1, 1, 0.6);
+      tuft.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new V3(0, 1, 0), n.clone().add(new V3(0, -0.2, -0.9)).normalize()));
+      tuft.translate(p.x, p.y, p.z);
+      add(tuft, -2 - hat.cls, gcol(-5, 0.9 + 0.25 * rng(k + 7)), { uv: false });
+    }
+  }
+}
+/** Flip a geometry's winding + normals when they face `c` (patches built with an arbitrary orientation). */
+function orientAway(g, c) {
+  const P = g.attributes.position, N = g.attributes.normal; let acc = 0;
+  for (let i = 0; i < P.count; i++) acc += N.getX(i) * (P.getX(i) - c.x) + N.getY(i) * (P.getY(i) - c.y) + N.getZ(i) * (P.getZ(i) - c.z);
+  if (acc < 0) { flipWinding(g); }
+  return g;
+}
+
 /** Everything needed to build one strand (built once per style variant; `si` = the style's strand index). */
 function strandSpec(sd, si, capCenter) {
   const raw = sd.pts.map((cp) => strandPoint(cp, sd.r0, sd.flat, new V3()));
@@ -1292,7 +1487,7 @@ function strandSpec(sd, si, capCenter) {
   const pts = curlTip(raw, sd.curl || 0, outDir);
   const profile = (t) => {
     let r = lerp(sd.r0, sd.r1 * 0.92, Math.pow(sstep(0.0, 0.88, t), sd.taper ?? 0.78)); // firm taper (taper > 1 stays full longer)
-    if (!sd.noClub) r *= 1 + 0.2 * Math.exp(-(((t - 0.8) / 0.07) ** 2));               // tentacle club before the tip
+    // (BREAKOUT: no tentacle club — hair locks taper straight to the tip)               // tentacle club before the tip
     return r * lerp(1, 0.5, sstep(0.9, 1, t));                                           // tapering, rounded tip
   };
   const rk = sd.rMain ?? 1;
@@ -1538,9 +1733,9 @@ function buildHair(styleIdx, hatIdx = 0, browIdx = 0, lod = 'hero') {
     const P = geo.attributes.position, N = geo.attributes.normal; const p = new V3(), n = new V3();
     B.add(geo, { bone: 'head', ex: -0.08, uv: true, color: (q, i) => _c.setRGB(col[i * 3], col[i * 3 + 1], col[i * 3 + 2]), v3: (q, i) => [0.012, 0, occ.ao(p.fromBufferAttribute(P, i), n.fromBufferAttribute(N, i))] });
   }
-  // ---- brows: tapered ink strokes on the brow bones (shape per style.brows)
+  // ---- brows: tapered strokes on the brow bones (shape per style.brows) — hidden under a paintball mask
   const bk = BROW_KINDS[browIdx] || BROW_KINDS[0];
-  for (const [s, sx] of [['L', 1], ['R', -1]]) {
+  for (const [s, sx] of hat.mask ? [] : [['L', 1], ['R', -1]]) {
     const pts = []; const q = new V3();
     for (let i = 0; i <= 6; i++) { const t = i / 6; pts.push(headSurf(sx * lerp(BROW.az0, bk.az1, t), bk.el(t), 0.0035, q).clone()); }
     const st = sweep(pts, { seg: D.brow[0], radial: D.brow[1], capSteps: 3, radius: bk.r, flat: 0.5, outward: (P, o) => o.copy(P).sub(HEAD_C).normalize() });
@@ -1557,6 +1752,7 @@ function buildHair(styleIdx, hatIdx = 0, browIdx = 0, lod = 'hero') {
   for (let si = bi; si < HAIR_MAX; si++) { for (let k = 0; k < HAIR_SEGS; k++) rest[`hair${si}_${k}`] = HEAD_C.clone(); rest[`hairTip${si}`] = HEAD_C.clone(); }
   addGear(B, vs, strandInfo, hatCtx, D);
   if (hatCtx) buildHat(B, hat, hatCtx, D);
+  if (hat.mask) buildMask(B, hat, hatCtx, D);
   return { geo: B.build('aTint', 'aHair'), rest, meta, name: style.name, hat: hat.name, lod: D.lod, dropped: strandInfo.filter((x) => !x).length };
 }
 
@@ -1565,10 +1761,10 @@ function buildHair(styleIdx, hatIdx = 0, browIdx = 0, lod = 'hero') {
 // ------------------------------------------------------------------------------------------------
 function buildTankParts(lod = 'hero') {
   const T = TANK; const chest = REST_BODY.chest;
-  const { glass, fill } = tankGlass(bodyLevel(lod));
+  const { glass, fill, fillBottom, fillHeight } = tankGlass(bodyLevel(lod));
   return {
     glass, fill, offset: T.center.clone().sub(chest), center: T.center.clone(), offsetTank: T.center.clone().sub(REST_BODY.tank),
-    tilt: T.tilt, fillBottom: -0.09, fillHeight: 0.18,
+    tilt: T.tilt, fillBottom: fillBottom ?? -0.09, fillHeight: fillHeight ?? 0.18,
   };
 }
 

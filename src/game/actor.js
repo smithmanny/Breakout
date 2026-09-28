@@ -1,4 +1,4 @@
-// Actor: one squidkid (local player or bot). Owns movement physics, ink/health/special state and drives its
+// Actor: one player (local player or bot). Owns movement physics, ammo/health/special state and drives its
 // Character visual. Controllers (player input / bot AI) only write `intent` + aim; everything else lives here so
 // bots and the player play by exactly the same rules.
 //
@@ -10,10 +10,15 @@
 //  · vertical discontinuities (step-ups, ledge assists) are absorbed by a critically-damped visual offset (smoothY)
 //  · horizontal: S-curve accel, eased braking, heading slew (turns carve at full speed), plant-and-reverse
 //  · facing: angular spring with a rate cap (turnRate is fed to the animation)
-//  · jump buffer + coyote time, apex hang, hard-landing recovery, fire buffer across form changes
+//  · jump buffer + coyote time, apex hang, hard-landing recovery, fire buffer across sprint → fire
+//
+// BREAKOUT (paintball elimination, docs/PAINTBALL.md): no squid form — the old squid intent is SPRINT (hold; can't
+// fire while sprinting). Ammo is a hopper of balls (ammo / ammoMax, reload intent / startReload(), auto-reload on a
+// dry trigger), grenades are a per-round count, the special fills from damage dealt, there is no health regen and no
+// respawn during a round (Match.canRespawn() gates it; Match resets everyone between rounds).
 import * as THREE from 'three';
 import { G, emit, clamp, damp, angleDiff, smoothstep } from '../core/ctx.js';
-import { PLAYER, WEAPONS, SPECIALS } from '../config.js';
+import { PLAYER, WEAPONS, SPECIALS, SUB, validWeapon } from '../config.js';
 import { makeContacts, Hit, GroundHit, WALKABLE } from './physics.js';
 import { WeaponRunner } from './weapons.js';
 
@@ -31,6 +36,8 @@ export function rumble(actor, strong, weak, ms) {
 export class Actor {
   constructor({ team, name, weapon = 'shooter', isLocal = false, isBot = false, style = { hair: 0, skin: 0 }, slot = 0, CharacterClass }) {
     this.team = team; this.name = name; this.isLocal = isLocal; this.isBot = isBot; this.slot = slot;
+    // retired kinds (roller / slosher: an old profile or roster) fall back to a playable marker
+    weapon = WEAPONS[weapon] && validWeapon(weapon) === weapon ? weapon : validWeapon(weapon);
     this.weaponId = weapon;
     this.weapon = WEAPONS[weapon];
     this.pos = new THREE.Vector3();
@@ -38,9 +45,11 @@ export class Actor {
     this.yaw = 0; this.aimYaw = 0; this.aimPitch = 0;
     this.aimDir = new THREE.Vector3(0, 0, 1);
     this.aimPoint = new THREE.Vector3();
-    this.intent = { move: new THREE.Vector3(), jump: false, squid: false, fire: false, sub: false, special: false };
-    this._prevIntent = { fire: false, sub: false, jump: false, special: false, squid: false };
+    // sprint: hold to run faster (can't fire). `squid` is the old name of the same button (read as sprint too).
+    this.intent = { move: new THREE.Vector3(), jump: false, sprint: false, squid: false, fire: false, sub: false, special: false, reload: false };
+    this._prevIntent = { fire: false, sub: false, jump: false, special: false, squid: false, sprint: false, reload: false };
     this._squidPressT = -1; this._firePressT = -1;
+    this.special = 0;
     this.contacts = makeContacts();
     this.groundHit = new Hit();
     this.wallHit = new Hit();
@@ -53,7 +62,7 @@ export class Actor {
     // re-emitted as 'actor:<name>' with the actor and the surface under it (0 dry, 1 own ink, 2 enemy ink). See docs/EVENTS.md.
     this.character.onEvent = (name, data) => emit('actor:' + name, { actor: this, surface: this.groundTeam, ...(data || {}) });
     this.weaponRunner = new WeaponRunner(this);
-    this.stats = { turf: 0, splats: 0, deaths: 0, specials: 0 };
+    this.stats = { turf: 0, splats: 0, deaths: 0, specials: 0, damage: 0 };
     this.anim = {
       time: 0, speed: 0, localMove: { x: 0, z: 0 }, grounded: true, vy: 0, aimPitch: 0, firing: false, charge: 0, rolling: false,
       form: 'kid', wallNormal: new THREE.Vector3(), ink: 1, lowInk: false, special: 0, invuln: false,
@@ -68,8 +77,14 @@ export class Actor {
   reset() {
     this.alive = true;
     this.hp = PLAYER.hp;
-    this.ink = PLAYER.inkMax;
-    this.special = 0;            // points toward special
+    this.ammoMax = this.weapon.hopper || 100;
+    this.ammo = this.ammoMax;    // balls in the hopper
+    this.reloading = 0;          // seconds left on the current reload (0 = not reloading)
+    this.grenades = SUB.bomb.count ?? 2;
+    this.sprinting = false;
+    this._dryCd = 0;
+    // the special meter (damage points) carries over between rounds; a splat halves it (splat())
+    this.special = this.special || 0;
     this.specialActive = null;   // { id, t, phase }
     this.form = 'kid';           // desired form
     this.submerged = false;
@@ -103,24 +118,60 @@ export class Actor {
   }
 
   setWeapon(id) {
+    id = validWeapon(id);
     this.weaponId = id; this.weapon = WEAPONS[id];
     this.character.setWeapon(id);
     this.weaponRunner.reset();
+    this.ammoMax = this.weapon.hopper || 100; this.ammo = this.ammoMax; this.reloading = 0;
+  }
+
+  // ---- ammo (hopper) ------------------------------------------------------------------------------------------------
+  // `ink` is the old 0..100 tank: kept as a mirror of the hopper (HUD / bots / net / character anim read it; the net
+  // code writes it for remote actors).
+  get ink() { return this.ammoMax > 0 ? (this.ammo / this.ammoMax) * PLAYER.inkMax : 0; }
+  set ink(v) { if (this.ammoMax > 0 && Number.isFinite(v)) this.ammo = clamp((v / PLAYER.inkMax) * this.ammoMax, 0, this.ammoMax); }
+  hasAmmo(n = 1) { return this.reloading <= 0 && this.ammo >= n - 1e-6; }
+  useAmmo(n = 1) { if (!this.hasAmmo(n)) return false; this.ammo = Math.max(0, this.ammo - n); return true; }
+  reloadFrac() { const t = this.weapon.reloadTime || 1.6; return this.reloading > 0 ? clamp(1 - this.reloading / t, 0, 1) : 0; }
+  /** Swap a pod in: `reloading` counts down weapon.reloadTime, then the hopper is full. false = nothing to do. */
+  startReload() {
+    if (!this.alive || this.reloading > 0 || this.ammo >= this.ammoMax - 1e-6) return false;
+    this.reloading = this.weapon.reloadTime || 1.6;
+    this.weaponRunner.cancel?.();
+    this.sprinting = false;
+    emit('reload:start', { actor: this });
+    return true;
+  }
+  _updateReload(dt) {
+    if (this.reloading <= 0) return;
+    this.reloading -= dt;
+    if (this.reloading <= 0) { this.reloading = 0; this.ammo = this.ammoMax; emit('reload:end', { actor: this }); }
+  }
+  /** Trigger pulled on an empty hopper: 'weapon:dry' (throttled) and an automatic reload. */
+  dryFire() {
+    if (this._dryCd > 0 || this.reloading > 0) return;
+    this._dryCd = 0.4;
+    emit('weapon:dry', { actor: this });
+    this.startReload();
   }
 
   specialCost() { return this.weapon.specialCost; }
   specialFrac() { return clamp(this.special / this.specialCost(), 0, 1); }
   specialReady() { return this.special >= this.specialCost() && !this.specialActive; }
 
+  // special meter: damage dealt to enemies
+  addSpecialPoints(pts) {
+    if (!(pts > 0) || this.specialActive) return;
+    const was = this.specialReady();
+    this.special = Math.min(this.specialCost(), this.special + pts);
+    if (!was && this.specialReady()) emit('special:ready', { actor: this });
+  }
+
+  // painted area is cosmetic now: tallied for stats / the HUD ticker, never charges the special
   addTurf(area) {
     if (area <= 0) return;
     this.stats.turf += area;
     emit('turf', { actor: this, area });
-    if (!this.specialActive) {
-      const was = this.specialReady();
-      this.special = Math.min(this.specialCost(), this.special + area);
-      if (!was && this.specialReady()) emit('special:ready', { actor: this });
-    }
   }
 
   spawnAt(p, yaw) {
@@ -159,7 +210,14 @@ export class Actor {
   damage(amount, attacker, source = 'weapon') {
     if (!this.alive || amount <= 0) return false;
     if (this.invuln > 0) return false;
+    if (G.match?.damageOpen && !G.match.damageOpen()) return false;   // between rounds nobody gets hurt
     if (this.specialActive && this.specialActive.armor) amount *= 0.25;
+    const applied = Math.min(amount, Math.max(0, this.hp));
+    // special meter fills from damage dealt (online, a remote attacker's own client credits it when it sends the hit)
+    if (attacker && attacker !== this && attacker.team !== this.team) {
+      attacker.stats.damage = (attacker.stats.damage || 0) + applied;
+      if (!attacker.remote) attacker.addSpecialPoints(applied);
+    }
     this.hp -= amount;
     this.lastDamage = 0;
     this.hurtFlash = Math.min(1, this.hurtFlash + amount / 60);
@@ -192,6 +250,8 @@ export class Actor {
     this.special *= 0.5;
     this.specialActive = null;
     this.climbing = false;
+    this.sprinting = false;
+    this.reloading = 0;
     this.weaponRunner.onDeath();
     const col = attacker ? attacker.color : G.teamColors[this.enemyTeam];
     _v.copy(this.pos); _v.y += 0.6;
@@ -224,21 +284,25 @@ export class Actor {
     const P = PLAYER;
     const intent = this.intent;
     const prev = this._prevIntent;
+    const sprintHeld = !!(intent.sprint || intent.squid);
     const firePressed = intent.fire && !prev.fire;
     const jumpPressed = intent.jump && !prev.jump;
     const subReleased = !intent.sub && prev.sub;
     const specialPressed = intent.special && !prev.special;
-    if (intent.squid && !prev.squid) this._squidPressT = G.time;
+    const reloadPressed = intent.reload && !prev.reload;
+    if (sprintHeld && !prev.sprint) this._squidPressT = G.time;
     if (firePressed) this._firePressT = G.time;
     prev.fire = intent.fire; prev.jump = intent.jump; prev.sub = intent.sub; prev.special = intent.special; prev.squid = intent.squid;
+    prev.sprint = sprintHeld; prev.reload = intent.reload;
 
     this.invuln = Math.max(0, this.invuln - dt);
     this.lastDamage += dt; this.lastFire += dt; this.landT += dt; this.kidT += dt;
     this.hurtFlash = Math.max(0, this.hurtFlash - dt * 0.6);
-    this.inkWarnCd -= dt;
+    this.inkWarnCd -= dt; this._dryCd -= dt;
     this.jumpBuffer = jumpPressed ? P.jumpBuffer : Math.max(0, this.jumpBuffer - dt);
     this.fireBuffer = firePressed ? P.fireBuffer : Math.max(0, this.fireBuffer - dt);
     this.hardLand = Math.max(0, this.hardLand - dt / P.hardLandTime);
+    this._updateReload(dt);
 
     // aim vector from yaw/pitch
     const cp = Math.cos(this.aimPitch);
@@ -249,83 +313,67 @@ export class Actor {
     if (this.specialActive) { this._updateSpecial(dt); this._finishFrame(dt); return; }
     if (specialPressed && this.specialReady()) { this._startSpecial(); this._finishFrame(dt); return; }
 
-    // ---- form: squid while the swim button is held. Swim + fire both held → the most recent press wins, so diving
-    // mid-spray and popping out of the ink to shoot both work instantly (the pop-out shot is buffered, never lost).
+    // ---- reload (R / X): swap a pod in (not while mid-charge / mid-stream: those finish first)
+    if (reloadPressed) this.startReload();
+
+    // ---- sprint while the button is held and you're moving. Sprint + fire both held → the most recent press wins, so
+    // breaking into a sprint mid-spray and snapping back to shoot both work instantly (the first shot after a sprint
+    // waits emergeDelay while the marker comes up — buffered, never lost).
+    this.form = 'kid';
+    const mvIn = Math.hypot(intent.move.x, intent.move.z) > 0.2;
     const fireWins = (intent.fire || this.fireBuffer > 0) && this._firePressT >= this._squidPressT;
-    const wantSquid = intent.squid && !fireWins && !this.weaponRunner.busy();
-    if (wantSquid !== (this.form === 'squid')) {
-      this.form = wantSquid ? 'squid' : 'kid';
-      if (!wantSquid) this.kidT = 0;
-      if (this.isLocal || this._nearCamera()) G.audio?.play(wantSquid ? 'squid_in' : 'squid_out', { pos: this.pos, volume: this.isLocal ? 0.8 : 0.5 });
-      if (wantSquid && this.groundTeam === 1) G.fx?.burst(_v.copy(this.pos).setY(this.pos.y + 0.1), _v2.set(0, 1, 0), this.color, { count: 8, speed: 2.5, size: 0.07 });
+    const wantSprint = sprintHeld && mvIn && !fireWins && !this.weaponRunner.busy() && !intent.sub;
+    if (wantSprint !== this.sprinting) {
+      this.sprinting = wantSprint;
+      if (!wantSprint) this.kidT = 0;
+      emit('actor:sprint', { actor: this, on: wantSprint });
     }
-    const isSquid = this.form === 'squid';
+    const sprinting = this.sprinting;
 
-    // ---- surface under feet (from last frame's ground probe; position hasn't moved since)
+    // ---- surface under feet (from last frame's ground probe; cosmetic only: footsteps)
     this._surface();
-    this.submerged = isSquid && this.grounded && this.groundTeam === 1;
-    const onEnemy = this.grounded && this.groundTeam === 2 && !this.submerged;
-    this.onEnemy = onEnemy;
-
-    // ---- wall climb (squid on own-ink wall, pushing into it)
-    this._updateClimb(dt, isSquid);
+    this.submerged = false;
+    this.onEnemy = false;
+    this.climbing = false;
 
     // ---- horizontal movement
-    if (!this.climbing) this._horizontal(dt, isSquid, onEnemy);
+    this._horizontal(dt, sprinting);
 
     // ---- dualies: a jump press while firing with a move direction rolls instead of jumping (weapons.js owns the roll:
-    // it spends the ink, emits weapon:dodge and triggers the character's roll; its velocity profile drives _horizontal)
-    if (this.jumpBuffer > 0 && !isSquid && this.grounded && this.weaponRunner.tryDodge?.(this.intent.move)) this.jumpBuffer = 0;
+    // it emits weapon:dodge and triggers the character's roll; its velocity profile drives _horizontal)
+    if (this.jumpBuffer > 0 && !sprinting && this.grounded && this.weaponRunner.tryDodge?.(this.intent.move)) this.jumpBuffer = 0;
 
     // ---- jump (buffered, with coyote time)
     this.coyote = this.grounded ? P.coyoteTime : this.coyote - dt;
     let jumped = false;
-    if (this.jumpBuffer > 0 && (this.grounded || this.coyote > 0) && !this.climbing) {
-      let jv = this.submerged ? P.swimJumpVel : P.jumpVel;
-      if (onEnemy) jv *= 0.72;
-      this.vel.y = jv;
+    if (this.jumpBuffer > 0 && (this.grounded || this.coyote > 0)) {
+      this.vel.y = P.jumpVel;
       this.grounded = false; this.coyote = 0; this.jumpBuffer = 0;
       jumped = true;
       this.character.trigger('jump');
-      if (this.submerged) G.fx?.burst(_v.copy(this.pos), _v2.set(0, 1, 0), this.color, { count: 10, speed: 3.5, size: 0.08 });
-      if (this.isLocal || this._nearCamera()) G.audio?.play(this.submerged ? 'swim_splash' : 'jump', { pos: this.pos, volume: 0.6 });
-      emit('actor:jump', { actor: this, surface: this.groundTeam, swim: this.submerged });
+      if (this.isLocal || this._nearCamera()) G.audio?.play('jump', { pos: this.pos, volume: 0.6 });
+      emit('actor:jump', { actor: this, surface: this.groundTeam, swim: false });
     }
 
     // ---- integrate + collide (feet + body)
-    this._integrate(dt, isSquid, jumped);
+    this._integrate(dt, false, jumped);
     this._spawnBarrier();
 
-    // ---- ink / hp
-    if (onEnemy) {
-      if (this.damageFromInk < P.enemyInkDamageCap && this.invuln <= 0) {
-        const d = Math.min(P.enemyInkDps * dt, P.enemyInkDamageCap - this.damageFromInk);
-        this.damageFromInk += d;
-        this.hp = Math.max(1, this.hp - d);
-        this.hurtFlash = Math.min(1, this.hurtFlash + dt * 0.5);
-      }
-      this.lastDamage = Math.min(this.lastDamage, 0.4);
-    } else {
-      this.damageFromInk = Math.max(0, this.damageFromInk - dt * 30);
-    }
-    if (this.lastDamage > P.regenDelay && this.hp < P.hp) {
-      this.hp = Math.min(P.hp, this.hp + (this.submerged ? P.regenRateSwim : P.regenRate) * dt);
-    }
-    const wasFull = this.ink >= P.inkMax;
-    if (this.submerged || this.climbing) this.ink = Math.min(P.inkMax, this.ink + P.inkRefillSwim * dt);
-    else if (!isSquid && this.lastFire > P.inkRefillDelay && !this.weaponRunner.busy()) this.ink = Math.min(P.inkMax, this.ink + P.inkRefillKid * dt);
-    else if (isSquid) this.ink = Math.min(P.inkMax, this.ink + P.inkRefillKid * 0.5 * dt);
-    if (!wasFull && this.ink >= P.inkMax && this.isLocal) G.audio?.play('refill_full', { volume: 0.5 });
+    // ---- hp: no regen in paintball (PLAYER.regenRate is 0; boss mode keeps whatever the config says)
+    if (P.regenRate > 0 && this.lastDamage > P.regenDelay && this.hp < P.hp) this.hp = Math.min(P.hp, this.hp + P.regenRate * dt);
 
-    // ---- weapons (a squid → kid pop-out holds the first shot for emergeDelay; a tap during it is buffered, not lost)
+    // ---- weapons (a sprint → fire switch holds the first shot for emergeDelay; a tap during it is buffered, not lost)
     let fire = false, pressed = false;
-    if (!isSquid && this.kidT >= P.emergeDelay) {
+    const frozen = G.match?.fireLocked?.() || false;   // pre-round / post-round: no shooting
+    if (!sprinting && this.kidT >= P.emergeDelay && !frozen) {
       const buffered = this.fireBuffer > 0;
       fire = intent.fire || buffered;
       pressed = firePressed || buffered;
       this.fireBuffer = 0;
     }
-    this.weaponRunner.update(dt, { fire, firePressed: pressed, sub: intent.sub && !isSquid, subReleased: subReleased && !isSquid });
+    if (this.reloading > 0) { fire = false; pressed = false; }
+    const canSub = !sprinting && !frozen;
+    this.weaponRunner.update(dt, { fire, firePressed: pressed, sub: intent.sub && canSub, subReleased: subReleased && canSub });
 
     // ---- fall into the sea
     // the sea: below the waterline with no deck underneath (dry-dock trenches sit below sea level and are safe)
@@ -361,7 +409,7 @@ export class Actor {
   }
 
   // ------------------------------------------------------------------ horizontal movement model
-  _horizontal(dt, isSquid, onEnemy) {
+  _horizontal(dt, sprinting) {
     const P = PLAYER;
     // while a dodge roll runs, the weapon runner owns horizontal velocity; in the post-roll lock you're a planted turret
     if (this.weaponRunner.dodgeVel?.(this.vel)) return;
@@ -373,8 +421,8 @@ export class Actor {
     // ---- airborne: vector steering with light air control (momentum is kept)
     if (!this.grounded) {
       let target, accel, decel;
-      if (isSquid) { target = Math.max(P.squidDrySpeed, sp); accel = P.squidAirAccel; decel = P.squidAirDecel; }
-      else { target = Math.max(this.weaponRunner.moveSpeed(), P.airMinSpeed); accel = P.airAccel; decel = P.airDecel; }
+      target = Math.max(sprinting ? P.sprintSpeed : this.weaponRunner.moveSpeed(), P.airMinSpeed); accel = P.airAccel; decel = P.airDecel;
+      if (sprinting) target = Math.max(target, Math.min(sp, P.sprintSpeed));   // a sprint jump keeps its speed
       const tvx = mh > 0.01 ? (mv.x / mh) * target * mag : 0, tvz = mh > 0.01 ? (mv.z / mh) * target * mag : 0;
       const dvx = tvx - vx, dvz = tvz - vz, dl = Math.hypot(dvx, dvz);
       const rate = (mh > 0.01 ? accel : decel) * dt;
@@ -383,16 +431,11 @@ export class Actor {
     }
     // ---- grounded: speed + heading model
     let vt, A, aIn, inKnee, outKnee, D, dMin, dKnee, W;
-    if (isSquid && this.submerged) {
-      vt = P.swimSpeed; A = P.swimAccel; aIn = P.swimAccelIn; inKnee = 3; outKnee = P.swimOutKnee; D = P.swimDecel; dMin = 0.5; dKnee = 4; W = P.swimTurn;
-    } else if (isSquid) {
-      vt = P.squidDrySpeed; A = P.squidAccel; aIn = 0.6; inKnee = 1; outKnee = 0.3; D = P.squidDecel; dMin = 0.5; dKnee = 2; W = P.squidTurn;
-    } else {
-      vt = this.weaponRunner.moveSpeed(); A = P.runAccel; aIn = P.runAccelIn; inKnee = P.runInKnee; outKnee = P.runOutKnee;
-      D = P.runDecel; dMin = P.runDecelMin; dKnee = P.runDecelKnee; W = P.turnRate;
-      if (this.hardLand > 0) vt *= 1 - (1 - P.hardLandSlow) * this.hardLand;
-    }
-    if (onEnemy) { vt = Math.min(vt, P.enemyInkSpeed); A = Math.min(A, P.enemyInkAccel); D = Math.max(P.enemyInkDecel, 0); }
+    vt = this.weaponRunner.moveSpeed(); A = P.runAccel; aIn = P.runAccelIn; inKnee = P.runInKnee; outKnee = P.runOutKnee;
+    D = P.runDecel; dMin = P.runDecelMin; dKnee = P.runDecelKnee; W = P.turnRate;
+    if (sprinting) { vt = P.sprintSpeed; A = P.sprintAccel ?? P.runAccel; W = P.sprintTurn ?? P.turnRate; }
+    if (this.hardLand > 0) vt *= 1 - (1 - P.hardLandSlow) * this.hardLand;
+    if (G.match?.inputFrozen?.(this)) vt = 0;
     if (mh < 0.01) {
       // brake: strong at speed, easing into the stop
       if (sp < 1e-4) { this.vel.x = 0; this.vel.z = 0; return; }
@@ -409,7 +452,7 @@ export class Actor {
     if (sp > 0.5 && ang > P.reverseAngle) {
       // plant-and-reverse: brake through zero toward the new direction
       const tvx = tx * vts, tvz = tz * vts, ex = tvx - vx, ez = tvz - vz, el = Math.hypot(ex, ez);
-      const r = Math.max(P.reverseDecel, D) * dt * (onEnemy ? 0.5 : 1);
+      const r = Math.max(P.reverseDecel, D) * dt;
       if (el <= r) { this.vel.x = tvx; this.vel.z = tvz; } else { this.vel.x += (ex / el) * r; this.vel.z += (ez / el) * r; }
       return;
     }
@@ -427,7 +470,7 @@ export class Actor {
       const a = A * (aIn + (1 - aIn) * smoothstep(0, inKnee, sp)) * clamp((vts - sp) / (outKnee * vt), P.runOutMin, 1);
       ns = Math.min(vts, sp + a * dt);
     } else {
-      // over speed (swim exit glide, entering enemy ink, starting to fire): shed it at the brake rate
+      // over speed (sprint exit, starting to fire): shed it at the brake rate
       ns = Math.max(vts, sp - D * (dMin + (1 - dMin) * smoothstep(0, dKnee, sp - vts)) * dt);
     }
     this.vel.x = dx * ns; this.vel.z = dz * ns;
@@ -607,88 +650,16 @@ export class Actor {
     }
   }
 
-  // ------------------------------------------------------------------ wall climb
-  _updateClimb(dt, isSquid) {
-    const P = PLAYER;
-    this.climbExit = Math.max(0, this.climbExit - dt);
-    if (!isSquid || this.climbExit > 0) { if (this.climbing) this._setClimb(false); return; }
-    const mv = this.intent.move;
-    const mh = Math.hypot(mv.x, mv.z), mag = Math.min(1, mh);
-    const dir = _fwd;
-    if (this.climbing) dir.set(-this.wallN.x, 0, -this.wallN.z);
-    else { if (mh < 0.2) return; dir.set(mv.x, 0, mv.z); }
-    if (dir.lengthSq() < 1e-6) return;
-    dir.normalize();
-    _v.copy(this.pos); _v.y += 0.3;
-    const h = G.physics.raycast(_v, dir, P.radius + 0.35, this.wallHit);
-    const isWall = h.hit && Math.abs(h.normal.y) < 0.5;
-    const inked = isWall && h.face >= 0 && G.paint.sample(h.face, h.u, h.v) - 1 === this.team;
-    const into = isWall && mh > 0.01 ? -(mv.x * h.normal.x + mv.z * h.normal.z) / mh : 0;
-    if (!this.climbing) {
-      if (!(inked && into > P.climbAttachDot)) return;
-      this.wallN.copy(h.normal);
-      this.climbV = Math.max(0, this.vel.y);
-      this._setClimb(true);
-    }
-    if (!h.hit) { this._ledgePop(dir); return; }                       // over the top
-    if (!inked) {                                                        // ink ran out under us: let go
-      this._setClimb(false); this.vel.y = Math.min(this.vel.y, 1.5);
-      this.vel.x += h.normal.x * 1.2; this.vel.z += h.normal.z * 1.2; this.climbExit = 0.2;
-      return;
-    }
-    if (into < P.climbDetachDot) {                                       // pushing away: hop off the wall
-      this._setClimb(false);
-      this.vel.set(h.normal.x * 3.2, 3.2, h.normal.z * 3.2); this.climbExit = 0.3;
-      return;
-    }
-    this.wallN.copy(h.normal);
-    // is there more of our ink above? (stop at the ink line instead of flying past it)
-    _v.copy(this.pos); _v.y += 0.85;
-    const hu = G.physics.raycast(_v, dir, P.radius + 0.45, this._ledgeHit);
-    const capped = hu.hit && Math.abs(hu.normal.y) < 0.5 && !(hu.face >= 0 && G.paint.sample(hu.face, hu.u, hu.v) - 1 === this.team);
-    // climb speed eases in (no instant 0 → 7.5 m/s snap), cling when the stick is neutral, and eases toward the
-    // ledge-pop speed as the top comes into reach (so the pop never yanks the squid's vertical speed)
-    let want = capped ? 0 : P.climbSpeed * clamp(into, 0, 1) * mag;
-    if (!hu.hit && want > 0) want = Math.min(want, Math.sqrt(2 * P.gravity * P.apexGravityMul * (P.ledgePopClear + 0.3)));
-    const a = P.climbAccel * dt * (want > this.climbV ? 1 : 1.6);
-    this.climbV = this.climbV < want ? Math.min(want, this.climbV + a) : Math.max(want, this.climbV - a);
-    this.vel.y = this.climbV;
-    // hug the wall, slide sideways along it
-    const n = h.normal;
-    const side = _v2.set(mv.x, 0, mv.z);
-    side.addScaledVector(n, -side.dot(n));
-    this.vel.x = side.x * P.climbSideSpeed - n.x * 1.2;
-    this.vel.z = side.z * P.climbSideSpeed - n.z * 1.2;
-    this.anim.wallNormal.copy(n);
-  }
-
-  _setClimb(on) {
+  _setClimb(on) {   // (no wall climb in BREAKOUT; kept for callers that clear it)
     if (this.climbing === on) return;
     this.climbing = on;
-    if (!on) this.climbV = 0;
+    this.climbV = 0;
     emit('actor:climb', { actor: this, on });
   }
 
-  // Reached the top of the wall: a controlled hop that clears the ledge by ledgePopClear and carries onto it.
-  _ledgePop(dir) {
-    const P = PLAYER;
-    _v.copy(this.pos).addScaledVector(dir, P.radius + 0.32); _v.y = this.pos.y + 1.4;
-    const t = G.physics.raycast(_v, DOWN, 2.0, this._ledgeHit, true);
-    const top = t.hit && t.normal.y > WALKABLE ? t.point.y : this.pos.y + 0.3;
-    const g = P.gravity * P.apexGravityMul;
-    const rise = Math.max(0.25, top + P.ledgePopClear - this.pos.y);
-    const cv = this.climbV;             // (read before _setClimb clears it) — keeps the vertical speed continuous
-    this._setClimb(false);
-    this.vel.y = Math.max(Math.sqrt(2 * g * rise), Math.min(cv, 6.5));
-    this.vel.x = dir.x * P.ledgePopCarry; this.vel.z = dir.z * P.ledgePopCarry;
-    this.climbExit = 0.3;
-    this.grounded = false;
-    G.fx?.burst(_v2.copy(this.pos).setY(this.pos.y + 0.3), _v.set(0, 1, 0), this.color, { count: 7, speed: 2.6, size: 0.07 });
-    if (this.isLocal || this._nearCamera()) G.audio?.play('swim_splash', { pos: this.pos, volume: 0.45 });
-  }
-
   // ------------------------------------------------------------------ super jump
-  canSuperJump() { return this.alive && !this.superJumpState && !this.specialActive && G.match?.playing(); }
+  // (elimination rounds have no super jump — Match.superJumpOk() says so; Boss Battle keeps it)
+  canSuperJump() { return this.alive && !this.superJumpState && !this.specialActive && G.match?.playing() && G.match?.superJumpOk?.() !== false; }
 
   // Launch toward an ally (or a fixed point). Charge in place as a glowing squid, then arc through the sky.
   superJump(target) {
@@ -914,6 +885,9 @@ export class Actor {
     if (this.specialActive) a.form = 'kid';
     a.ink = this.ink / PLAYER.inkMax;
     a.lowInk = this.ink < 18;
+    a.sprinting = !!this.sprinting;
+    a.reloading = this.reloading > 0;
+    a.reloadFrac = this.reloadFrac();
     a.special = this.specialFrac();
     a.invuln = this.invuln > 0;
     a.hp = clamp(this.hp / PLAYER.hp, 0, 1);

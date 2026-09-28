@@ -10,6 +10,7 @@
 // original layouts and every existing importer
 import { PATTERN } from './mapkit.js';
 import { LAYOUT as CARGO } from './stages/cargo/layout.js';
+import { LAYOUT as SPEEDBALL } from './stages/speedball/layout.js';
 export { PATTERN };
 
 const C = {
@@ -276,4 +277,4 @@ export const HALYARD = {
   },
 };
 
-export const MAP_LAYOUTS = { tidewater: TIDEWATER, kelpline: KELPLINE, halyard: HALYARD, cargo: CARGO };
+export const MAP_LAYOUTS = { speedball: SPEEDBALL, tidewater: TIDEWATER, kelpline: KELPLINE, halyard: HALYARD, cargo: CARGO };

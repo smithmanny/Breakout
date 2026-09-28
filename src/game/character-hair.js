@@ -32,6 +32,11 @@ export const HAIR_LOD_NAMES = ['hero', 'game', 'far'];
  *  cap: scalp-cap grid (around × rows), brow: brow stroke rings × radial.
  */
 export function hairDetail(lod = 'hero', quality = hairQuality()) {
+  const D = hairDetail0(lod, quality);
+  D.cups = null;   // BREAKOUT: human hair locks — no modelled suction cups (the squid form keeps its own)
+  return D;
+}
+function hairDetail0(lod, quality) {
   const k = QK[quality] ?? 1;
   // far: a few dozen px tall — sized under the far hair target (~1.8k tris) so it is used as-is (never re-clustered)
   if (lod === 'far') return { lod, k, ringsPerM: 24, radial: 6, tipSteps: 2, cups: null, locks: false, cap: [24, 5], brow: [4, 4], squid: { around: 24, rows: 16, arm: [8, 6] } };

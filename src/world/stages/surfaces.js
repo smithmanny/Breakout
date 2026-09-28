@@ -3,10 +3,11 @@
 // slots only exist in the shader's slot table — a stage that isn't loaded costs its three texlib layers and nothing else.
 // Imports only the surfaces files (no props / layout), so texlib.js never pulls in stage geometry.
 import * as cargo from './cargo/surfaces.js';
+import * as speedball from './speedball/surfaces.js';
 
-const PACKS = { cargo };
-export const STAGE_SLOTS = { cargo: [28, 29, 30] };
-export const FIRST_STAGE_SLOT = 28, LAST_STAGE_SLOT = 30;
+const PACKS = { cargo, speedball };
+export const STAGE_SLOTS = { cargo: [28, 29, 30], speedball: [31, 32, 33] };
+export const FIRST_STAGE_SLOT = 28, LAST_STAGE_SLOT = 33;
 // flat list: { stage, slot, name (texlib layer name, '<stage>:<name>'), group (texlib uber-program), mat, onWall, onTop }
 // Stage layers join the existing stairs program (group 2) instead of adding a program of their own: no extra material
 // objects at boot, so the other stages boot exactly as before (down to the seeded random sequence the audits rely on).
