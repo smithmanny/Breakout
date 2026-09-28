@@ -26,7 +26,7 @@ const sec = contracts.slice(contracts.indexOf('SFX names (all must exist)'), con
 const CONTRACT_NAMES = [...sec.matchAll(/`([^`]+)`/g)].flatMap((m) => m[1].replace(/\([^)]*\)/g, ' ').split(/\s+/)).filter(Boolean);
 
 const browser = await puppeteer.launch({
-  executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  executablePath: process.env.CHROME_PATH || (process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '/opt/pw-browsers/chromium'),
   headless: 'new',
   args: ['--autoplay-policy=no-user-gesture-required', '--no-sandbox'],
   protocolTimeout: 1800000,

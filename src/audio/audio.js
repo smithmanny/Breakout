@@ -1,4 +1,5 @@
-// INKWAVE — procedural SFX engine (Web Audio). No audio files: every sound is synthesized per play.
+// BREAKOUT (ex-INKWAVE) — procedural SFX engine (Web Audio). No audio files: every sound is synthesized per play.
+// Paintball / referee sounds are driven from the event bus by src/audio/matchAudio.js (installed by audio.init()).
 //
 //   import { audio } from './audio.js';
 //   audio.init()                                   // idempotent; call from a user gesture (also inits music)
@@ -7,6 +8,8 @@
 //   audio.play(name, { pos, volume = 1, pitch = 1 })   // one-shot; pos → 3D (HRTF, inverse distance) else 2D
 //   const h = audio.loop(name, { pos, volume, pitch }); h.set({ volume, pitch, pos }); h.stop(fade = 0.15)
 //   audio.duck(amount = 0.5, seconds = 1.2)        // temporarily lowers the music bus
+//   audio.setAmbience('field' | 'harbour')         // world soundscape (matchAudio.js picks it per stage)
+//   audio.play('reload_pod', { dur })              // dur = reload seconds (cap click lands at the end)
 //
 // Loop pitch conventions: charger_charge pitch = 1 + 1.5 * charge (0..1); roll / swim / climb pitch ≈ 0.7 + speed
 // factor (≈0.6..1.6), volume ≈ speed / maxSpeed. judge_drumroll works as a 3 s one-shot (play) or open loop (loop).
@@ -19,8 +22,9 @@
 import { DEFAULT_SETTINGS } from '../config.js';
 import {
   V, music as musicSingleton, makeImpulse, mulberry32, mtof, perc, ahr, adsr, pts, sweep, strokeWave, pulseWave,
-  kick, snare, crash, tom, brass, bell, pad, bass,
+  kick, snare, crash, tom, brass, bell, pad, bass, guitar,
 } from './music.js';
+import { installMatchAudio } from './matchAudio.js';
 
 const MAX_VOICES = 48;   // one-shots alive at once (oldest stolen beyond this)
 const MAX_LOOPS = 24;
@@ -83,6 +87,12 @@ export function texture(ctx, kind) {
  * ----------------------------------------------------------------------------------------------------------*/
 const NOOP_HANDLE = Object.freeze({ set() {}, stop() {}, playing: false });
 
+// World soundscape: 'field' (BREAKOUT paintball field, default) | 'harbour'. While the field plays, the harbour-only
+// one-shots main.js still schedules are re-voiced to field equivalents (a gull cry becomes a songbird).
+export const AMB = { kind: 'field' };
+const AMB_REMAP = { field: { gull: 'bird' } };
+const AMB_LOOPS = new Set(['harbor_ambience']);
+
 export class AudioEngine {
   // opts: { context (use an existing/offline ctx), seed (deterministic randomness), music: false (don't attach
   //         the music singleton), raw: true (no master dynamics — used by the test to measure raw levels), hrtf }
@@ -138,7 +148,7 @@ export class AudioEngine {
     }
     this.ready = true;
     if (this.opts.music !== false && this.music) this.music._init(ctx, this.musicBus, { offline: this.offline });
-    if (!this.offline) { this._installUnlock(); this._warm(); this.resume(); }
+    if (!this.offline) { this._installUnlock(); this._warm(); this.resume(); if (this === audio) installMatchAudio(this); }
     return this;
   }
 
@@ -254,8 +264,20 @@ export class AudioEngine {
     return d;
   }
 
+  // 'field' | 'harbour': crossfades the running world-ambience bed and re-voices ambience one-shots
+  setAmbience(kind) {
+    kind = kind === 'harbour' || kind === 'harbor' ? 'harbour' : 'field';
+    if (AMB.kind === kind) return;
+    AMB.kind = kind;
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    for (const h of this.loops) if (h.playing && h.ctl && h.ctl.ambience) { try { h.ctl.ambience(kind, now); } catch (e) { /* */ } }
+  }
+  get ambience() { return AMB.kind; }
+
   play(name, o = {}) {
     if (!this.ctx) return null;
+    name = (AMB_REMAP[AMB.kind] && AMB_REMAP[AMB.kind][name]) || name;
     const d = this._def(name);
     if (!d) return null;
     o = o || {};
@@ -328,7 +350,7 @@ export class AudioEngine {
     const eng = this;
     let stopped = false;
     const h = {
-      name,
+      name, ctl, ambient: AMB_LOOPS.has(name),
       get playing() { return !stopped && !v.dead; },
       set(p = {}) {
         if (stopped || v.dead || !p) return;
@@ -420,6 +442,74 @@ function uiNote(v, t, m, p, peak) {
   v.tone({ t, type: 'triangle', f: f * 2, a: 0.001, d: 0.07, peak: peak * 0.18 });
 }
 
+// ---- BREAKOUT paintball layers ----
+// Pneumatic marker shot: valve click + "thwup" air pop + low thump + barrel "tup" + a tiny air-hiss tail.
+// o: { body (pitch of the thump/tube), thump, pop, hiss, tail (hiss decay s), heavy }
+function marker(v, p, o = {}) {
+  const b = (o.body ?? 1) * p;
+  v.nz({ ft: 'highpass', f: 4200, a: 0.0002, d: o.heavy ? 0.012 : 0.006, peak: 0.5 });                  // valve / hammer click
+  const f0 = v.r(1150, 1400) * p;
+  v.nz({ f: f0, f1: f0 * 0.45, sw: 0.035, q: 1.3, a: 0.0006, d: o.heavy ? 0.06 : 0.032, peak: o.pop ?? 0.8 }); // "thwup" air pop
+  v.tone({ f: (o.heavy ? 130 : 180) * b, f1: (o.heavy ? 42 : 68) * b, sw: o.heavy ? 0.1 : 0.04, a: 0.0008, d: o.heavy ? 0.16 : 0.045, peak: o.thump ?? 0.5 }); // thump
+  v.tone({ t: 0.0015, type: 'triangle', f: 820 * b, f1: 560 * b, sw: 0.02, a: 0.0006, d: 0.022, peak: 0.18 }); // barrel "tup"
+  v.nz({ t: 0.004, ft: 'highpass', f: 5200, a: 0.003, d: o.tail ?? 0.05, peak: o.hiss ?? 0.15 });        // air hiss tail
+  if (o.heavy) v.nz({ kind: 'pink', ft: 'lowpass', f: 1200, f1: 250, sw: 0.1, q: 1.2, a: 0.001, d: 0.11, peak: 0.55 });
+}
+// Pump action "shuck-clack": slide back (scrape + clack), slide forward (scrape + clack).
+function pumpShuck(v, t0, p, k = 1) {
+  const clack = (t, hard) => {
+    v.nz({ t, f: 3000 * p, q: 2.4, a: 0.0003, d: 0.008, peak: 0.8 * hard * k });
+    v.tone({ t, f: 1760 * p, a: 0.0005, d: 0.04, peak: 0.1 * hard * k });
+    v.tone({ t, f: 240 * p, f1: 120 * p, sw: 0.025, a: 0.001, d: 0.03, peak: 0.45 * hard * k });
+  };
+  v.nz({ t: t0, f: 1400 * p, f1: 2600 * p, sw: 0.05, q: 1.3, a: 0.01, d: 0.04, peak: 0.16 * k });     // "shuck"
+  clack(t0 + 0.05, 0.8);
+  v.nz({ t: t0 + 0.1, f: 2400 * p, f1: 1400 * p, sw: 0.06, q: 1.3, a: 0.01, d: 0.05, peak: 0.14 * k });
+  clack(t0 + 0.16, 1);                                                                                  // "clack"
+}
+// A paintball breaking: a sharp "pap", a small thud and a short wet spray.
+function paintSplat(v, t, p, s = 1) {
+  v.nz({ t, f: v.r(2200, 2900) * p, q: 1.2, a: 0.0003, d: 0.014, peak: 0.8 * s });                   // pap
+  v.tone({ t, f: 200 * p, f1: 80 * p, sw: 0.035, a: 0.0008, d: 0.05, peak: 0.55 * s });               // thud
+  v.nz({ t: t + 0.003, f: v.r(1500, 1900) * p, f1: v.r(500, 700) * p, sw: 0.07, q: v.r(1.6, 2.6), a: 0.0015, d: 0.075, peak: 0.7 * s }); // wet spray
+  v.nz({ t: t + 0.004, ft: 'highpass', f: 4200, a: 0.002, d: 0.04, peak: 0.18 * s });
+}
+// one small paint fleck landing
+function spatter(v, t, p, peak) {
+  v.nz({ t, f: v.r(1800, 3200) * p, f1: v.r(700, 1100) * p, sw: 0.02, q: 2, a: 0.0006, d: v.r(0.012, 0.025), peak });
+}
+// balls rattling against each other / the hopper shell: n tiny plastic ticks spread over `spread` seconds
+function ballRattle(v, t0, spread, n, p, peak, to) {
+  for (let i = 0; i < n; i++) {
+    const t = t0 + v.r(0, spread);
+    v.nz({ t, f: v.r(2600, 4800) * p, q: v.r(2.5, 5), a: 0.0004, d: v.r(0.006, 0.014), peak: peak * v.r(0.35, 1), to });
+    if (v.rng() < 0.4) v.tone({ t, f: v.r(1300, 2100) * p, a: 0.0005, d: 0.012, peak: peak * 0.12, to });
+  }
+}
+// trigger pulled on an empty hopper: trigger click + hammer "tk" + a thin puff of air
+function dryFire(v, p) {
+  v.nz({ f: 2600 * p, q: 2, a: 0.0003, d: 0.006, peak: 0.8 });                                       // trigger
+  v.tone({ type: 'square', f: 180 * p, a: 0.0005, d: 0.016, peak: 0.28, to: v.filter('lowpass', 900, 1, v.out) });
+  v.nz({ t: 0.022, f: 3600 * p, q: 2.5, a: 0.0003, d: 0.005, peak: 0.55 });                            // hammer "tk"
+  v.nz({ t: 0.026, f: 2200 * p, f1: 1200 * p, sw: 0.07, q: 1.1, a: 0.004, d: 0.07, peak: 0.22 });      // air puff, no ball
+}
+// referee pea whistle blast: sine ~2.9 kHz with the pea's fast trill (AM + FM) and breath noise
+function whistle(v, t, dur, p, peak = 1, bend = 0) {
+  const T = v.t + t, f = 2900 * p;
+  const env = v.gain(0, v.out);
+  pts(env.gain, T, [[0, 0], [0.012, peak], [dur - 0.04, peak * 0.9], [dur, 0]]);
+  const am = v.gain(0.72, env);
+  const end = T + dur + 0.01;
+  const o = v.osc('sine', f, T, end, am);
+  const o2 = v.osc('sine', f * 2, T, end, v.gain(0.1, am));
+  const trill = 34 + v.r(-3, 3);
+  v.lfo(trill, 0.28, am.gain, T, end, 'triangle');
+  const fm = v.lfo(trill, 110 * p, o.frequency, T, end); fm.depth.connect(o2.frequency);
+  if (bend) { o.frequency.setValueAtTime(f, T + dur * 0.6); o.frequency.linearRampToValueAtTime(f * (1 - bend), T + dur); }
+  v.noise('white', T, end, v.filter('bandpass', f, 3, v.gain(0.14, env)));                           // breath through the whistle
+  v.noise('pink', T, end, v.filter('highpass', 1800, 0.7, v.gain(0.05, env)));
+}
+
 /* ---- UI (quiet, pleasant) ---- */
 def('ui_hover', {
   gain: 0.14, max: 3, jitter: 0.02, reverb: 0, minGap: 0.03,
@@ -470,31 +560,22 @@ def('ui_error', {
 def('shoot_shooter', {
   gain: 0.72, max: 8, jitter: 0.05, reverb: 0.07, minGap: 0.02,
   build(v, p) {
-    // three voicings (+ the engine's pitch jitter) so a 10-shot/s stream never machine-guns one sample
-    const vo = v.pick([[1, 1], [1.12, 0.93], [0.9, 1.08]]);
-    const k = vo[0] * p, w = vo[1] * p;
-    v.nz({ f: 4200 * k, q: 1.6, a: 0.0004, d: 0.018, peak: 0.66 });                                       // snap (presence)
-    v.tone({ f: 2600 * k, f1: 820 * k, sw: 0.014, a: 0.0005, d: 0.02, peak: 0.26 });                       // "pew" chirp
-    const bp = v.r(2500, 3100) * k;
-    v.nz({ f: bp, f1: bp * 0.62, sw: 0.05, q: 1.4, a: 0.0008, d: 0.05, peak: 0.8 });                       // pneumatic "pshk"
-    v.tone({ f: 175 * w, f1: 62 * w, sw: 0.05, a: 0.001, d: 0.055, peak: 0.52 });                          // thump
-    v.nz({ t: 0.01, f: v.r(1500, 1900) * w, f1: v.r(520, 680) * w, sw: 0.09, q: v.r(4.5, 7), a: 0.004, d: 0.09, peak: 0.72 }); // wet splort
-    v.bub(v.t + v.r(0.018, 0.035), v.r(900, 1400) * w, 0.12, 0.022, 1.8);                                  // droplet plip
-    v.nz({ ft: 'highpass', f: 5200, a: 0.001, d: 0.06, peak: 0.2 });                                      // air
+    // electro marker: tight pneumatic "thwup" (three voicings so a 10 shot/s stream never machine-guns one sample)
+    const vo = v.pick([[1, 1], [1.08, 0.94], [0.93, 1.06]]);
+    marker(v, vo[0] * p, { body: vo[1], thump: 0.55, pop: 0.8, hiss: 0.16, tail: 0.05 });
   },
 });
 def('shoot_blaster', {
-  gain: 0.55, max: 4, jitter: 0.04, reverb: 0.1,
+  gain: 0.6, max: 4, jitter: 0.04, reverb: 0.1,
   build(v, p) {
-    v.nz({ ft: 'highpass', f: 3800, a: 0.0003, d: 0.008, peak: 0.5 });                                   // valve click
-    v.nz({ f: 1500 * p, f1: 900 * p, sw: 0.02, q: 2.2, a: 0.0006, d: 0.022, peak: 0.75 });                // "chunk"
-    v.tone({ f: 150 * p, f1: 40 * p, sw: 0.16, a: 0.002, d: 0.3, peak: 1 });                             // thoomp
-    v.tone({ type: 'triangle', f: 300 * p, f1: 88 * p, sw: 0.08, a: 0.002, d: 0.1, peak: 0.35 });
-    v.nz({ kind: 'pink', ft: 'lowpass', f: 1600, f1: 280, sw: 0.12, q: 2, a: 0.002, d: 0.14, peak: 0.9 });
-    v.nz({ t: 0.008, f: 320 * p, f1: 950 * p, sw: 0.06, q: 6, a: 0.004, d: 0.08, peak: 0.55 });          // the ink ball: a big rising gloop
-    v.tone({ t: 0.01, f: 190 * p, f1: 430 * p, sw: 0.07, a: 0.003, d: 0.075, peak: 0.4 });
-    v.nz({ f: 700 * p, f1: 2400 * p, sw: 0.22, q: 1.4, a: 0.03, d: 0.18, peak: 0.26 });                  // projectile whoosh
-    v.nz({ t: 0.05, ft: 'highpass', f: 5000, a: 0.02, d: 0.16, peak: 0.08 });                            // vent hiss
+    // launcher: a hollow tube "bloop" (resonant pipe + air thoomp) as the paint shell leaves the barrel
+    v.nz({ ft: 'highpass', f: 3800, a: 0.0003, d: 0.007, peak: 0.45 });                                  // valve click
+    v.tone({ f: 150 * p, f1: 48 * p, sw: 0.12, a: 0.002, d: 0.2, peak: 0.95 });                         // thoomp
+    v.nz({ kind: 'pink', ft: 'lowpass', f: 1400, f1: 260, sw: 0.1, q: 1.5, a: 0.002, d: 0.12, peak: 0.7 }); // air body
+    v.tone({ t: 0.004, f: 310 * p, f1: 520 * p, sw: 0.05, a: 0.003, d: 0.11, peak: 0.55 });              // hollow bloop (rising)
+    v.nz({ t: 0.004, f: 420 * p, f1: 700 * p, sw: 0.06, q: 9, a: 0.004, d: 0.1, peak: 0.6 });           // tube resonance
+    v.tone({ t: 0.03, type: 'triangle', f: 640 * p, f1: 560 * p, sw: 0.08, a: 0.004, d: 0.09, peak: 0.12 });
+    v.nz({ t: 0.03, ft: 'highpass', f: 4500, a: 0.01, d: 0.12, peak: 0.1 });                            // vent hiss
   },
 });
 // Blaster pump rack: slide back → back-stop clack, slide forward → front-stop clack + re-pressurise puff. weapons.js
@@ -518,16 +599,14 @@ def('blaster_pump', {
 def('blaster_boom', {
   gain: 0.55, max: 4, jitter: 0.05, reverb: 0.22,
   build(v, p) {
-    v.tone({ f: 110 * p, f1: 34 * p, sw: 0.3, a: 0.002, d: 0.45, peak: 1 });
-    v.nz({ ft: 'highpass', f: 2500, a: 0.0005, d: 0.03, peak: 0.7 });                                   // crack
-    v.tone({ t: 0.004, f: 950 * p, f1: 210 * p, sw: 0.03, a: 0.0006, d: 0.03, peak: 0.28 });             // pop
-    v.nz({ kind: 'pink', ft: 'lowpass', f: 3500, f1: 250, sw: 0.35, q: 1, a: 0.002, d: 0.4, peak: 1 });
-    v.nz({ t: 0.03, f: 1400 * p, f1: 450 * p, sw: 0.4, q: 3.5, a: 0.004, d: 0.45, peak: 0.7 });
-    bloops(v, 0.04, 3, 0.1, [400, 700], 0.25, p);
-    // the shell of droplets raining back down: a patter that thins out
-    let t = 0.09;
-    for (let i = 0; i < 9; i++) { t += v.r(0.022, 0.05); v.bub(v.t + t, v.r(700, 1900) * p, 0.16 * (1 - i / 11), v.r(0.012, 0.026), v.r(1.5, 2.1)); }
-    v.nz({ t: 0.05, ft: 'highpass', f: 3500, a: 0.02, d: 0.4, peak: 0.2 });
+    // launcher shell bursting: a hollow crack, a wide paint slap, then a spatter of fragments landing
+    v.nz({ ft: 'highpass', f: 2500, a: 0.0005, d: 0.03, peak: 0.7 });
+    v.tone({ f: 120 * p, f1: 38 * p, sw: 0.25, a: 0.002, d: 0.35, peak: 0.95 });
+    v.tone({ t: 0.003, f: 700 * p, f1: 240 * p, sw: 0.04, a: 0.0008, d: 0.05, peak: 0.35 });            // shell pop
+    paintSplat(v, 0.004, p * 0.8, 1.1);
+    v.nz({ t: 0.02, kind: 'pink', ft: 'lowpass', f: 3000, f1: 300, sw: 0.3, q: 1, a: 0.003, d: 0.32, peak: 0.8 });
+    let t = 0.08;
+    for (let i = 0; i < 8; i++) { t += v.r(0.02, 0.05); spatter(v, t, v.r(0.8, 1.3) * p, 0.35 * (1 - i / 10)); }
   },
 });
 def('charger_charge', {
@@ -563,17 +642,12 @@ def('charger_full', {
   },
 });
 def('shoot_charger', {
-  gain: 0.55, max: 4, jitter: 0.03, reverb: 0.18,
+  gain: 0.6, max: 4, jitter: 0.03, reverb: 0.16,
   build(v, p) {
-    v.nz({ ft: 'highpass', f: 2600, a: 0.0002, d: 0.03, peak: 1 });                                     // crack
-    v.tone({ f: 5200 * p, a: 0.0002, d: 0.006, peak: 0.22 });                                           // bite
-    v.nz({ f: 6000 * p, f1: 900 * p, sw: 0.14, q: 3, a: 0.001, d: 0.16, peak: 0.5 });                   // "pshew" whistle-whoosh
-    const lp = v.filter('lowpass', 6000, 1, v.out);
-    v.tone({ type: 'sawtooth', f: 2600 * p, f1: 260 * p, sw: 0.13, a: 0.0008, d: 0.15, peak: 0.16, to: lp }); // zap
-    v.tone({ f: 140 * p, f1: 46 * p, sw: 0.12, a: 0.001, d: 0.2, peak: 0.85 });                          // sub thump (pitch < 1 = full charge)
-    v.nz({ t: 0.03, f: 1700 * p, f1: 420 * p, sw: 0.5, q: 2.5, a: 0.01, d: 0.55, peak: 0.5 });          // ink streak splash
-    v.nz({ t: 0.04, ft: 'highpass', f: 3000, a: 0.03, d: 0.45, peak: 0.2 });
-    bloops(v, 0.05, 2, 0.12, [500, 800], 0.2, p);
+    // pump sniper: a heavy "thoomp" + a pump "shuck-clack" a moment later (pitch < 1 = full charge)
+    marker(v, p * 0.82, { body: 0.8, thump: 1, pop: 1, hiss: 0.28, tail: 0.14, heavy: true });
+    v.nz({ t: 0.01, f: 1800 * p, f1: 600 * p, sw: 0.25, q: 1.2, a: 0.01, d: 0.22, peak: 0.18 });          // ball tearing away
+    pumpShuck(v, 0.36, 1, 0.85);
   },
 });
 def('roller_flick', {
@@ -614,15 +688,11 @@ def('roll', {
 // Dualies: lighter, snappier than the shooter (smaller nozzle) — a tight "tik-pff" with a slide clack; weapons.js
 // alternates the pitch per hand (0.97 / 1.05) so the rhythm reads left-right.
 def('shoot_dualies', {
-  gain: 0.8, max: 10, jitter: 0.04, reverb: 0.06, minGap: 0.018,
+  gain: 0.95, max: 10, jitter: 0.04, reverb: 0.06, minGap: 0.018,
   build(v, p) {
-    v.nz({ f: 4800 * p, q: 1.8, a: 0.0003, d: 0.01, peak: 0.6 });                                        // snap
-    v.nz({ t: 0.002, f: 3200 * p, q: 3, a: 0.0003, d: 0.006, peak: 0.35 });                              // slide clack
-    const bp = v.r(2700, 3300) * p;
-    v.nz({ f: bp, f1: bp * 0.6, sw: 0.04, q: 1.5, a: 0.0006, d: 0.04, peak: 0.72 });                     // pneumatic "pff"
-    v.tone({ f: 210 * p, f1: 80 * p, sw: 0.04, a: 0.001, d: 0.042, peak: 0.45 });                        // small thump
-    v.nz({ t: 0.008, f: v.r(1700, 2100) * p, f1: v.r(600, 760) * p, sw: 0.07, q: v.r(5, 7), a: 0.003, d: 0.07, peak: 0.55 }); // wet
-    v.nz({ ft: 'highpass', f: 5600, a: 0.001, d: 0.045, peak: 0.16 });
+    // pistol: a lighter, higher pop with a snappy bolt
+    marker(v, p * 1.18, { body: 1.25, thump: 0.35, pop: 0.7, hiss: 0.1, tail: 0.035 });
+    v.nz({ t: 0.002, f: 3400 * p, q: 3, a: 0.0003, d: 0.006, peak: 0.3 });                              // bolt clack
   },
 });
 // Dodge roll: a body whoosh, a rubbery skid across the deck, a wet smear, and the plant.
@@ -699,13 +769,10 @@ def('splatling_ready', {
 });
 // Splatling round (15/s): very short and tight so the stream reads as a buzzing torrent, not a wall of clicks.
 def('shoot_splatling', {
-  gain: 1.0, max: 10, jitter: 0.05, reverb: 0.05, minGap: 0.03,
+  gain: 0.95, max: 10, jitter: 0.05, reverb: 0.05, minGap: 0.03,
   build(v, p) {
-    v.nz({ f: 3600 * p, q: 1.6, a: 0.0003, d: 0.012, peak: 0.75 });
-    v.nz({ f: 2400 * p, f1: 1300 * p, sw: 0.03, q: 1.6, a: 0.0005, d: 0.04, peak: 0.85 });
-    v.tone({ f: 160 * p, f1: 70 * p, sw: 0.03, a: 0.001, d: 0.04, peak: 0.42 });
-    v.nz({ t: 0.006, f: v.r(1500, 1900) * p, f1: 600 * p, sw: 0.06, q: 5, a: 0.002, d: 0.075, peak: 0.6 });   // wet
-    v.nz({ t: 0.01, f: 2100 * p, f1: 1500 * p, sw: 0.08, q: 1.2, a: 0.004, d: 0.08, peak: 0.28 });             // fizz tail
+    // ramping electro marker: the tightest, shortest pop so 15 balls/s reads as a buzz of air, not a wall of clicks
+    marker(v, p * 1.04, { body: 1.05, thump: 0.42, pop: 0.72, hiss: 0.09, tail: 0.028 });
   },
 });
 // Splatling spin-down after a stream: the motor winding down + a vent sigh.
@@ -722,23 +789,16 @@ def('splatling_wind', {
 
 /* ---- Ink ---- */
 def('splat_small', {
-  gain: 0.42, max: 8, jitter: 0.07, reverb: 0.08, minGap: 0.03,
-  build(v, p) {
-    v.tone({ f: 170 * p, f1: 65 * p, sw: 0.06, a: 0.001, d: 0.08, peak: 0.8 });                         // thump
-    v.nz({ f: v.r(2200, 3000) * p, f1: v.r(800, 1100) * p, sw: 0.09, q: v.r(2, 3.5), a: 0.001, d: 0.1, peak: 0.9 }); // wet spray
-    const f = v.r(550, 750) * p;
-    v.tone({ t: 0.006, f, f1: f * 0.32, sw: 0.05, a: 0.0015, d: 0.06, peak: 0.45 });                     // bloop
-    plips(v, 0.03, 1 + (v.rng() < 0.5 ? 1 : 0), 0.05, [700, 1300], 0.15, p);
-  },
+  gain: 0.7, max: 8, jitter: 0.07, reverb: 0.08, minGap: 0.03,
+  build(v, p) { paintSplat(v, 0, p, 0.9); },
 });
-def('splat_big', { gain: 0.55, max: 4, jitter: 0.06, reverb: 0.16, build(v, p) { bigSplat(v, 0, p, 1); } });
+def('splat_big', { gain: 0.55, max: 4, jitter: 0.06, reverb: 0.16, build(v, p) { paintSplat(v, 0, p * 0.8, 1.3); v.tone({ f: 110 * p, f1: 40 * p, sw: 0.15, a: 0.002, d: 0.22, peak: 0.8 }); spatter(v, 0.05, p, 0.3); spatter(v, 0.09, p * 1.2, 0.2); } });
 def('ink_hit_wall', {
-  gain: 1.0, max: 6, jitter: 0.07, reverb: 0.07, minGap: 0.03,
+  gain: 0.95, max: 6, jitter: 0.07, reverb: 0.07, minGap: 0.03,
   build(v, p) {
-    v.nz({ f: v.r(1100, 1500) * p, f1: v.r(420, 560) * p, sw: 0.06, q: 4, a: 0.001, d: 0.07, peak: 0.9 });
-    const f = v.r(850, 1000) * p;
-    v.tone({ f, f1: f * 0.44, sw: 0.04, a: 0.001, d: 0.045, peak: 0.35 });
-    v.nz({ ft: 'highpass', f: 4000, a: 0.0005, d: 0.02, peak: 0.3 });
+    // ball breaking on a hard surface: a sharp "pap" with a short wet tail
+    v.nz({ ft: 'highpass', f: 3000, a: 0.0003, d: 0.008, peak: 0.55 });
+    paintSplat(v, 0.001, p * 1.1, 0.8);
   },
 });
 def('bomb_throw', {
@@ -769,34 +829,25 @@ def('bomb_explode', {
   },
 });
 
-/* ---- Squid ---- */
+/* ---- Movement: legacy squid names (BREAKOUT has no squid form; kept valid so old callers never crash) ---- */
 def('squid_in', {
-  gain: 0.4, max: 3, jitter: 0.06, reverb: 0.05,
-  build(v, p) {
-    v.tone({ f: 950 * p, f1: 240 * p, sw: 0.09, a: 0.002, d: 0.12, peak: 0.7 });
-    v.nz({ f: 900 * p, f1: 380 * p, sw: 0.1, q: 6, a: 0.004, d: 0.1, peak: 0.55 });
-    plips(v, 0.05, 2, 0.05, [900, 1400], 0.18, p);
-  },
+  gain: 1.0, max: 3, jitter: 0.06, reverb: 0.03,
+  build(v, p) { ballRattle(v, 0, 0.18, 7, p, 0.6); v.nz({ kind: 'pink', f: 600 * p, f1: 1400 * p, sw: 0.12, q: 1, a: 0.02, d: 0.1, peak: 0.25 }); },
 });
 def('squid_out', {
-  gain: 0.48, max: 3, jitter: 0.06, reverb: 0.05,
-  build(v, p) {
-    v.tone({ f: 260 * p, f1: 1050 * p, sw: 0.07, a: 0.002, d: 0.09, peak: 0.6 });
-    v.nz({ ft: 'highpass', f: 3000, a: 0.002, d: 0.07, peak: 0.25 });
-    v.nz({ f: 600 * p, f1: 1400 * p, sw: 0.06, q: 4, a: 0.002, d: 0.07, peak: 0.4 });
-  },
+  gain: 0.6, max: 3, jitter: 0.06, reverb: 0.03,
+  build(v, p) { ballRattle(v, 0, 0.12, 5, p, 0.5); v.tone({ f: 140 * p, f1: 70 * p, sw: 0.05, a: 0.002, d: 0.06, peak: 0.4 }); },
 });
 def('swim', {
-  gain: 0.18, max: 2, jitter: 0, reverb: 0.03, oneShot: 1.5,
+  gain: 0.3, max: 2, jitter: 0, reverb: 0.02, oneShot: 1.5,
   loop(v, p) {
+    // (legacy) was the squid swim gurgle; now a soft gear/hopper jostle bed in case anything still loops it
     const T = v.t;
-    const lp = v.filter('lowpass', 1300, 0.9, v.out);
-    const tex = v.buffer(texture(v.ctx, 'bubbles'), T, null, v.gain(1, lp), p);
-    v.lfo(0.7, 420, lp.frequency, T, null);
-    const rum = v.gain(0.35, v.out);
-    v.noise('brown', T, null, v.filter('lowpass', 300, 1, rum));
-    v.lfo(0.31, 0.12, rum.gain, T, null);
-    return { pitch(q, now) { tex.playbackRate.setTargetAtTime(q, now, 0.05); } };
+    const bp = v.filter('bandpass', 3200, 1.2, v.out);
+    const tex = v.buffer(texture(v.ctx, 'sizzle'), T, null, v.gain(0.5, bp), p * 0.5);
+    const rum = v.gain(0.2, v.out);
+    v.noise('brown', T, null, v.filter('lowpass', 250, 1, rum));
+    return { pitch(q, now) { tex.playbackRate.setTargetAtTime(q * 0.5, now, 0.05); } };
   },
 });
 def('climb', {
@@ -853,15 +904,16 @@ def('hit_marker', {
     v.tone({ type: 'triangle', f: 3300 * q, a: 0.0005, d: 0.025, peak: 0.16 * lift });
   },
 });
-// Ink smacking a body — diegetic, 3D at the victim (weapons.js), under the UI tick. pitch < 1 = a heavy hit.
+// Paintball smacking a body (thwack + splat) — diegetic, 3D at the victim (weapons.js), under the UI tick. pitch < 1 = a heavy hit.
 def('ink_hit_body', {
-  gain: 0.5, max: 5, jitter: 0.07, reverb: 0.06, minGap: 0.03,
+  gain: 0.55, max: 5, jitter: 0.07, reverb: 0.06, minGap: 0.03,
   build(v, p) {
-    const lp = v.filter('lowpass', 2600, 0.8, v.out);
-    v.tone({ f: 190 * p, f1: 70 * p, sw: 0.05, a: 0.001, d: 0.06, peak: 0.85, to: lp });                // smack
-    v.nz({ f: 1300 * p, f1: 520 * p, sw: 0.07, q: 3, a: 0.001, d: 0.08, peak: 0.8 });                  // wet slap
-    v.nz({ kind: 'pink', ft: 'lowpass', f: 900, a: 0.001, d: 0.05, peak: 0.5, to: lp });
-    v.bub(v.t + v.r(0.015, 0.03), v.r(700, 1100) * p, 0.14, 0.025, 1.7);
+    const lp = v.filter('lowpass', 2400, 0.8, v.out);
+    v.tone({ f: 170 * p, f1: 62 * p, sw: 0.05, a: 0.0008, d: 0.07, peak: 0.95, to: lp });                // thwack (body)
+    v.nz({ kind: 'pink', ft: 'lowpass', f: 1100, a: 0.0008, d: 0.045, peak: 0.7, to: lp });             // cloth slap
+    v.nz({ f: 2600 * p, q: 1.4, a: 0.0003, d: 0.012, peak: 0.6 });                                      // shell crack
+    v.nz({ t: 0.004, f: 1500 * p, f1: 600 * p, sw: 0.07, q: 2.2, a: 0.001, d: 0.08, peak: 0.6 });        // splat
+    spatter(v, 0.02, p, 0.18);
   },
 });
 def('hurt', {
@@ -937,14 +989,8 @@ def('low_ink', {
   },
 });
 def('empty_click', {
-  gain: 0.6, max: 2, jitter: 0.03, reverb: 0, minGap: 0.08,
-  build(v, p) {
-    v.nz({ f: 2400 * p, q: 2, a: 0.0003, d: 0.006, peak: 0.8 });
-    v.tone({ type: 'square', f: 190 * p, a: 0.0005, d: 0.018, peak: 0.3, to: v.filter('lowpass', 900, 1, v.out) });
-    v.nz({ t: 0.028, f: 3200 * p, q: 2, a: 0.0003, d: 0.005, peak: 0.4 });
-    v.nz({ t: 0.035, f: 2800 * p, f1: 1600 * p, sw: 0.06, q: 1.4, a: 0.004, d: 0.06, peak: 0.2 });    // tank dry: a thin sputter of air
-    v.bub(v.t + 0.05, 1300 * p, 0.06, 0.02, 1.6);                                                       // …and a last spit of ink
-  },
+  gain: 0.55, max: 2, jitter: 0.03, reverb: 0, minGap: 0.08,
+  build(v, p) { dryFire(v, p); },
 });
 def('refill_full', {
   gain: 0.26, max: 1, jitter: 0, reverb: 0.12,
@@ -1262,20 +1308,36 @@ def('halyard_clink', {
     }
   },
 });
+// World ambience bed. main.js loops this once for the whole session, so it carries BOTH soundscapes and crossfades
+// between them: the harbour sea wash (harbour stages) and the BREAKOUT paintball-field wind (default). The engine picks
+// the mix via audio.setAmbience('field' | 'harbour') — src/audio/matchAudio.js sets it from the current stage.
 def('harbor_ambience', {
   gain: 0.12, max: 1, jitter: 0, reverb: 0.1, oneShot: 3,
-  loop(v, p) {
-    // sea wash against the pilings: brown noise swells + a brighter hiss riding the crests
+  loop(v, p, o = {}) {
     const T = v.t;
-    const lp = v.filter('lowpass', 520, 0.7, v.out);
+    const kind = o.ambience || AMB.kind;
+    const sea = v.gain(kind === 'harbour' ? 1 : 0, v.out), field = v.gain(kind === 'harbour' ? 0 : 1, v.out);
+    // sea wash against the pilings: brown noise swells + a brighter hiss riding the crests
+    const lp = v.filter('lowpass', 520, 0.7, sea);
     const wash = v.gain(0.9, lp);
     v.noise('brown', T, null, wash);
     v.lfo(0.11, 0.45, wash.gain, T, null);
-    const hp = v.filter('bandpass', 2600, 0.6, v.out);
+    const hp = v.filter('bandpass', 2600, 0.6, sea);
     const hiss = v.gain(0.08, hp);
     v.noise('pink', T, null, hiss);
     v.lfo(0.17, 0.06, hiss.gain, T, null);
-    return { pitch() {} };
+    // paintball field: wind + leaves
+    const fv = new V(v.ctx, field, T, v.rng); fieldBed(fv, 1);
+    for (const n of fv.nodes) v.nodes.push(n);
+    for (const s of fv.srcs) v.srcs.push(s);
+    v.endless = true;
+    return {
+      pitch() {},
+      ambience(k, now) {
+        const h = k === 'harbour';
+        sea.gain.setTargetAtTime(h ? 1 : 0, now, 0.8); field.gain.setTargetAtTime(h ? 0 : 1, now, 0.8);
+      },
+    };
   },
 });
 
@@ -1540,14 +1602,250 @@ def('boss_sunk', {
   },
 });
 
+/* ---- BREAKOUT: paintball (docs/PAINTBALL.md). Wired to the round / reload / elimination events in matchAudio.js ---- */
+// Named aliases so new gameplay code can ask for the paintball sounds by what they are.
+const alias = (name, of) => { def(name, SFX[of]); };
+alias('shoot_marker', 'shoot_shooter');
+alias('shoot_pistol', 'shoot_dualies');
+alias('shoot_sniper', 'shoot_charger');
+alias('shoot_launcher', 'shoot_blaster');
+alias('paint_splat', 'splat_small');
+alias('paint_hit', 'ink_hit_body');
+def('pump_shuck', { gain: 0.75, max: 3, jitter: 0.03, reverb: 0.06, build(v, p) { pumpShuck(v, 0, p, 1); } });
+// a ball that bounces off without breaking: a dull rubbery "tock"
+def('ball_bounce', {
+  gain: 0.6, max: 6, jitter: 0.1, reverb: 0.05, minGap: 0.03,
+  build(v, p) {
+    v.tone({ f: 760 * p, f1: 620 * p, sw: 0.02, a: 0.0005, d: 0.028, peak: 0.7 });
+    v.tone({ type: 'triangle', f: 1540 * p, a: 0.0004, d: 0.012, peak: 0.15 });
+    v.tone({ f: 210 * p, f1: 150 * p, sw: 0.02, a: 0.0006, d: 0.025, peak: 0.4 });
+    v.nz({ f: 3000 * p, q: 2, a: 0.0003, d: 0.005, peak: 0.3 });
+  },
+});
+// balls rattling in the loader (sprint jostle / shaking the hopper). `volume` scales the shake.
+def('hopper_rattle', {
+  gain: 1.3, max: 3, jitter: 0.08, reverb: 0.02, minGap: 0.08,
+  build(v, p) {
+    const lp = v.filter('lowpass', 7000, 0.7, v.out);
+    ballRattle(v, 0, 0.16, 11, p, 0.7, lp);
+    ballRattle(v, 0.02, 0.06, 4, p * 0.85, 0.9, lp);                                                   // the lump settling
+    v.tone({ t: 0.01, f: 520 * p, f1: 430 * p, sw: 0.04, a: 0.002, d: 0.05, peak: 0.16 });            // hollow shell
+    v.nz({ kind: 'pink', f: 900 * p, q: 1.2, a: 0.01, d: 0.12, peak: 0.12 });
+  },
+});
+// swapping a pod into the hopper (~1.5 s; o.dur stretches it to the weapon's reload time so the cap click lands at the end)
+def('reload_pod', {
+  gain: 0.5, max: 3, jitter: 0.03, reverb: 0.05, minGap: 0.2,
+  build(v, p, o = {}) {
+    const D = Math.min(3, Math.max(0.8, +o.dur || 1.5));
+    // hopper lid flip + pod cap pop ("thuk-pop": suction release)
+    v.nz({ f: 2800 * p, q: 2.5, a: 0.0003, d: 0.008, peak: 0.6 });                                    // lid latch
+    v.tone({ t: 0.08, f: 380 * p, f1: 950 * p, sw: 0.025, a: 0.0008, d: 0.035, peak: 0.7 });          // cap "pop"
+    v.nz({ t: 0.08, f: 1500 * p, q: 3, a: 0.0006, d: 0.02, peak: 0.45 });
+    v.nz({ t: 0.12, f: 3300 * p, q: 3, a: 0.0003, d: 0.006, peak: 0.35 });                             // cap flips open
+    // balls pouring: a dense tumble that swells then thins, over a low rushing bed
+    const p0 = 0.22, p1 = Math.max(p0 + 0.35, D - 0.3);
+    const bed = v.gain(0, v.out);
+    pts(bed.gain, v.t, [[0, 0], [p0, 0], [p0 + 0.12, 0.3], [p1 - 0.15, 0.22], [p1, 0]]);
+    v.noise('pink', v.t + p0, v.t + p1 + 0.02, v.filter('bandpass', 1500 * p, 0.9, bed));
+    const n = Math.round((p1 - p0) * 70);
+    for (let i = 0; i < n; i++) {
+      const u = v.rng(), t = p0 + (p1 - p0) * Math.pow(u, 0.8);
+      const k = Math.sin(Math.PI * Math.min(1, (t - p0) / (p1 - p0))) * 0.8 + 0.2;
+      v.nz({ t, f: v.r(2200, 4600) * p, q: v.r(2.5, 5), a: 0.0004, d: v.r(0.006, 0.014), peak: 0.55 * k * v.r(0.3, 1) });
+      if (v.rng() < 0.3) v.tone({ t, f: v.r(900, 1800) * p, a: 0.0005, d: 0.014, peak: 0.1 * k });
+    }
+    // cap snapped back on + pod stowed
+    const tc = D - 0.14;
+    v.nz({ t: tc, f: 3100 * p, q: 2.4, a: 0.0003, d: 0.009, peak: 0.85 });
+    v.tone({ t: tc, f: 260 * p, f1: 150 * p, sw: 0.02, a: 0.001, d: 0.035, peak: 0.5 });
+    v.nz({ t: tc + 0.05, f: 2600 * p, q: 3, a: 0.0003, d: 0.006, peak: 0.5 });
+  },
+});
+def('dry_fire', { gain: 0.95, max: 2, jitter: 0.03, reverb: 0, minGap: 0.08, build(v, p) { dryFire(v, p); } });
+def('whistle_start', {
+  gain: 0.12, max: 1, jitter: 0, reverb: 0.3, minGap: 0.5,
+  build(v, p) { whistle(v, 0, 0.14, p, 1); whistle(v, 0.22, 0.2, p, 1); },
+});
+def('whistle_end', {
+  gain: 0.11, max: 1, jitter: 0, reverb: 0.32, minGap: 0.5,
+  build(v, p) { whistle(v, 0, 1.15, p, 1, 0.04); },
+});
+// Referee shouting "OUT!": formant-synthesised voice (glottal saw → /a/→/u/ diphthong formant bank), a hard stop and
+// the released /t/. p = voice pitch.
+def('ref_out', {
+  gain: 0.2, max: 2, jitter: 0.04, reverb: 0.25, minGap: 0.45,
+  build(v, p) {
+    const T = v.t, dur = 0.34;
+    const src = v.gain(1);
+    const env = v.gain(0, v.out);
+    pts(env.gain, T, [[0, 0], [0.035, 1], [0.2, 0.9], [dur - 0.03, 0.6], [dur, 0]]);
+    const drive = v.shaper(2.2, env);
+    const f0 = 205 * p;
+    for (const dt of [-9, 7]) {
+      const g = v.osc('sawtooth', f0, T, T + dur + 0.02, src); g.detune.value = dt;
+      g.frequency.setValueAtTime(f0 * 0.9, T); g.frequency.linearRampToValueAtTime(f0 * 1.06, T + 0.07); g.frequency.linearRampToValueAtTime(f0 * 0.8, T + dur);
+      v.lfo(6.5, 6, g.frequency, T, T + dur + 0.02);
+    }
+    v.noise('white', T, T + dur + 0.02, v.filter('highpass', 900, 0.7, v.gain(0.06, src)));          // rasp / breath
+    // formants: [f /a/, f /u/, bandwidth-ish Q, level]
+    for (const [fa, fu, q, lvl] of [[760, 380, 6, 1], [1250, 850, 9, 0.7], [2600, 2350, 14, 0.4], [3500, 3300, 16, 0.18]]) {
+      const bp = v.filter('bandpass', fa * p, q, v.gain(lvl * Math.sqrt(q) * 0.8, drive));
+      src.connect(bp);
+      bp.frequency.setValueAtTime(fa * p, T + 0.06); bp.frequency.exponentialRampToValueAtTime(fu * p, T + dur - 0.04);
+    }
+    // /t/ release: a sharp aspirated burst after the closure
+    v.nz({ t: dur + 0.045, f: 4200, q: 1.2, a: 0.0006, d: 0.035, peak: 0.55 });
+    v.nz({ t: dur + 0.045, ft: 'highpass', f: 6000, a: 0.001, d: 0.06, peak: 0.25 });
+  },
+});
+def('round_win', {
+  gain: 0.3, max: 1, jitter: 0, reverb: 0.3,
+  build(v, p) {
+    // short sports stinger: three pickup hits then a bright major power chord with a crash
+    const T = v.t;
+    for (const [t, m] of [[0, 67], [0.1, 71], [0.2, 74]]) brass(v, T + t, mtof(m) * p, 0.07, 0.4, { bright: 4200, a: 0.006, r: 0.12 });
+    snare(v, T, 0.4); snare(v, T + 0.1, 0.45); snare(v, T + 0.2, 0.5);
+    const t2 = T + 0.3;
+    for (const [m, pan] of [[55, -0.3], [62, 0.3], [67, -0.1], [71, 0.2], [79, 0]]) brass(v, t2, mtof(m) * p, 0.7, 0.34, { to: v.pan(pan, v.out), bright: 4600, a: 0.01, r: 0.5 });
+    guitar(v, t2, [mtof(43), mtof(50), mtof(55)].map((f) => f * p), 0.7, 0.5);
+    crash(v, t2, 0.6, { d: 1.6 }); kick(v, t2, 0.9);
+  },
+});
+def('round_lose', {
+  gain: 0.28, max: 1, jitter: 0, reverb: 0.28,
+  build(v, p) {
+    // two falling minor hits and a low muted chord
+    const T = v.t;
+    for (const [t, ms, len] of [[0, [63, 67, 70], 0.16], [0.22, [61, 65, 68], 0.16], [0.44, [51, 58, 63, 66], 0.9]]) {
+      ms.forEach((m, i) => brass(v, T + t, mtof(m) * p, len, 0.28, { to: v.pan(i % 2 ? 0.3 : -0.3, v.out), bright: 1800, a: 0.012, r: 0.4 }));
+      tom(v, T + t, mtof(ms[0] - 24) * p, 0.6);
+    }
+    bass(v, T + 0.44, mtof(39) * p, 0.8, 0.6, { style: 'sub' });
+    kick(v, T + 0.44, 0.7);
+  },
+});
+// round timer buzzer (arena horn: two detuned square/saw tones through a nasal band)
+def('buzzer', {
+  gain: 0.14, max: 1, jitter: 0, reverb: 0.25, minGap: 0.5,
+  build(v, p) {
+    const T = v.t, g = v.gain(0, v.out), dur = 0.95;
+    pts(g.gain, T, [[0, 0], [0.01, 1], [dur - 0.05, 0.95], [dur, 0]]);
+    const pk = v.filter('peaking', 1300, 1.2, v.filter('lowpass', 3600, 0.8, g), 8);
+    const sh = v.shaper(2, pk);
+    for (const [type, f, a] of [['square', 196, 0.35], ['sawtooth', 207.6, 0.35], ['square', 392.5, 0.12]]) v.osc(type, f * p, T, T + dur + 0.01, v.gain(a, sh));
+  },
+});
+// bleacher crowd swell: formant-coloured noise voices with a random murmur, a few whoops and hand claps
+def('crowd_cheer', {
+  gain: 0.3, max: 2, jitter: 0.03, reverb: 0.3, minGap: 0.8,
+  build(v, p) {
+    const T = v.t, D = 2.6;
+    const env = v.gain(0, v.out);
+    pts(env.gain, T, [[0, 0], [0.35, 0.75], [0.7, 1], [1.4, 0.8], [D, 0]]);
+    for (const [f, q, a, rate] of [[480, 1.6, 0.9, 3.1], [950, 1.8, 0.8, 4.3], [1900, 2, 0.45, 5.2], [3100, 2.2, 0.2, 6.7]]) {
+      const g = v.gain(a, env);
+      v.noise('pink', T, T + D + 0.02, v.filter('bandpass', f * p, q, g));
+      v.lfo(rate, a * 0.3, g.gain, T, T + D + 0.02, 'triangle');
+    }
+    // whoops
+    for (let i = 0; i < 5; i++) {
+      const t = v.r(0.15, 1.3), f = v.r(700, 1100) * p;
+      v.tone({ t, type: 'triangle', f, f1: f * v.r(1.5, 2.1), sw: v.r(0.2, 0.35), a: 0.05, d: v.r(0.25, 0.4), peak: 0.07, to: v.filter('lowpass', 3000, 0.7, v.out) });
+    }
+    // claps
+    for (let i = 0; i < 40; i++) {
+      const t = 0.1 + Math.pow(v.rng(), 1.4) * (D - 0.4);
+      v.nz({ t, f: v.r(900, 1800), q: 1.2, a: 0.0006, d: v.r(0.01, 0.02), peak: 0.28 * (1 - t / D) });
+    }
+  },
+});
+def('grenade_pin', {
+  gain: 0.45, max: 2, jitter: 0.05, reverb: 0.06, minGap: 0.2,
+  build(v, p) {
+    // pin pulled: a metal scrape, the ring "ting" and the spoon's spring flick
+    v.nz({ f: 5200 * p, f1: 3600 * p, sw: 0.05, q: 4, a: 0.004, d: 0.05, peak: 0.25 });
+    for (const [r, a, d] of [[1, 0.4, 0.22], [2.76, 0.18, 0.1], [5.4, 0.08, 0.05]]) v.tone({ t: 0.05, f: 2650 * p * r, a: 0.0006, d, peak: a });
+    v.nz({ t: 0.05, f: 3800 * p, q: 3, a: 0.0003, d: 0.008, peak: 0.6 });
+    v.tone({ t: 0.12, f: 900 * p, f1: 1800 * p, sw: 0.04, a: 0.001, d: 0.05, peak: 0.25 });          // spring
+  },
+});
+
+/* ---- BREAKOUT field ambience (default soundscape; harbour stages keep harbor_ambience's sea bed) ---- */
+function fieldBed(v, k = 1) {
+  // light wind through netting + trees: pink noise under a wandering low-pass, and a leafy high rustle
+  const T = v.t;
+  const lp = v.filter('lowpass', 520, 0.8, v.gain(0.75 * k, v.out));
+  v.noise('pink', T, null, lp);
+  v.lfo(0.07, 220, lp.frequency, T, null);
+  const gust = v.gain(0.55 * k, v.out);
+  v.noise('brown', T, null, v.filter('lowpass', 300, 0.8, gust));
+  v.lfo(0.05, 0.3 * k, gust.gain, T, null);
+  const leaves = v.gain(0.05 * k, v.out);
+  v.noise('white', T, null, v.filter('bandpass', 4200, 0.8, leaves));
+  v.lfo(0.13, 0.035 * k, leaves.gain, T, null);
+}
+def('field_ambience', {
+  gain: 0.12, max: 1, jitter: 0, reverb: 0.08, oneShot: 3,
+  loop(v) { fieldBed(v, 1); return { pitch() {} }; },
+});
+// a songbird: a quick run of chirps (sine sweeps with a trill), 3D out at the field edge
+def('bird', {
+  gain: 0.16, ref: 8, max: 3, jitter: 0.1, reverb: 0.3, minGap: 0.2,
+  build(v, p) {
+    let t = 0;
+    const n = 2 + Math.floor(v.r(0, 4)), f = v.r(3200, 4600) * p;
+    const kind = v.pick([0, 1, 2]);
+    for (let i = 0; i < n; i++) {
+      const f0 = f * (kind === 0 ? 1 : kind === 1 ? 1 + i * 0.06 : 1.2 - i * 0.05), d = v.r(0.04, 0.08);
+      v.tone({ t, f: f0 * 0.8, f1: f0 * 1.25, sw: d, a: 0.004, d, peak: 0.6 });
+      v.tone({ t, f: f0 * 1.6, f1: f0 * 2.5, sw: d, a: 0.004, d: d * 0.7, peak: 0.08 });
+      t += d + v.r(0.03, 0.09);
+    }
+  },
+});
+// markers popping on another field: a faint, heavily filtered string of pops (always played far away)
+def('distant_markers', {
+  gain: 0.3, ref: 30, max: 2, jitter: 0.05, reverb: 0.45, minGap: 0.5,
+  build(v, p) {
+    const lp = v.filter('lowpass', 1400, 0.7, v.out);
+    let t = 0;
+    const n = 3 + Math.floor(v.r(0, 9)), gap = v.r(0.07, 0.16);
+    for (let i = 0; i < n; i++) {
+      v.tone({ t, f: 170 * p, f1: 70 * p, sw: 0.04, a: 0.001, d: 0.05, peak: 0.6 * v.r(0.6, 1), to: lp });
+      v.nz({ t, f: 1000 * p, f1: 500 * p, sw: 0.03, q: 1.3, a: 0.0008, d: 0.03, peak: 0.6 * v.r(0.6, 1), to: lp });
+      t += gap * v.r(0.8, 1.3) + (v.rng() < 0.15 ? v.r(0.2, 0.5) : 0);
+    }
+  },
+});
+// distant chatter (people on the sidelines): a murmur of formant-filtered noise syllables
+def('distant_chatter', {
+  gain: 0.9, ref: 15, max: 2, jitter: 0.05, reverb: 0.4, minGap: 0.5,
+  build(v, p) {
+    const lp = v.filter('lowpass', 2200, 0.7, v.out);
+    const D = v.r(1.5, 3);
+    for (let i = 0; i < 18; i++) {
+      const t = v.r(0, D), d = v.r(0.08, 0.2);
+      const f1 = v.r(350, 800) * p, f2 = v.r(1000, 1900) * p;
+      v.nz({ t, kind: 'pink', f: f1, q: 4, a: 0.03, d, peak: v.r(0.3, 0.8), to: lp });
+      v.nz({ t, kind: 'pink', f: f2, q: 5, a: 0.03, d, peak: v.r(0.15, 0.4), to: lp });
+      if (v.rng() < 0.25) v.tone({ t, type: 'sawtooth', f: v.r(110, 240) * p, f1: v.r(100, 260) * p, sw: d, a: 0.03, d, peak: 0.05, to: v.filter('bandpass', f1, 3, lp) });
+    }
+    if (v.rng() < 0.3) v.nz({ t: v.r(0, D), f: 900, q: 1, a: 0.001, d: 0.02, peak: 0.3, to: lp });      // a clap
+  },
+});
+
 /* ------------------------------------------------------------------------------------------------------------ */
 export const SFX_GROUPS = {
   UI: ['ui_hover', 'ui_click', 'ui_back', 'ui_confirm', 'ui_toggle', 'ui_slider', 'ui_error'],
   Weapons: ['shoot_shooter', 'shoot_blaster', 'blaster_pump', 'blaster_boom', 'charger_charge', 'charger_full', 'shoot_charger', 'roller_flick', 'roll',
     'shoot_dualies', 'dualies_roll', 'slosh_throw', 'slosh_land', 'splatling_spin', 'splatling_ready', 'shoot_splatling', 'splatling_wind'],
+  Paintball: ['shoot_marker', 'shoot_pistol', 'shoot_sniper', 'shoot_launcher', 'pump_shuck', 'paint_splat', 'paint_hit', 'ball_bounce',
+    'hopper_rattle', 'reload_pod', 'dry_fire', 'grenade_pin'],
+  Referee: ['whistle_start', 'whistle_end', 'ref_out', 'buzzer', 'round_win', 'round_lose', 'crowd_cheer'],
   Ink: ['splat_small', 'splat_big', 'ink_hit_wall', 'bomb_throw', 'bomb_beep', 'bomb_explode'],
-  Squid: ['squid_in', 'squid_out', 'swim', 'swim_splash', 'jump', 'land', 'climb', 'step_dry', 'step_ink', 'step_enemy', 'ink_drip'],
-  World: ['gull', 'harbor_ambience', 'ferry_horn', 'halyard_clink'],
+  Movement: ['squid_in', 'squid_out', 'swim', 'swim_splash', 'jump', 'land', 'climb', 'step_dry', 'step_ink', 'step_enemy', 'ink_drip'],
+  World: ['field_ambience', 'bird', 'distant_markers', 'distant_chatter', 'gull', 'harbor_ambience', 'ferry_horn', 'halyard_clink'],
   Combat: ['hit_marker', 'ink_hit_body', 'hurt', 'splat_enemy', 'splatted_self', 'ally_splatted', 'enemy_ink_sizzle'],
   Status: ['low_ink', 'empty_click', 'refill_full', 'special_ready', 'special_activate', 'special_slam', 'storm_rain', 'storm_thunder', 'respawn', 'super_jump'],
   Match: ['ready', 'go_horn', 'countdown_tick', 'one_minute', 'final_count', 'times_up', 'judge_drumroll', 'judge_reveal', 'victory_fanfare', 'defeat_jingle', 'xp_tick', 'level_up'],
