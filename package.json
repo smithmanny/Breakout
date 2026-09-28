@@ -1,7 +1,7 @@
 {
-  "name": "inkwave",
+  "name": "breakout",
   "version": "1.0.0",
-  "description": "An original Splatoon-style 4v4 turf-war shooter for the browser, built on three.js.",
+  "description": "BREAKOUT: an original 4v4 paintball elimination shooter for the browser, built on three.js.",
   "scripts": {
     "start": "python3 tools/serve.py 8490",
     "relay": "cd server && wrangler dev --ip 0.0.0.0 --port 8787",
@@ -17,8 +17,9 @@
     "three.js",
     "webgl",
     "shooter",
-    "splatoon",
-    "turf-war",
+    "paintball",
+    "elimination",
+    "4v4",
     "browser-game"
   ],
   "author": "Jayden Davis",
