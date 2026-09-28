@@ -115,7 +115,14 @@ Elimination: `--rounds 2:15` (default 2:18, `real` = config ROUNDS) sets test-on
 6 s (and, with `--full`, at every round / phase change) it checks that all clients agree on round, phase, round wins
 and each squidkid's alive state, and that no eliminated squidkid is drawn; `--full` also compares the final result
 (winner, round wins, round log, damage, K/D). On Linux it uses `/opt/pw-browsers/chromium` (or `CHROME_PATH`) with
-SwiftShader: keep windows tiny (`--w 320 --h 180 --quality low`).
+SwiftShader: keep windows tiny (`--w 320 --h 180 --quality low`); on a busy box run the relay with
+`npx wrangler dev --port 8787 --var SILENT_MATCH_MS:180000` so a tab stalled compiling shaders isn't dropped.
+`node tools/net-rounds-sim.mjs [--clients 3] [--lag 40 --jitter 25] [--drop guest|host]` checks the round protocol in
+seconds without a browser: each client is a worker thread running the real Match + NetMatch on stubbed rendering /
+physics through an in-process relay (in-order links with latency / jitter). Scripted hits play five short rounds
+(wipes both ways, one decided on the clock), drop a player right after they are eliminated (or the host: migration),
+and every client must agree with the host on round, phase, round wins, alive states, "out = not drawn", everyone
+back at base after each reset, and the final result.
 
 ## Showcase lobby set (src/game/showcase.js)
 
