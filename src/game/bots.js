@@ -185,7 +185,7 @@ export class BotBrain {
         if (!this._nearWater(a, 3.2)) { move.set(-nz * side, 0, nx * side); it.jump = true; this.dodgeCd = 1.6 + Math.random() * 1.8; }
       }
       // specials: the slam right on top of them
-      if (vis && a.specialReady() && w.special === 'slam' && tdist < 5.5 && this.specialCd <= 0) { it.special = true; this.specialCd = 2; }
+      if ((vis || this.seeT < 2) && a.specialReady() && w.special === 'slam' && tdist < 6 && this.specialCd <= 0) { it.special = true; this.specialCd = 2; }
     } else if (this.threatKnown || this.mode === 'hold') {
       // no one in sight: watch where they're expected to come from
       const dx = this.threat.x - a.pos.x, dz = this.threat.z - a.pos.z;

@@ -632,6 +632,9 @@ varying vec3 vCol;
 varying float vA;
 void main() {
   vec4 h = viewMatrix * vec4(aHead.xyz, 1.0), t = viewMatrix * vec4(aTail.xyz, 1.0);
+  // keep the whole smear in front of the lens (a tail behind the near plane would blow up across the screen)
+  if (h.z > -0.35) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); vQ = vec2(0.0); vCol = aCol; vA = 0.0; return; }
+  if (t.z > -0.3) t = mix(h, t, clamp((h.z + 0.3) / (h.z - t.z), 0.0, 1.0));
   vec2 d = h.xy - t.xy;
   float l = length(d);
   vec2 ax = l > 1e-5 ? d / l : vec2(0.0, 1.0);

@@ -792,8 +792,8 @@ export class ScreenFX {
     const n = k > 1.05 ? 2 : 1;
     for (let i = 0; i < n; i++) {
       const aa = ang + (i ? rnd(-0.8, 0.8) : rnd(-0.2, 0.2));
-      const size = (0.05 + 0.035 * k) * (i ? 0.65 : 1) * rnd(0.9, 1.12);
-      const p = this._edgePoint(aa, rnd(0.16, 0.3));
+      const size = (0.085 + 0.05 * k) * (i ? 0.6 : 1) * rnd(0.9, 1.12);
+      const p = this._edgePoint(aa, rnd(0.22, 0.34));
       // never over the crosshair
       if (Math.abs(p.x - 0.5) * a < 0.16 && Math.abs(p.y - 0.5) < 0.16) p.x = 0.5 + Math.sign(p.x - 0.5 || 1) * 0.17 / a;
       this.lens.goggle(CH_ENEMY, p.x, p.y, size, a, { life: 0.8 + 0.12 * k, wipe: p.x < 0.5 ? -1 : 1 });
@@ -1062,7 +1062,7 @@ export class ScreenFX {
     if (!a) { this.U.uLensColA.value.copy(enemy); this.U.uLensColB.value.copy(own); this.U.uEdgeInk.value.set(enemy.r, enemy.g, enemy.b, 0); }
     switch (name) {
       case 'splat': { const ang = o.angle ?? Math.random() * TAU; const p = this._edgePoint(ang, o.inset ?? 0.05); this.lens.splat(CH_ENEMY, o.x ?? p.x, o.y ?? p.y, o.size ?? 0.08, this._aspect, { life: o.life ?? 2.2 }); break; }
-      case 'goggle': { const p = this._edgePoint(o.angle ?? Math.random() * TAU, o.inset ?? 0.22); this.lens.goggle(CH_ENEMY, o.x ?? p.x, o.y ?? p.y, o.size ?? 0.08, this._aspect, { life: o.life ?? 0.9, wipe: (o.x ?? p.x) < 0.5 ? -1 : 1 }); break; }
+      case 'goggle': { const p = this._edgePoint(o.angle ?? Math.random() * TAU, o.inset ?? 0.28); this.lens.goggle(CH_ENEMY, o.x ?? p.x, o.y ?? p.y, o.size ?? 0.13, this._aspect, { life: o.life ?? 0.9, wipe: (o.x ?? p.x) < 0.5 ? -1 : 1 }); break; }
       case 'damage': this._damageSplat(o.amount ?? 50, o.attacker || null); s.chroma = Math.min(1.2, s.chroma + 0.7); this._kickPunch(-0.025); break;
       case 'water': this._startFlood(null, 'water'); break;
       case 'flood': this.U.uFlood.value.set(enemy.r, enemy.g, enemy.b, 0); this.U.uFloodClear.value = 0; s.floodMode = 'in'; s.floodT = o.t ?? 0; break;
