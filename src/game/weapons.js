@@ -1,5 +1,10 @@
-// Weapons: per-actor WeaponRunner (fire logic for shooter/roller/charger/blaster + bomb sub) and the global
-// Projectiles system (ink shots, blaster blobs, roller drops, bombs, storm clouds, charger beams, bomb arc preview).
+// Weapons: per-actor WeaponRunner (fire logic for the paintball markers + paint grenade sub) and the global
+// Projectiles system (paintballs, launcher rounds, grenades, barrage clouds, sniper beams, grenade arc preview).
+//
+// BREAKOUT: every trigger pull spends balls from the actor's hopper (actor.useAmmo / hasAmmo, weapon.ammoPerShot,
+// default 1); a pull on an empty hopper → actor.dryFire() ('weapon:dry' + auto reload). Paintballs fly fast with a
+// slight drop (weapon.grav / drag), leave no paint trail in flight and splat a small decal where they land. Grenades
+// use actor.grenades (a per-round count), not ammo. (Retired roller / slosher code paths still work, costing balls.)
 //
 // Accuracy: every shot leaves the muzzle aimed at the crosshair's world point and shooter shots get a
 // ballistic launch-pitch correction (same integrator as the flight) so, inside the weapon's range, they land on the
@@ -47,6 +52,15 @@ export class WeaponRunner {
     this.spinLoop?.stop(0.08); this.spinLoop = null;
   }
   onDeath() { this.reset(); }
+  // reload started: drop any charge / spin / stream in progress (the dodge roll finishes on its own)
+  cancel() {
+    this.charging = false; this.charge = 0; this.chargeT = 0; this.streaming = false; this.burstT = 0; this.burstFrac = 0;
+    this.flick = -1; this.slosh = -1; this.aimingSub = false;
+    this.chargeLoop?.stop(0.05); this.chargeLoop = null; this.spinLoop?.stop(0.08); this.spinLoop = null;
+    if (this.rolling) { this.rolling = false; this.rollLoop?.stop(0.12); this.rollLoop = null; }
+  }
+  // balls per trigger pull
+  _cost(w) { return w.ammoPerShot ?? 1; }
   busy() { return this.charging || this.flick >= 0 || this.slosh >= 0 || this.streaming || !!this.dodge || this.lockT > 0; }
   firingPose() { return this.firingT > 0 || this.charging || this.flick >= 0 || this.rolling || this.slosh >= 0 || this.streaming || !!this.dodge || this.lockT > 0; }
   moveSpeed() {
@@ -93,17 +107,16 @@ export class WeaponRunner {
       case 'slosher': this._slosher(dt, inp, w); break;
       case 'splatling': this._splatling(dt, inp, w); break;
     }
-    // ---- sub weapon (splat bomb)
-    const bomb = SUB.bomb;
+    // ---- sub weapon (paint grenade: a per-round count, not ammo)
     if (inp.sub && !this.aimingSub) {
       this.aimingSub = true;
-      if (a.ink < bomb.inkCost && a.isLocal) { G.audio?.play('low_ink'); emit('lowink', { actor: a, need: bomb.inkCost }); }
+      if (!(a.grenades > 0) && a.isLocal) { G.audio?.play('empty_click'); emit('grenade:empty', { actor: a }); }
     }
     if (this.aimingSub) a.fireFacing = 0.3;
     if (inp.subReleased && this.aimingSub) {
       this.aimingSub = false;
-      if (a.ink >= bomb.inkCost) {
-        a.ink -= bomb.inkCost;
+      if (a.grenades > 0) {
+        a.grenades--;
         a.lastFire = 0;
         a.character.trigger('throw');
         G.projectiles.throwBomb(a);
@@ -113,11 +126,14 @@ export class WeaponRunner {
     if (!inp.sub && !inp.subReleased) this.aimingSub = false;
   }
 
+  // trigger pulled with too few balls: 'weapon:dry' + auto reload (actor.dryFire); while a reload runs, nothing
   _empty() {
     const a = this.a;
+    if (a.reloading > 0) return;
     if (this.emptyCd > 0) return;
     this.emptyCd = 0.45;
-    if (a.isLocal) { G.audio?.play('empty_click'); emit('lowink', { actor: a }); }
+    if (a.isLocal) { G.audio?.play('empty_click'); emit('lowink', { actor: a }); }   // (lowink: old name, HUD tank flash)
+    a.dryFire?.();
   }
 
   _auto(dt, inp, w) {
@@ -127,8 +143,7 @@ export class WeaponRunner {
     a.fireFacing = 0.5;
     let guard = 0;
     while (this.cooldown <= 0 && guard++ < 3) {
-      if (a.ink < w.inkPerShot) { this._empty(); this.cooldown += w.fireInterval; break; }
-      a.ink -= w.inkPerShot;
+      if (!a.useAmmo(this._cost(w))) { this._empty(); this.cooldown += w.fireInterval; break; }
       a.lastFire = 0;
       this.spread = this._spreadDeg(w);
       if (w.kind === 'shooter') G.projectiles.fireShooter(a, w, this.spread);
@@ -143,11 +158,11 @@ export class WeaponRunner {
     const a = this.a;
     if (inp.fire && this.cooldown <= 0) {
       if (!this.charging) {
-        if (a.ink < w.inkFull * 0.2) { this._empty(); return; }
+        if (!a.hasAmmo(this._cost(w))) { this._empty(); return; }
         this.charging = true; this.charge = 0; this.chargeT = 0; this.chargeDinged = false;
         if (a.isLocal || a._nearCamera()) this.chargeLoop = G.audio?.loop('charger_charge', { pos: a.isLocal ? undefined : a.pos, volume: a.isLocal ? 0.55 : 0.35, pitch: 1 });
       }
-      const maxCharge = clamp(a.ink / w.inkFull, 0, 1);
+      const maxCharge = 1;
       // charge builds on a gentle S-curve (quick first 20 % so taps are useful, a committed middle, a crisp top-off)
       this.chargeT = Math.min(1, this.chargeT + dt / w.chargeTime);
       const t = this.chargeT, curve = t < 0.2 ? t * 1.25 : 0.25 + (t - 0.2) * 0.9375;
@@ -163,7 +178,7 @@ export class WeaponRunner {
       this.charging = false;
       this.chargeLoop?.stop(0.05); this.chargeLoop = null;
       const c = Math.max(0.12, this.charge);
-      a.ink = Math.max(0, a.ink - w.inkFull * c);
+      a.useAmmo(this._cost(w));
       a.lastFire = 0;
       G.projectiles.fireCharger(a, w, c);
       a.character.trigger('charge_release');
@@ -189,16 +204,16 @@ export class WeaponRunner {
       return;
     }
     if (inp.firePressed && this.cooldown <= 0) {
-      if (a.ink < w.flickInk) { this._empty(); }
+      if (!a.useAmmo(this._cost(w))) { this._empty(); }
       else {
-        a.ink -= w.flickInk; a.lastFire = 0;
+        a.lastFire = 0;
         this.flick = 0;
         a.character.trigger('flick');
         if (a.isLocal || a._nearCamera()) G.audio?.play('roller_flick', { pos: a.isLocal ? undefined : a.pos, volume: 0.8 });
         return;
       }
     }
-    const canRoll = inp.fire && a.grounded && a.ink > 0.5 && this.cooldown <= 0.25;
+    const canRoll = inp.fire && a.grounded && a.hasAmmo(0.5) && this.cooldown <= 0.25;
     this.rollT = canRoll ? this.rollT + dt : 0;
     if (canRoll !== this.rolling) {
       this.rolling = canRoll;
@@ -206,7 +221,7 @@ export class WeaponRunner {
       if (canRoll && (a.isLocal || a._nearCamera())) this.rollLoop = G.audio?.loop('roll', { pos: a.isLocal ? undefined : a.pos, volume: 0 });
       if (!canRoll) { this.rollLoop?.stop(0.12); this.rollLoop = null; }
     }
-    if (inp.fire && a.ink <= 0.5) this._empty();
+    if (inp.fire && !a.hasAmmo(0.5)) this._empty();
     if (!this.rolling) return;
     a.lastFire = 0;
     const hs = Math.hypot(a.vel.x, a.vel.z);
@@ -231,7 +246,7 @@ export class WeaponRunner {
     }
     if (moved < 0.28) return;
     this.lastRollPos.copy(a.pos);
-    a.ink = Math.max(0, a.ink - w.rollInkPerMeter * moved);
+    a.ammo = Math.max(0, a.ammo - 0.5 * moved);
     // paint a stripe across the drum: kind 'roll' + the roll direction → paint.js lays one straight-edged band segment
     // per splat (identical on the CPU turf grid) instead of round blobs, so rolled turf reads as a clean stripe
     let area = 0;
@@ -256,11 +271,7 @@ export class WeaponRunner {
       d.t += dt;
       a.fireFacing = 0.5; this.firingT = 0.35;
       this.rollPaint -= dt;
-      if (this.rollPaint <= 0 && a.grounded) {          // the roll smears a trail of ink behind it
-        this.rollPaint = 0.045;
-        _v.set(a.pos.x, a.pos.y + 0.3, a.pos.z);
-        a.addTurf(G.paint.splat(_v, 0.62, a.team, { seed: Math.random(), kind: 'trail' }));
-      }
+      // (the dive roll leaves no paint behind)
       if (d.t >= d.dur) { this.dodge = null; this.lockT = w.lockTime; }
       return;                                           // no shots mid-roll
     }
@@ -271,8 +282,7 @@ export class WeaponRunner {
     a.fireFacing = 0.5;
     let guard = 0;
     while (this.cooldown <= 0 && guard++ < 3) {
-      if (a.ink < w.inkPerShot) { this._empty(); this.cooldown += w.fireInterval; break; }
-      a.ink -= w.inkPerShot;
+      if (!a.useAmmo(this._cost(w))) { this._empty(); this.cooldown += w.fireInterval; break; }
       a.lastFire = 0;
       this.spread = this._spreadDeg(w);
       this.hand ^= 1;
@@ -287,12 +297,12 @@ export class WeaponRunner {
   /** actor.js: a jump press while grounded → try a dualies dodge roll along `move` (world xz). true = rolling (skip the jump). */
   tryDodge(move) {
     const a = this.a, w = a.weapon;
-    if (w.kind !== 'dualies' || this.dodge || !a.alive || a.form === 'squid' || this.aimingSub || !move) return false;
+    if (w.kind !== 'dualies' || this.dodge || !a.alive || a.sprinting || this.aimingSub || !move) return false;
     if (!(this.firingT > 0 || a.intent.fire)) return false;
     const ml = Math.hypot(move.x, move.z);
     if (ml < 0.3 || this.rollsLeft <= 0) return false;
-    if (a.ink < w.rollInk) { this._empty(); return false; }
-    a.ink -= w.rollInk; a.lastFire = 0;
+    if (w.rollInk > 0 && !a.useAmmo(w.rollInk)) { this._empty(); return false; }
+    a.lastFire = 0;
     this.rollsLeft--; this.lockT = 0; this.rollPaint = 0;
     this._dodgeDir.set(move.x / ml, 0, move.z / ml);
     this.dodge = { t: 0, dur: w.rollTime };
@@ -323,29 +333,35 @@ export class WeaponRunner {
       return;
     }
     if (inp.fire && this.cooldown <= 0) {
-      if (a.ink < w.inkPerShot) { this._empty(); this.cooldown = 0.2; return; }
-      a.ink -= w.inkPerShot; a.lastFire = 0;
+      if (!a.useAmmo(this._cost(w))) { this._empty(); this.cooldown = 0.2; return; }
+      a.lastFire = 0;
       this.slosh = 0; this.firingT = 0.35; a.fireFacing = 0.5;
       a.character.trigger('slosh');
       if (a.isLocal || a._nearCamera()) G.audio?.play('slosh_throw', { pos: a.isLocal ? undefined : a.pos, volume: a.isLocal ? 0.75 : 0.55 });
     }
   }
 
-  // ---- splatling: hold → spin up (chargeTime; a motor loop rising in pitch, a clunk at full), release → a stream of
-  // burstMin…burstMax s scaled by the charge at 15 shots/s. charge = spin-up while charging, the stream left while
-  // streaming (burstFrac), so the HUD meter / weapon meter fill and then drain.
+  // ---- splatling (Hailstorm Ramp): hold → spin up (chargeTime; a motor loop rising in pitch, a clunk at full), then it
+  // fires full-auto for as long as the trigger stays down (or the hopper runs dry). Release → spin down. charge = spin-up
+  // while spinning up, 1 while streaming (HUD meter / weapon rig read it; burstFrac mirrors it for the net code).
   _splatling(dt, inp, w) {
     const a = this.a;
     const pos = a.isLocal ? undefined : a.pos;
+    const stop = () => {
+      const was = this.streaming || this.charging;
+      this.streaming = false; this.charging = false; this.charge = 0; this.chargeT = 0; this.burstFrac = 0; this.burstT = 0;
+      this.cooldown = Math.max(this.cooldown, 0.12);
+      this.spinLoop?.stop(0.12); this.spinLoop = null;
+      if (was && (a.isLocal || a._nearCamera())) G.audio?.play('splatling_wind', { pos, volume: a.isLocal ? 0.6 : 0.42 });
+    };
+    if (!inp.fire) { if (this.streaming || this.charging) stop(); if (this.cooldown < 0) this.cooldown = 0; return; }
     if (this.streaming) {
-      this.burstT -= dt;
-      this.burstFrac = Math.max(0, this.burstT / Math.max(0.01, this.burstDur));
-      this.charge = this.burstFrac;
+      this.charge = 1; this.burstFrac = 1; this.burstT = 1; this.burstDur = 1;
       this.firingT = 0.3; a.fireFacing = 0.5;
       let guard = 0;
-      while (this.cooldown <= 0 && guard++ < 3 && this.burstT > 0) {
-        if (a.ink < w.inkPerShot) { this._empty(); this.burstT = 0; break; }
-        a.ink -= w.inkPerShot; a.lastFire = 0;
+      while (this.cooldown <= 0 && guard++ < 3) {
+        if (!a.useAmmo(this._cost(w))) { stop(); this._empty(); return; }
+        a.lastFire = 0;
         this.spread = this._spreadDeg(w);
         G.projectiles.fireSplatling(a, w, this.spread);
         this.bloom = Math.min(1, this.bloom + (w.bloomPerShot ?? 0.05));
@@ -353,42 +369,33 @@ export class WeaponRunner {
         this.cooldown += w.fireInterval;
       }
       this.spinLoop?.set({ pitch: 1.5 + 0.06 * Math.sin(G.time * 31), pos });
-      if (this.burstT <= 0) {
-        this.streaming = false; this.charge = 0; this.burstFrac = 0; this.cooldown = Math.max(this.cooldown, 0.22);
-        this.spinLoop?.stop(0.12); this.spinLoop = null;
-        if (a.isLocal || a._nearCamera()) G.audio?.play('splatling_wind', { pos, volume: a.isLocal ? 0.6 : 0.42 });
-      }
       return;
     }
-    if (inp.fire && this.cooldown <= 0) {
-      if (!this.charging) {
-        if (a.ink < w.inkPerShot * 5) { this._empty(); return; }
-        this.charging = true; this.charge = 0; this.chargeT = 0; this.chargeDinged = false;
-        if (a.isLocal || a._nearCamera()) this.spinLoop = G.audio?.loop('splatling_spin', { pos, volume: a.isLocal ? 0.6 : 0.4, pitch: 0.6 });
-      }
-      this.chargeT += dt;
-      this.charge = Math.min(1, this.chargeT / w.chargeTime);
-      a.fireFacing = 0.45;
-      this.spinLoop?.set({ pitch: 0.6 + 0.85 * this.charge, pos });
-      if (this.charge >= 1 && !this.chargeDinged) {
-        this.chargeDinged = true;
-        if (a.isLocal) G.audio?.play('splatling_ready', { volume: 0.7 });
-        rumble(a, 0.05, 0.28, 60);
-      }
-    } else if (this.charging) {
-      this.charging = false;
-      this.burstDur = lerp(w.burstMin, w.burstMax, this.charge); this.burstT = this.burstDur; this.burstFrac = 1;
-      this.streaming = true; this.cooldown = 0; this.bloom = 0;
+    if (this.cooldown > 0) return;
+    if (!this.charging) {
+      if (!a.hasAmmo(this._cost(w))) { this._empty(); return; }
+      this.charging = true; this.charge = 0; this.chargeT = 0; this.chargeDinged = false;
+      if (a.isLocal || a._nearCamera()) this.spinLoop = G.audio?.loop('splatling_spin', { pos, volume: a.isLocal ? 0.6 : 0.4, pitch: 0.6 });
+    }
+    this.chargeT += dt;
+    this.charge = Math.min(1, this.chargeT / w.chargeTime);
+    a.fireFacing = 0.45;
+    this.spinLoop?.set({ pitch: 0.6 + 0.85 * this.charge, pos });
+    if (this.charge >= 1) {
+      if (!this.chargeDinged) { this.chargeDinged = true; if (a.isLocal) G.audio?.play('splatling_ready', { volume: 0.5 }); rumble(a, 0.05, 0.28, 60); }
+      this.charging = false; this.streaming = true; this.cooldown = 0; this.bloom = 0;
     }
   }
 }
 
 // ---------------------------------------------------------------------------------------------- projectiles
 const MAX_BLOBS = 700;
-// stream-round looks (visual only; hit size stays in 'size'): dualies smaller + snappier, splatling tight and fast
-const LOOK_DUAL_R = Object.freeze({ vis: 0.088, tail0: 0.8, tailK: 1.3, wob: 0.03, wobF: 28, nose: 0.3, sats: 2 });
-const LOOK_DUAL_L = Object.freeze({ vis: 0.088, tail0: 0.8, tailK: 1.3, wob: 0.03, wobF: 28, nose: 0.3, sats: 2 });
-const LOOK_SPLAT = Object.freeze({ vis: 0.086, tail0: 0.9, tailK: 1.6, wob: 0.025, wobF: 30, nose: 0.35, sats: 2 });
+// paintball looks (visual only; hit size stays in 'size'): small round glossy balls — tail0 1 / tailK 0 keeps the
+// teardrop shader a plain sphere, no wobble, no satellite droplets
+const LOOK_BALL = Object.freeze({ vis: 0.075, tail0: 1, tailK: 0, wob: 0, wobF: 0, nose: 0, sats: 0 });
+const LOOK_DUAL_R = Object.freeze({ vis: 0.068, tail0: 1, tailK: 0, wob: 0, wobF: 0, nose: 0, sats: 0 });
+const LOOK_DUAL_L = LOOK_DUAL_R;
+const LOOK_SPLAT = Object.freeze({ vis: 0.068, tail0: 1, tailK: 0, wob: 0, wobF: 0, nose: 0, sats: 0 });
 // satellite droplets trailing each projectile (fractions of the head radius), thinning out down the string
 const SAT_SIZE = [0.46, 0.33, 0.24, 0.17];
 
@@ -403,11 +410,14 @@ function makeBlobMaterial() {
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>
         attribute vec4 aShape;
+        varying vec3 vIwO;
+        varying float vIwPh;
         vec3 iwP;`)
       .replace('#include <beginnormal_vertex>', `
         vec3 objectNormal;
         {
           vec3 p = position, n = normal;
+          vIwO = p; vIwPh = aShape.z;
           float back = step(p.z, 0.0);
           float u = clamp(-p.z, 0.0, 1.0);
           float tau = mix(1.0, 1.0 - 0.42 * pow(u, 1.3), back);       // tail taper (soft, rounded tip)
@@ -419,6 +429,18 @@ function makeBlobMaterial() {
         }`)
       .replace('#include <begin_vertex>', 'vec3 transformed = iwP;');
     sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vIwO;
+        varying float vIwPh;`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          // paintball shell: two-tone halves (team colour + a deeper shade) split by a thin light seam; the seam axis
+          // turns with the ball's spin (aShape.z runs on with its age)
+          vec3 iwAx = normalize(vec3(sin(vIwPh), cos(vIwPh * 1.3), sin(vIwPh * 0.7 + 1.0)));
+          float iwD = dot(normalize(vIwO), iwAx);
+          diffuseColor.rgb *= mix(1.0, 0.6, smoothstep(-0.03, 0.03, iwD));
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), (1.0 - smoothstep(0.04, 0.09, abs(iwD))) * 0.6);
+        }`)
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
         {
           float iwNear = smoothstep(0.55, 1.6, length(vViewPosition));
@@ -431,7 +453,7 @@ function makeBlobMaterial() {
           totalEmissiveRadiance += vColor.rgb * (0.16 + 0.55 * iwRim);
         }`);
   };
-  mat.customProgramCacheKey = () => 'iw-blob-3';
+  mat.customProgramCacheKey = () => 'iw-blob-4';
   return mat;
 }
 
@@ -732,12 +754,11 @@ export class Projectiles {
   fireShooter(a, w, spreadDeg) {
     const m = this._muzzle(a, _v.set(0, 0, 0));
     const dir = this._aimFrom(a, m, _dir);
-    this._ballistic(m, dir, a.aimPoint, w.projSpeed, w.straightTime, 28, 0.8, w.range);
+    const grav = w.grav ?? 28, drag = w.drag ?? 0.8;
+    this._ballistic(m, dir, a.aimPoint, w.projSpeed, w.straightTime, grav, drag, w.range);
     this._spread(dir, spreadDeg ?? (a.grounded ? w.spreadGround : w.spreadAir));
     const p = this._new();
-    // trail starts ~2.5 m out so shots never drip on the shooter's own feet
-    Object.assign(p, { type: 'shot', owner: a, team: a.team, age: 0, life: 1.2, straight: w.straightTime, radius: w.impactRadius, damage: w.damage, size: 0.15, trail: -(2.5 - w.trailEvery), trailEvery: w.trailEvery, trailRadius: w.trailRadius, grav: 28, drag: 0.8, seed: Math.random(),
-      vis: 0.1 + Math.random() * 0.012, tail0: 0.8, tailK: 1.3, wob: 0.035, wobF: 26, nose: 0.3, sats: 3 });
+    Object.assign(p, { type: 'shot', wid: w.id, owner: a, team: a.team, age: 0, life: 1.1, straight: w.straightTime, radius: w.impactRadius, damage: w.damage, size: 0.13, trail: 0, trailEvery: w.trailEvery || 0, trailRadius: w.trailRadius || 0, grav, drag, seed: Math.random() }, LOOK_BALL);
     p.pos.copy(m); p.prev.copy(m); p.start.copy(m);
     p.vel.copy(dir).multiplyScalar(w.projSpeed);
     this._push(p);
@@ -772,10 +793,11 @@ export class Projectiles {
   // one stream round (shooter-family): ballistic correction onto the crosshair, spread cone, teardrop look
   _fireRound(a, w, spreadDeg, m, look, snd, sndVol, pitch) {
     const dir = this._aimFrom(a, m, _dir);
-    this._ballistic(m, dir, a.aimPoint, w.projSpeed, w.straightTime, 28, 0.8, w.range);
+    const grav = w.grav ?? 28, drag = w.drag ?? 0.8;
+    this._ballistic(m, dir, a.aimPoint, w.projSpeed, w.straightTime, grav, drag, w.range);
     this._spread(dir, spreadDeg ?? (a.grounded ? w.spreadGround : w.spreadAir));
     const p = this._new();
-    Object.assign(p, { type: 'shot', wid: w.id, owner: a, team: a.team, age: 0, life: 1.2, straight: w.straightTime, radius: w.impactRadius, damage: w.damage, size: 0.15, trail: -(2.5 - w.trailEvery), trailEvery: w.trailEvery, trailRadius: w.trailRadius, grav: 28, drag: 0.8, seed: Math.random() }, look);
+    Object.assign(p, { type: 'shot', wid: w.id, owner: a, team: a.team, age: 0, life: 1.1, straight: w.straightTime, radius: w.impactRadius, damage: w.damage, size: 0.13, trail: 0, trailEvery: w.trailEvery || 0, trailRadius: w.trailRadius || 0, grav, drag, seed: Math.random() }, look);
     p.pos.copy(m); p.prev.copy(m); p.start.copy(m);
     p.vel.copy(dir).multiplyScalar(w.projSpeed);
     this._push(p);
@@ -871,13 +893,17 @@ export class Projectiles {
     }
   }
 
+  // Popper Launcher: a fat paint round lobbed onto the crosshair (the low ballistic solution, within range); it bursts
+  // on impact — or at the end of its life — splashing everyone near it (_blastBurst)
   fireBlaster(a, w, spreadDeg) {
     const m = this._muzzle(a, _v.set(0, 0, 0));
     const dir = this._aimFrom(a, m, _dir);
+    const grav = w.grav ?? 0;
+    if (grav > 0) this._ballistic(m, dir, a.aimPoint, w.projSpeed, 0, grav, 0, w.range);
     this._spread(dir, spreadDeg ?? 1.2);
     const p = this._new();
-    Object.assign(p, { type: 'blast', owner: a, team: a.team, age: 0, life: w.range / w.projSpeed, straight: 99, radius: w.impactRadius, damage: w.directDamage, size: 0.26, trail: -1.5, trailEvery: 2.2, trailRadius: 0.45, grav: 0, drag: 0, seed: Math.random(),
-      vis: 0.2, tail0: 0.5, tailK: 0.9, wob: 0.085, wobF: 17, nose: 0.15, sats: 4 });
+    Object.assign(p, { type: 'blast', wid: w.id, owner: a, team: a.team, age: 0, life: w.life ?? (w.range / w.projSpeed), straight: grav > 0 ? 0 : 99, radius: w.impactRadius, damage: w.directDamage, size: 0.22, trail: 0, trailEvery: 0, trailRadius: 0, grav, drag: 0, seed: Math.random(),
+      vis: 0.15, tail0: 1, tailK: 0, wob: 0.02, wobF: 12, nose: 0, sats: 0 });
     p.pos.copy(m); p.prev.copy(m); p.start.copy(m);
     p.vel.copy(dir).multiplyScalar(w.projSpeed);
     this._push(p);
@@ -942,8 +968,8 @@ export class Projectiles {
     if (victim) { len = victim.d; this.applyHit(a, victim.e, dmg, 'charger'); }
     // paint along the line (projected to the ground)
     let area = 0;
-    const step = w.lineSplatEvery;
-    for (let s = 1.2; s < len - 0.3; s += step) {
+    const step = w.lineSplatEvery;   // 0 = no paint along the line (BREAKOUT: the sniper only splats where it lands)
+    for (let s = 1.2; step > 0 && s < len - 0.3; s += step) {
       _v2.copy(m).addScaledVector(dir, s);
       const g = G.physics.raycast(_v2, DOWN, 3.5, _hit2, true);
       if (g.hit) area += G.paint.splat(_v3.copy(g.point).addScaledVector(g.normal, 0.1), w.lineRadius * (0.8 + charge * 0.4), a.team, { seed: Math.random(), stretch: dir, stretchAmt: 1.2 });
@@ -951,7 +977,7 @@ export class Projectiles {
     if (hit.hit && !victim && !bossHit) {
       _v2.copy(hit.point).addScaledVector(hit.normal, 0.12);
       area += G.paint.splat(_v2, w.impactRadius * (0.6 + 0.4 * charge), a.team, { seed: Math.random(), stretch: dir, stretchAmt: 0.6 });
-      G.fx?.burst(hit.point, hit.normal, a.color, { count: 10, speed: 4, size: 0.09, paint: false });
+      G.fx?.ballSplat?.(hit.point, hit.normal, a.color, dir, { size: 1.25, count: 8, flecks: 4 });
       if (a.isLocal || a._nearCamera()) G.audio?.play('ink_hit_wall', { pos: hit.point, volume: 0.6 });
     }
     {
@@ -1099,8 +1125,12 @@ export class Projectiles {
     let killed = false;
     const route = nm ? nm.shouldApplyHit(attacker, victim) : 'local';
     if (route === 'drop') return;
-    if (route === 'send') nm.sendHit(attacker, victim, dmg, weaponId);   // the kill confirm arrives with their splat
-    else killed = victim.damage(dmg, attacker, weaponId);
+    if (route === 'send') {
+      if (G.match?.damageOpen && !G.match.damageOpen()) return;
+      nm.sendHit(attacker, victim, dmg, weaponId);   // the kill confirm arrives with their splat
+      // the victim's owner applies it; the special meter (damage dealt) is credited here, on the attacker's side
+      if (!attacker.remote && !(victim.invuln > 0)) attacker.addSpecialPoints?.(Math.min(dmg, Math.max(0, victim.hp)));
+    } else killed = victim.damage(dmg, attacker, weaponId);
     emit('hit', { attacker, victim, damage: dmg, killed, weaponId });
     // ink smacking the body, at the body (heavier + lower for big hits); the UI tick / kill sting are main.js's
     if (G.audio && (attacker.isLocal || victim.isLocal || victim._nearCamera?.())) {
@@ -1149,7 +1179,10 @@ export class Projectiles {
           if (p.type === 'drop') dmg = lerp(p.damage, p.dmgFar, clamp(p.start.distanceTo(_v) / 7, 0, 1));
           if (p.vol) { if (p.vol.hits.includes(e)) dmg = 0; else p.vol.hits.push(e); }
           if (dmg > 0) this.applyHit(p.owner, e, dmg, p.wid || p.type);
-          G.fx?.burst(_v, _v2.copy(p.vel).normalize().negate(), p.owner.color, { count: 6, speed: 3, size: 0.07 });
+          // paintball breaking on the body at the exact hit point (the bright splat + shell bits)
+          if (G.fx?.ballHit) G.fx.ballHit(_v, _v2.copy(p.vel).setY(0).negate().normalize(), p.owner.color, dmg || p.damage);
+          else G.fx?.burst(_v, _v2.copy(p.vel).normalize().negate(), p.owner.color, { count: 6, speed: 3, size: 0.07 });
+          _v2.copy(p.vel).normalize().negate();
           if (p.type !== 'blast') emit('weapon:impact', { pos: _v.clone(), normal: _v2.clone(), team: p.team, kind: p.type === 'drop' || p.type === 'slosh' ? 'drop' : 'shot', radius: p.radius * 0.5, victim: e });
           if (p.type === 'blast') this._blastBurst(p, _v, e);
           if (p.type === 'slosh' && p.head) this._sloshSplash(p, _v, e);
@@ -1219,7 +1252,8 @@ export class Projectiles {
     if (p.type !== 'blast') emit('weapon:impact', { pos: hit.point.clone(), normal: hit.normal.clone(), team: p.team, kind: p.type === 'drop' || p.type === 'slosh' ? 'drop' : 'shot', radius: rad });
     const near = p.owner.isLocal || G.camera.position.distanceToSquared(hit.point) < 22 * 22;
     if (near) {
-      G.fx?.burst(hit.point, hit.normal, p.owner.color, { count: p.type === 'blast' ? 14 : 5, speed: p.type === 'blast' ? 5 : 3, size: 0.07, paint: false });
+      if (p.type === 'blast' || !G.fx?.ballSplat) G.fx?.burst(hit.point, hit.normal, p.owner.color, { count: p.type === 'blast' ? 14 : 5, speed: p.type === 'blast' ? 5 : 3, size: 0.07, paint: false });
+      else G.fx.ballSplat(hit.point, hit.normal, p.owner.color, _dir.copy(p.vel).normalize());
       if (Math.random() < (p.type === 'shot' ? 0.45 : 1)) G.audio?.play(p.type === 'blast' ? 'splat_big' : 'splat_small', { pos: hit.point, volume: p.type === 'shot' ? 0.35 : 0.6 });
     }
     if (p.type === 'blast') this._blastBurst(p, hit.point, null);
@@ -1396,7 +1430,7 @@ export class Projectiles {
     pos.needsUpdate = true;
     this.arcGeo.setDrawRange(0, n);
     this.arcLine.computeLineDistances();
-    const col = a.ink >= SUB.bomb.inkCost ? a.color : new THREE.Color(0.6, 0.6, 0.6);
+    const col = a.grenades > 0 ? a.color : new THREE.Color(0.6, 0.6, 0.6);
     this.arcLine.material.color.copy(col).multiplyScalar(1.4);
     this.arcRing.material.color.copy(col).multiplyScalar(1.4);
     this.arcLine.visible = true;
@@ -1404,9 +1438,10 @@ export class Projectiles {
     this.arcRing.scale.setScalar(1 + Math.sin(G.time * 8) * 0.06);
   }
 
-  // Every projectile = a glossy teardrop head (tail length from its speed, liquid wobble, a fat "squirt" pop as it
-  // leaves the muzzle) + a string of satellite droplets that sway behind it and close up as it slows. Blaster balls
-  // swell and jiggle in the last moments before their mid-air burst.
+  // Every projectile = a small glossy paintball (two-tone shell with a seam that spins with the ball, clear-coat
+  // highlight, a quick pop to size as it leaves the barrel; the faint motion streak behind it is fxHooks → fx.streak).
+  // The shape attributes still allow the old teardrop / satellite looks (LOOK_* tail/wob/sats), all off for paintballs.
+  // Launcher balls swell and pulse in the last moments before their mid-air burst.
   _draw() {
     let n = 0;
     const B = this.blobs, shp = this.blobShape.array;

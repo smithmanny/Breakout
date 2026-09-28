@@ -1,4 +1,4 @@
-// Showcase stage: a studio-lit overlay scene drawn on top of the live arena for the loadout screen (one squidkid on an
+// Showcase stage: a studio-lit overlay scene drawn on top of the live arena for the loadout screen (one player on an
 // ink-dipped pedestal) and the results screen (your team on a tiered ink podium with confetti + ink bursts, or a cool
 // drizzle on defeat).
 //
@@ -68,7 +68,8 @@ const PLATE_H = 1.64;         // nameplate anchor above the feet (m): just over 
 // squid travel: cruise speed, acceleration, braking, root lift over the asphalt (the swim pose sinks into the ink),
 // trail blob spacing, and the leap onto the mark (span, time, height)
 // (the leap keeps > 3 m/s across the ground so the character flies it as a dolphin arc, mantle along the path)
-const SWIM = { v: 10, acc: 26, brake: 13, lift: 0.1, gap: 0.07, leap: 2.3, T: 0.5, H: 0.62 };
+// BREAKOUT: players sprint in (no squid form) — v is a sprint pace so the run cycle reads; lift 0 keeps feet on the deck
+const SWIM = { v: 7.6, acc: 22, brake: 12, lift: 0, gap: 0.07, leap: 2.1, T: 0.46, H: 0.5 };
 // lobby emotes → character dances (danceVar forces the variant; t0 starts mid-dance)
 const LOB_EMOTES = {
   booyah: { dance: 'victory', v: 0, dur: 2.9, hop: 0.32 },
@@ -1320,7 +1321,7 @@ export class Showcase {
         const b = 2 * H + 2 * Math.sqrt(H * H - H * y1), a = y1 - b; // y(x) = a x² + b x: apex H, y(1) = y1
         y = a * x * x + b * x; vy = (2 * a * x + b) / T; air = true;
         twirl = 1.2 * eInOut(x);
-        c._a.form = x > 0.3 ? 'squid' : 'kid';
+        c._a.form = 'kid';   // (BREAKOUT: no squid form — the kid cannonballs into the pedestal paint)
         sy = 1 + 0.12 * c01(vy / 3) - 0.06 * c01(-vy / 6);
         if (!L.dove && y < 0 && vy < 0) {
           L.dove = true;
@@ -1805,7 +1806,7 @@ export class Showcase {
   _lobNew(p, skey) {
     const L = this.lob;
     return {
-      id: p.id, name: p.name || 'Squidkid', you: !!p.you, host: !!p.host, ready: !!p.ready, weapon: p.weapon || 'shooter',
+      id: p.id, name: p.name || 'Player', you: !!p.you, host: !!p.host, ready: !!p.ready, weapon: p.weapon || 'shooter',
       style: p.style ? { ...p.style } : {}, skey, team: 0, wantTeam: 0, mark: null, at: null, dest: null, c: null, a: this._anim(), kind: null,
       phase: 'off', t0: 0, delay: 0, flag: 0, enter: null, fresh: false, path: null, s: 0, v: 0, onEnd: null, leap: null, dive: null, after: null,
       pos: new THREE.Vector3(), yaw: 0, y: 0, sy: 1, vis: 0, plateH: PLATE_H, trailS: 0, hy: 0, popAnt: 0.3, puddle: false,
@@ -1841,7 +1842,7 @@ export class Showcase {
 
   _lobChar(M) {
     const kind = weaponKind(M.weapon);
-    const c = new this.CharacterClass({ color: this._lobRowColor(M.team).clone(), weapon: kind, style: { ...M.style }, name: M.name || 'Squidkid', isLocal: false });
+    const c = new this.CharacterClass({ color: this._lobRowColor(M.team).clone(), weapon: kind, style: { ...M.style }, name: M.name || 'Player', isLocal: false });
     c.root.rotation.order = 'YXZ';
     c.setDance(M.ready ? 'lobby_pose' : M.danceIdle);
     c.root.visible = false;
@@ -2154,15 +2155,15 @@ export class Showcase {
       M.s = 0; M.v = SWIM.v * 0.8; M.onEnd = 'leap'; M.trailS = 0;
       const h = pathAt(P, 0, M.pos, _d);
       M.yaw = Math.atan2(_d.x, _d.z); M.hy = h || 0;
-      a.form = 'swim'; a.grounded = true;
-      M.phase = 'swim'; M.vis = 1; M.plateH = 0.55;
+      a.form = 'kid'; a.grounded = true; a.sprinting = true; c.setDance(null);
+      M.phase = 'swim'; M.vis = 1; M.plateH = PLATE_H;
       this._lobWarm(M, SWIM.lift);
       return;
     }
     M.pos.copy(S.pos); M.yaw = S.yaw + M.yawOff;
     if (how === 'pop') {
       M.phase = 'pop'; M.puddle = false; M.popAnt = M.popAnt || 0.3;
-      a.form = 'swim'; M.vis = 0; M.plateH = PLATE_H;
+      a.form = 'kid'; M.vis = 0; M.plateH = PLATE_H;
       this._lobWarm(M, -1.2);
       c.root.visible = false;
       return;
@@ -2205,7 +2206,7 @@ export class Showcase {
     let y = 0, sy = 1, twirl = 0, pitch = 0, air = false, vy = 0;
     const tau = t - M.t0;
     if (M.phase === 'swim') {
-      // ---- low fast swim along the path; hops the stairs; brakes into the leap (or a surfacing / the alley mouth)
+      // ---- a sprint along the path; hops the stairs; brakes into the leap (or a pop-up / the alley mouth)
       const P = M.path;
       const sEnd = M.onEnd === 'leap' ? Math.max(0, P.len - SWIM.leap) : P.len;
       const vEnd = M.onEnd === 'leap' ? 4.6 : M.onEnd === 'pop' ? 1.2 : SWIM.v;
@@ -2216,39 +2217,25 @@ export class Showcase {
       M.s = Math.min(sEnd, M.s + M.v * dt);
       const h = pathAt(P, M.s, M.pos, _d);
       M.yaw = dampAngle(M.yaw, Math.atan2(_d.x, _d.z), 14, dt);
-      a.form = 'swim';
+      // BREAKOUT: a masked player sprinting in (the character's gait comes from the root motion)
+      a.form = 'kid'; a.sprinting = M.v > 3;
+      if (c.dance) c.setDance(null);
       if (h !== null) { air = true; y = h; vy = (h - M.hy) / Math.max(dt, 1e-3); }
       else y = SWIM.lift;
-      if (h !== null && M.hy === 0) fx.crown(M.pos.x, M.pos.y, M.pos.z, 0.5, 9, 0.12);   // takes off up / down the steps
-      if (h === null && M.hy > 0.05) { fx.crown(M.pos.x, M.pos.y, M.pos.z, 0.55, 10, 0.12); G.audio?.play?.('swim_splash', { volume: 0.18 }); }
+      if (h !== null && M.hy === 0) c.trigger('jump');   // hops up / down the steps
+      if (h === null && M.hy > 0.05) c.trigger('land', 4);
       M.hy = h || 0;
-      M.plateH = damp(M.plateH, 0.55, 8, dt);
-      if (!air) {
-        // wet trail + a little spray off the tail at speed
-        M.trailS += M.v * dt;
-        const col = this._lobRowColor(M.team), sp = c01(M.v / SWIM.v);
-        while (M.trailS >= SWIM.gap) {
-          M.trailS -= SWIM.gap;
-          const back = M.trailS + 0.16;
-          L.trail.add(M.pos.x - _d.x * back, M.pos.y, M.pos.z - _d.z * back, M.yaw, (0.068 + 0.024 * sp) * (0.85 + 0.3 * this.rand()), 0.12, col, 1.6 + this.rand() * 0.5);
-        }
-        if (this.rand() < dt * 26 * sp) {
-          const r = this.rand, side = r() < 0.5 ? -1 : 1;
-          fx.drop(M.pos.x - _d.x * 0.28 + _d.z * side * 0.07, M.pos.y + 0.05, M.pos.z - _d.z * 0.28 - _d.x * side * 0.07,
-            -_d.x * (0.6 + r()) + _d.z * side * (0.4 + r() * 0.5), 1.1 + r() * 1.3, -_d.z * (0.6 + r()) - _d.x * side * (0.4 + r() * 0.5), 0.01 + r() * 0.012, 1, 2);
-        }
-      }
+      M.plateH = damp(M.plateH, PLATE_H, 8, dt);
+      // (INKWAVE laid a wet swim trail + tail spray here: nobody swims in BREAKOUT)
       if (M.s >= sEnd - 1e-4) this._lobSwimEnd(M, fx);
     } else if (M.phase === 'leap') {
-      // ---- out of the ink: a squid arc that pops into the kid past the apex, turning to camera, splash-down on the mark
+      // ---- the last bound: a jump off the sprint, turning to camera, landing on the mark
       const Lp = M.leap, x = c01(tau / Lp.T);
       M.pos.lerpVectors(Lp.p0, Lp.p1, x);
       y = 4 * Lp.H * x * (1 - x); vy = (4 * Lp.H * (1 - 2 * x)) / Lp.T + (Lp.p1.y - Lp.p0.y) / Lp.T;
       air = x < 1;
-      if (x > 0.42 && a.form !== 'kid') {
-        a.form = 'kid'; c.trigger('jump'); c.setDance(null);
-        this._lobInkBurst(M, fx, 7);
-      } else if (x <= 0.42) a.form = 'squid';
+      a.form = 'kid'; a.sprinting = false;
+      if (!M.flag) { M.flag = 1; c.trigger('jump'); c.setDance(null); }
       M.yaw = Lp.yaw0 + wrapA(Lp.yaw1 - Lp.yaw0) * eInOut(sstep(0.2, 1.05, x));
       sy = a.form === 'kid' ? 1 + 0.1 * c01(vy / 4) - 0.05 * c01(-vy / 5) : 1;
       M.plateH = damp(M.plateH, a.form === 'kid' ? PLATE_H : 0.6, 10, dt);
@@ -2268,7 +2255,7 @@ export class Showcase {
       else {
         c.root.visible = true;
         y = y0 + v0 * te - 0.5 * g * te * te; vy = v0 - g * te; air = true;
-        a.form = y > -0.42 ? 'kid' : 'swim';
+        a.form = 'kid';
         if (!M.flag && y > 0) {
           M.flag = 1; M.vis = 1;
           fx.crown(M.pos.x, M.pos.y, M.pos.z, 1.15, 22, 0.2);
@@ -2281,7 +2268,7 @@ export class Showcase {
         if (te > tp && y <= 0) { y = 0; air = false; this._lobLanded(M, fx, 7); }
       }
     } else if (M.phase === 'dive') {
-      // ---- turn toward the way out, crouch, hop and dive into its own ink
+      // ---- turn toward the way out, crouch, hop off the mark (then sprint away)
       const D = M.dive;
       if (tau >= -0.05) M.yaw = dampAngle(M.yaw, D.yaw, 11, dt);
       const at = tau - 0.16, ant = 0.08, T = 0.36, Hh = 0.3;
@@ -2293,9 +2280,8 @@ export class Showcase {
         y = 4 * Hh * x * (1 - x) - 0.1 * x * x; vy = (4 * Hh * (1 - 2 * x) - 0.2 * x) / T; air = true;
         // turns squid right off the ground inside a burst of ink (the character's kid → squid gesture is made for the
         // ground: mid-air it reads as a glitch), then flies the hop and dives head first into its own puddle
-        if (x > 0.12 && a.form === 'kid') { a.form = 'squid'; this._lobInkBurst(M, fx, 9); }
-        sy = a.form === 'kid' ? 1 + 0.1 * c01(vy / 2.5) : 1;
-        pitch = 1.15 * sstep(0.3, 1, x);
+        // (BREAKOUT: no squid dive — a hop off the mark, then it sprints away)
+        sy = 1 + 0.1 * c01(vy / 2.5);
         M.plateH = damp(M.plateH, a.form === 'kid' ? PLATE_H : 0.55, 10, dt);
         if (x >= 1) { this._lobAfterDive(M, fx); if (M.dead || M.phase !== 'dive') return this._lobPoseKeep(M, dt); }
       }
@@ -2331,10 +2317,7 @@ export class Showcase {
       const span = Math.hypot(p1.x - p0.x, p1.z - p0.z);
       M.leap = { p0, p1, T: SWIM.T * (0.8 + 0.2 * c01(span / SWIM.leap)), H: SWIM.H + Math.max(0, p1.y - p0.y) * 0.4, yaw0: M.yaw, yaw1: S.yaw + M.yawOff };
       M.phase = 'leap'; M.t0 = L.t; M.flag = 0;
-      M.a.form = 'squid';
-      fx.crown(p0.x, p0.y, p0.z, 0.9, 16, 0.14);
-      fx.ripple(p0.x, p0.y, p0.z, 0.06, 0.5, 0.5);
-      G.audio?.play?.('squid_out', { volume: 0.35 });
+      M.a.form = 'kid';
     } else if (M.onEnd === 'pop') {
       M.phase = 'pop'; M.t0 = L.t; M.flag = 0; M.puddle = false; M.popAnt = 0.08; M.dest = M.mark;
     } else {
@@ -2353,8 +2336,7 @@ export class Showcase {
     fx.crown(M.pos.x, M.pos.y, M.pos.z, 1.0, 18, 0.18);
     fx.splat(M.pos.x, M.pos.y, M.pos.z, 0.3, 1.8);
     fx.ripple(M.pos.x, M.pos.y, M.pos.z, 0.08, 0.6, 0.55);
-    G.audio?.play?.('squid_in', { volume: 0.35 });
-    M.a.form = 'swim'; M.at = null;
+    M.a.form = 'kid'; M.a.sprinting = true; M.at = null;
     if (how === 'vanish' || (how === 'leave' && !M.path)) { this._lobDispose(M); return; }
     if (how === 'duck') {
       const S = this._lobSpot(M.mark);
@@ -2372,7 +2354,7 @@ export class Showcase {
   _lobLanded(M, fx, amp) {
     const L = this.lob, c = M.c;
     M.phase = 'land'; M.t0 = L.t; M.at = M.dest = M.mark; M.vis = 1; M.leap = null; M.path = null; M.popAnt = 0.3;
-    M.a.form = 'kid';
+    M.a.form = 'kid'; M.a.sprinting = false;
     c.trigger('land', amp);
     c.setDance(M.ready ? 'lobby_pose' : M.danceIdle);
     fx.crown(M.pos.x, M.pos.y, M.pos.z, amp > 8 ? 1.2 : 0.75, amp > 8 ? 24 : 14, 0.22);
@@ -2483,13 +2465,13 @@ export class Showcase {
         else {
           const x = at - ant;
           if (!A.flag) {
-            A.flag = 1; M.vis = 0; a.form = 'squid'; c.trigger('jump');
+            A.flag = 1; M.vis = 0; c.trigger('jump');
             fx.crown(P.x, P.y, P.z, 1.2, 22, 0.24); fx.ripple(P.x, P.y, P.z, 0.15, 1.1, 0.6);
             G.audio?.play?.('super_jump', { volume: 0.4 });
           }
-          y = 7 * x + 26 * x * x; vy = 7 + 52 * x; air = true; pitch = -Math.PI / 2; sy = 1.4;
+          y = 7 * x + 26 * x * x; vy = 7 + 52 * x; air = true; sy = 1.15;
           if (this.rand() < 0.8) fx.drop(P.x + (this.rand() - 0.5) * 0.14, P.y + y - 0.2, P.z + (this.rand() - 0.5) * 0.14, (this.rand() - 0.5) * 0.5, -1, (this.rand() - 0.5) * 0.5, 0.012 + this.rand() * 0.016, 1, 2);
-          if (x > 0.55) { M.act = null; c.root.visible = false; a.form = 'squid'; M.phase = 'launched'; return null; }
+          if (x > 0.55) { M.act = null; c.root.visible = false; M.phase = 'launched'; return null; }
         }
       }
     }
@@ -2548,7 +2530,7 @@ export class Showcase {
   // a new look: rebuild the kid mid-squash (pre-warmed so it never shows a rest pose)
   _lobSwap(M) {
     const old = M.c;
-    const c = new this.CharacterClass({ color: this._lobRowColor(M.team).clone(), weapon: weaponKind(M.weapon), style: { ...M.style }, name: M.name || 'Squidkid', isLocal: false });
+    const c = new this.CharacterClass({ color: this._lobRowColor(M.team).clone(), weapon: weaponKind(M.weapon), style: { ...M.style }, name: M.name || 'Player', isLocal: false });
     c.root.rotation.order = 'YXZ';
     const dance = old ? old.dance : (M.ready ? 'lobby_pose' : M.danceIdle);
     c.setDance(dance);

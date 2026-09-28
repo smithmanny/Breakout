@@ -358,12 +358,20 @@ export class CameraRig {
       this._sjWasFlight = true;
     } else if (this._sjWasFlight) { this._sjWasFlight = false; this._sjLandT = 0; }
     if (this._sjLandT < 0.45) { this._sjLandT += dt; if (this.pitch < -0.2) this.pitch = damp(this.pitch, -0.16, 7, dt); }
-    // ---- FOV: swim speed, super jump, a touch on takeoff; charger zoom
+    // ---- FOV: sprint kick (BREAKOUT), super jump, a touch on takeoff; charger zoom
+    const shakeS = clamp(G.settings?.cameraShake ?? 1, 0, 1);
+    const sprint = !!a.sprinting && hs > 2.5 && !flying;
     let fk = 0;
-    if (swim) fk = clamp((hs - 6) * 1.1, 0, 7);
-    else if (flying) fk = 6;
+    if (flying) fk = 6;
+    else if (sprint) fk = (2 + 1.6 * shakeS) * clamp((hs - 2.5) / 4, 0, 1);
     else if (!a.grounded && a.vel.y > 2) fk = 1.2;
-    this.fovKick = damp(this.fovKick, fk, 5, dt);
+    this.fovKick = damp(this.fovKick, fk, sprint ? 4 : 5, dt);
+    // ---- head bob: a subtle stride rhythm while running (stronger sprinting), scaled by settings.cameraShake
+    const bobT = a.grounded && hs > 1.2 && !special ? (sprint ? 1 : 0.3) * clamp(hs / 5, 0, 1) * shakeS : 0;
+    this.bobK = damp(this.bobK || 0, bobT, 6, dt);
+    if (a.grounded) this.bobPh = ((this.bobPh || 0) + hs * dt * (Math.PI / (sprint ? 1.25 : 1.05))) % (Math.PI * 2);
+    // ---- reload: the view dips and tilts a hair toward the hopper while a pod goes in
+    this.reloadK = damp(this.reloadK || 0, a.reloading > 0 && a.alive ? shakeS : 0, 7, dt);
     const charging = a.weaponRunner?.charging ? a.weaponRunner.charge : 0;
     this.zoom = damp(this.zoom, charging > 0.99 ? 14 : charging * 6, 8, dt);
     // ---- boom length: soft probe, fast in / slow out
@@ -408,6 +416,13 @@ export class CameraRig {
     cam.up.set(0, 1, 0);
     cam.lookAt(_v2);
     if (Math.abs(this.kick) > 1e-6) cam.rotateX(this.kick);
+    // bob + reload dip: parallel shifts and a roll about the view axis only — the aim direction never changes
+    if (this.bobK > 1e-3 || this.reloadK > 1e-3) {
+      const ph = this.bobPh || 0, b = this.bobK;
+      cam.position.y += (Math.cos(ph * 2) - 1) * 0.022 * b - 0.03 * this.reloadK;
+      cam.position.addScaledVector(_right, Math.sin(ph) * 0.016 * b);
+      cam.rotateZ(Math.sin(ph) * 0.0035 * b + 0.012 * this.reloadK);
+    }
   }
 
   _spectate(dt) {

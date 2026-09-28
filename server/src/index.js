@@ -47,6 +47,8 @@ export class Room extends DurableObject {
     super(ctx, env);
     this.locked = false;
     this.seq = 0;
+    // (local testing on an overloaded machine: `wrangler dev --var SILENT_MATCH_MS:120000` — unset in production)
+    this.silentMatch = +env?.SILENT_MATCH_MS > 0 ? +env.SILENT_MATCH_MS : SILENT_MATCH;
     this.seen = new Map();   // ws → last message time (in memory: a busy room never hibernates; a quiet one has the pings)
     this.rate = new Map();   // ws → { t: window start, n: messages in it, strikes }
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
@@ -88,7 +90,7 @@ export class Room extends DurableObject {
 
   // liveness sweep (only while the room has members)
   async alarm() {
-    const now = Date.now(), limit = this.locked ? SILENT_MATCH : SILENT_LOBBY;
+    const now = Date.now(), limit = this.locked ? this.silentMatch : SILENT_LOBBY;
     for (const m of this.members()) {
       const seen = Math.max(m.a.at || 0, this.seen.get(m.ws) || 0, this.ctx.getWebSocketAutoResponseTimestamp(m.ws)?.getTime() || 0);
       if (now - seen > limit) { try { m.ws.close(4001, 'Connection timed out'); } catch { /* gone */ } this._gone(m.ws); }

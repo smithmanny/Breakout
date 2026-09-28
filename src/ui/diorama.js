@@ -1,8 +1,8 @@
 // Map diorama overlay. While the map is held, the camera rig swoops the RENDERED view up into a tilted overhead shot of
 // the real stage (the live scene with its live ink — nothing is rebuilt; see CameraRig.mapK / _diorama). This layer
 // pins the people and places onto that view, Splatoon-style:
-//   · you (arrow = facing), your three teammates (weapon badge, name, [1]–[3]; greyed with a countdown while splatted),
-//     your base ([4]) — enemies are not shown
+//   · you (arrow = facing), your three teammates (weapon badge, name, [1]–[3]; greyed with a countdown while splatted —
+//     in an elimination match greyed as OUT, with no keys / jump arc / jump hints), your base ([4]) — enemies are not shown
 //   · a virtual map cursor (pointer stays locked: mouse deltas / right stick) that snaps to pins and tilts the diorama a
 //     touch toward itself; click / A on a pin, or the number keys, to Super Jump — an ink arc previews the jump
 //   · a miniature finish: tilt-shift blur bands, a soft vignette, the stage name
@@ -74,6 +74,9 @@ export class DioramaOverlay {
     const col = G.teamHex?.[me.team] || '#ff8a14';
     if (col !== this._last.col) { this._last.col = col; this.el.style.setProperty('--c', col); }
     const canJump = !!(me.alive && me.canSuperJump && me.canSuperJump());
+    // elimination (BREAKOUT): no super jumps and no respawns — the map is for reading the field; the fallen read OUT
+    const noJump = !!(G.match && G.match.superJumpOk && !G.match.superJumpOk());
+    if (noJump !== this._last.noJump) { this._last.noJump = noJump; this.el.classList.toggle('is-nojump', noJump); this._head(); }
     // ---- pins
     for (let i = 0; i < 5; i++) {
       const p = this.pins[i];
@@ -82,7 +85,7 @@ export class DioramaOverlay {
         const o = allies[i];
         if (o) {
           tgt = o.pos; ok = !!(o.alive && !o.superJumpState); label = o.name; weapon = o.weaponId || o.weapon?.kind || 'shooter';
-          dead = !o.alive; if (dead) st = String(Math.max(1, Math.ceil(o.respawnTimer || 0)));
+          dead = !o.alive; if (dead) st = noJump ? 'OUT' : String(Math.max(1, Math.ceil(o.respawnTimer || 0)));
           else if (o.superJumpState) st = '↑';
         }
       } else if (i === 3) { tgt = G.level?.spawnPads?.[me.team] || null; ok = !!tgt; }
@@ -148,14 +151,14 @@ export class DioramaOverlay {
     // parallax: the diorama leans a touch toward where you point
     if (G.rig) { G.rig.dioLook.x = (this.cx - 0.5) * 2; G.rig.dioLook.y = (this.cy - 0.55) * 2; }
     // click / A on a pin → super jump (number keys are handled by the player controller; flash their pin)
-    if (inp && this.k > 0.7) {
+    if (inp && this.k > 0.7 && !noJump) {
       const click = (inp.locked && inp.mouse.leftPressed) || inp.padPressed?.has?.(0);
       if (click && this.hover >= 0) this._jump(this.hover, me);
       for (let i = 0; i < 4; i++) if (inp.wasPressed?.('Digit' + (i + 1))) this._flash(i);
     }
     // ---- jump arc preview
     const sp = this.pins[4], hp = this.hover >= 0 ? this.pins[this.hover] : null;
-    const showArc = !!(hp && hp.vis && sp.vis && canJump && (this.hover === 3 || hp.ok));
+    const showArc = !noJump && !!(hp && hp.vis && sp.vis && canJump && (this.hover === 3 || hp.ok));
     if (showArc !== this._last.arc) { this._last.arc = showArc; this.arc.classList.toggle('is-on', showArc); }
     if (showArc) {
       const x0 = sp.x, y0 = sp.y, x1 = hp.x, y1 = hp.y;
@@ -186,6 +189,10 @@ export class DioramaOverlay {
     this.title.textContent = (m?.name || 'Stage').toUpperCase();
     this.when.textContent = G.game?.time === 'dusk' ? 'DUSK' : 'DAY';
     const pad = G.input?.lastDevice === 'pad';
+    if (G.match && G.match.superJumpOk && !G.match.superJumpOk()) {
+      this.foot.innerHTML = pad ? richText('Release VIEW to close') : `<span>Your squad and base</span> <em>·</em> <span>release</span> ${keycap('TAB')}`;
+      return;
+    }
     this.foot.innerHTML = pad
       ? richText('Right stick to point · A or D-pad to Super Jump · release VIEW to close')
       : `${keycap('1')}${keycap('2')}${keycap('3')} <span>Super Jump to a teammate</span> ${keycap('4')} <span>Base</span> <em>·</em> <span>Point + click a pin</span> <em>·</em> <span>release</span> ${keycap('TAB')}`;

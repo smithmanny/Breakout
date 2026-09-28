@@ -1376,33 +1376,36 @@ export async function createTextureLibrary(renderer, { size = 512 } = {}) {
   await renderer.compileAsync(scene, cam);   // async (and parallel) where KHR_parallel_shader_compile exists
   const tCompiled = performance.now();
 
-  const prevRT = renderer.getRenderTarget();
-  const prevAutoClear = renderer.autoClear;
-  const prevXR = renderer.xr.enabled;
-  renderer.autoClear = false;
-  renderer.xr.enabled = false;
-  renderer.initRenderTarget(out);
-  for (const t of out.textures) t.generateMipmaps = false;   // build the mip chain once, after the last layer
+  // (a function so a lost + restored WebGL context can paint the layers again: render-target contents don't survive it,
+  // and the whole arena would render black. The programs and the quad stay around for that.)
+  const bake = () => {
+    const prevRT = renderer.getRenderTarget();
+    const prevAutoClear = renderer.autoClear;
+    const prevXR = renderer.xr.enabled;
+    renderer.autoClear = false;
+    renderer.xr.enabled = false;
+    renderer.initRenderTarget(out);
+    for (const t of out.textures) t.generateMipmaps = false;   // build the mip chain once, after the last layer
 
-  for (let i = 0; i < L; i++) {
-    const m = MATERIALS[i];
-    quads.forEach((q, k) => { q.visible = k === groupOf.get(i); });
-    uniforms.uMat.value = i;
-    uniforms.uScale.value = m.scale;
-    uniforms.uHRange.value.set(m.hr[0], m.hr[1]);
-    uniforms.uAO.value = m.ao;
-    if (i === L - 1) for (const t of out.textures) t.generateMipmaps = true;
-    renderer.setRenderTarget(out, i);
-    renderer.render(scene, cam);
-  }
-  // wait for the GPU so the reported time is honest (one-pixel readback)
-  renderer.readRenderTargetPixels(out, 0, 0, 1, 1, new Uint8Array(4), undefined, 2);
+    for (let i = 0; i < L; i++) {
+      const m = MATERIALS[i];
+      quads.forEach((q, k) => { q.visible = k === groupOf.get(i); });
+      uniforms.uMat.value = i;
+      uniforms.uScale.value = m.scale;
+      uniforms.uHRange.value.set(m.hr[0], m.hr[1]);
+      uniforms.uAO.value = m.ao;
+      if (i === L - 1) for (const t of out.textures) t.generateMipmaps = true;
+      renderer.setRenderTarget(out, i);
+      renderer.render(scene, cam);
+    }
+    // wait for the GPU so the reported time is honest (one-pixel readback)
+    renderer.readRenderTargetPixels(out, 0, 0, 1, 1, new Uint8Array(4), undefined, 2);
 
-  renderer.setRenderTarget(prevRT);
-  renderer.autoClear = prevAutoClear;
-  renderer.xr.enabled = prevXR;
-  progs.forEach((p) => p.dispose());
-  geo.dispose();
+    renderer.setRenderTarget(prevRT);
+    renderer.autoClear = prevAutoClear;
+    renderer.xr.enabled = prevXR;
+  };
+  bake();
 
   const layers = {}, meta = {};
   MATERIALS.forEach((m, i) => {
@@ -1419,6 +1422,8 @@ export async function createTextureLibrary(renderer, { size = 512 } = {}) {
     names: MATERIALS.map((m) => m.name),
     size,
     stats: { ms: +(t1 - t0).toFixed(1), compileMs: +(tCompiled - t0).toFixed(1), size },
-    dispose() { out.dispose(); },
+    /** WebGL context restored: the array target comes back empty — paint every layer again. */
+    rebake() { bake(); },
+    dispose() { out.dispose(); progs.forEach((p) => p.dispose()); geo.dispose(); },
   };
 }

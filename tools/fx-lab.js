@@ -138,6 +138,12 @@ function paintSplat(point, normal, color, size) {
   paintMesh.instanceMatrix.needsUpdate = true;
   if (paintMesh.instanceColor) paintMesh.instanceColor.needsUpdate = true;
 }
+// stand-in paintballs for the lab (the game draws them in weapons.js): small glossy spheres
+const ballMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.064, 14, 10), new THREE.MeshPhysicalMaterial({ roughness: 0.12, clearcoat: 1, clearcoatRoughness: 0.04 }), 64);
+ballMesh.count = 0; ballMesh.frustumCulled = false; ballMesh.setColorAt(0, new THREE.Color()); scene.add(ballMesh);
+let ballN = 0;
+const _bm = new THREE.Matrix4();
+function ballAt(p, col) { if (ballN >= 64) return; _bm.makeTranslation(p.x, p.y, p.z); ballMesh.setMatrixAt(ballN, _bm); ballMesh.setColorAt(ballN, col); ballN++; }
 let fxError = null;
 try {
   const mod = await import('../src/fx/fx.js');
@@ -180,6 +186,7 @@ function setCam(name) {
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const UP = V(0, 1, 0);
 const continuous = []; // { until, fn(dt, t) }
+const post = [];       // { until, fn(dt, t) } — run after fx.update (immediate-mode draws such as fx.streak)
 function effectCenter() {
   // fire effects around the orbit target, projected onto the deck when it is on the deck
   const t = controls.target;
@@ -288,6 +295,30 @@ const EFFECTS = {
   sizzle: (c, col) => { const other = otherTeam(col); inkPatch(c.x, c.z, 1.2, other); let acc = 0; continuous.push({ until: simTime + 1.6, fn: (dt) => { acc += dt; if (acc > 0.11) { acc = 0; fx.enemyInkSizzle(V(c.x, 0, c.z), other); } } }); },
   feathers: (c) => { for (let k = 0; k < 6; k++) fx.feather(V(c.x - 3 + k * 1.2, 2.5 + Math.random() * 2, c.z + (Math.random() - 0.5) * 2)); },
   glints: (c, col) => { inkPatch(c.x, c.z, 2.2, col); for (let k = 0; k < 24; k++) later(k * 0.05, () => { const a = Math.random() * 6.283, r = Math.random() * 2; fx.glint(V(c.x + Math.cos(a) * r, 0.03, c.z + Math.sin(a) * r), col, 0.1 + Math.random() * 0.1); }); },
+  // ---- BREAKOUT paintball ----
+  paintball: (c, col) => {
+    // a stream of balls: CO2 puff at the muzzle, glossy ball + motion streak in flight, star splat on the floor / wall
+    for (let k = 0; k < 8; k++) later(k * 0.12, () => {
+      const wall = k % 2 === 1;
+      const p = V(17, 1.3, 3.5), to = wall ? V(WALL.x + (Math.random() - 0.5) * 2, 0.8 + Math.random() * 1.4, WALL.z) : V(12 + Math.random() * 2.5, 0, -1.8 + Math.random() * 2);
+      const v = to.clone().sub(p).normalize().multiplyScalar(38);
+      fx.muzzle(p, v.clone().normalize(), col);
+      const start = p.clone();
+      let done = false;
+      post.push({ until: simTime + 1.0, fn: (dt) => {
+        if (done) return;
+        const prev = p.clone(); v.y -= 6 * dt; p.addScaledVector(v, dt);
+        const h = collider(prev, p);
+        if (h) { done = true; fx.ballSplat(h.point, h.normal, col, v.clone().normalize()); return; }
+        const len = Math.min(0.7, v.length() * 0.014, start.distanceTo(p) - 0.25);
+        if (len > 0.06) fx.streak(p, p.clone().addScaledVector(v, -len / v.length()), col, 0.064, 0.34);
+        ballAt(p, col);
+      } });
+    });
+  },
+  ballHit: (c, col) => { const b = V(1, 0, 0.4).normalize(); for (let k = 0; k < 3; k++) later(k * 0.15, () => fx.ballHit(V(c.x - 1.5 + k * 1.5, 1.0 + k * 0.15, c.z), b, col, 34)); },
+  grenade: (c, col) => { const b = V(c.x, 0.2, c.z); fx.bounceSplash(V(c.x, 0.01, c.z), UP, col); later(0.6, () => fx.explosion(b, col, 3.1)); },
+  elim: (c, col) => { const p = V(c.x, 0.0, c.z); fx.splatted(p.clone().setY(0.6), otherTeam(col)); fx.ghost(p, col); },
   dryFire: (c) => { for (let k = 0; k < 4; k++) later(k * 0.2, () => fx.dryFire(V(c.x + 2, 1.15, c.z + 1), V(-1, 0, -0.5).normalize())); },
 };
 function otherTeam(col) { return col === TEAM.a ? TEAM.b : TEAM.a; }
@@ -344,6 +375,8 @@ function simulate(dt) {
   for (let i = continuous.length - 1; i >= 0; i--) { const c = continuous[i]; if (simTime > c.until) continuous.splice(i, 1); else c.fn(dt, simTime); }
   env.update(dt, camera);
   fx?.update(dt, camera);
+  for (let i = post.length - 1; i >= 0; i--) { const c = post[i]; if (simTime > c.until) post.splice(i, 1); else c.fn(dt, simTime); }
+  ballMesh.count = ballN; ballN = 0; ballMesh.instanceMatrix.needsUpdate = true; if (ballMesh.instanceColor) ballMesh.instanceColor.needsUpdate = true;
 }
 function step(ms) { const n = Math.max(1, Math.round(ms / (1000 / 60))); for (let i = 0; i < n; i++) simulate(1 / 60); }
 function render() {
@@ -404,7 +437,7 @@ window.lab = {
   // deterministic: advance simulation by ms in fixed 1/60 steps (works while paused)
   step: (ms) => { step(ms); return simTime; },
   // fire an effect then advance exactly `ms` and pause — for mid-flight screenshots
-  shot: (name, team = 'a', ms = 150, clear = true) => { paused = true; if (clear) { fx?.clear(); continuous.length = 0; timers.length = 0; paintMesh.count = 0; paintNext = 0; } const r = fire(name, team); step(ms); return r; },
+  shot: (name, team = 'a', ms = 150, clear = true) => { paused = true; if (clear) { fx?.clear(); continuous.length = 0; post.length = 0; timers.length = 0; paintMesh.count = 0; paintNext = 0; } const r = fire(name, team); step(ms); return r; },
   fxStats: () => fx ? { ...fx.stats(), tris: fx.triangles?.() } : null,
   clear: () => { fx?.clear(); continuous.length = 0; timers.length = 0; paintMesh.count = 0; paintNext = 0; },
   time: () => simTime,

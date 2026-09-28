@@ -1,4 +1,4 @@
-// INKWAVE — front-end menus (contract: docs/CONTRACTS.md §3).
+// BREAKOUT — front-end menus (contract: docs/CONTRACTS.md §3).
 //   const menus = new Menus(rootEl, api);
 //   menus.show(screen) · menus.current · menus.setLoading(p, label) · menus.showResults(data)
 //   menus.update(dt) · menus.handleKey(e) → bool · menus.nav(dir) → bool
@@ -14,20 +14,20 @@ import {
 } from './ui-icons.js';
 import {
   GAME_TITLE, GAME_SUBTITLE, VERSION, WEAPONS, WEAPON_ORDER, SPECIALS, SUB, MAPS, DIFFICULTY, MATCH, QUALITY,
-  DEFAULT_SETTINGS, TEAM_PALETTES, COLORBLIND_PALETTE, PROGRESSION, BOT_NAMES, TEAM_NAMES,
+  DEFAULT_SETTINGS, TEAM_PALETTES, COLORBLIND_PALETTE, PROGRESSION, BOT_NAMES, TEAM_NAMES, ROUNDS,
   mapNoBots, mapBossOk, bossFallbackMap, noBotsStartBlock,
 } from '../config.js';
 import * as LOOK from '../game/character-style.js';
 import { G } from '../core/ctx.js';
 import {
   computeAwards, medalMarkup, awardBadge, awardIcon, rankEmblem, rankTier, RANK_TIERS, inkBurst, InkWipe, createPreview,
-  sweepEdge, sweepClip, splatClip, splatCover, skinSwatch, irisSwatch, outfitIcon, tagArt, inkBand, dripsSVG, computeBossAwards,
+  sweepEdge, sweepClip, splatClip, splatCover, skinSwatch, irisSwatch, outfitIcon, tagArt, inkBand, dripsSVG, computeBossAwards, computeElimAwards,
 } from './menu-art.js';
 import { bossSilhouette, bossEmblem, BOSS_GLYPH, BOSS_NAME, BOSS_EPITHET } from './boss-art.js';
 import { WhatsNew } from './news.js';
 
 const SCREENS = ['loading', 'title', 'main', 'mode', 'loadout', 'setup', 'locker', 'settings', 'howto', 'credits', 'pause', 'results', 'online', 'lobby'];
-// Transitions that get the full-screen ink wipe (the rest use staggered pop-ins).
+// Transitions that get the full-screen paint wipe (the rest use staggered pop-ins).
 const WIPES = new Set(['loading>title', 'title>main', 'results>main', 'pause>main', 'results>null', 'pause>title', 'online>lobby', 'lobby>online', 'lobby>main', 'results>lobby', 'pause>online']);
 // Pushes/pops between these get the light ink swipe (decorative — the swap itself is immediate).
 const LIGHT = new Set(['main', 'mode', 'loadout', 'setup', 'locker', 'settings', 'howto', 'credits', 'pause', 'online', 'lobby']);
@@ -37,19 +37,19 @@ const NETMOCK = typeof location !== 'undefined' && new URLSearchParams(location.
 const CODE_ABC = 'BCEFGHJKLMNPQRTUVXYZ23456789';   // as session.js: no O/0, I/1, and no W/A/S/D (menu keys)
 const TEAM_LABEL = ['ALPHA', 'BRAVO'];
 const EMOTES = [
-  { id: 'booyah', label: 'BOOYAH!', icon: 'booyah', key: '1', dir: 'up' },
+  { id: 'booyah', label: 'LET\u2019S GO!', icon: 'booyah', key: '1', dir: 'up' },   // (id kept: it is on the wire)
   { id: 'wave', label: 'HEY!', icon: 'hand', key: '2', dir: 'right' },
   { id: 'dance', label: 'DANCE', icon: 'note', key: '3', dir: 'down' },
   { id: 'flex', label: 'FLEX', icon: 'flex', key: '4', dir: 'left' },
 ];
-// splashtag title line ("Fresh Squidkid"): adjective + subject, picked from the player's name so everyone sees the same
-const TITLE_ADJ = ['Fresh', 'Inky', 'Turf', 'Splashy', 'Rad', 'Sneaky', 'Deep-Sea', 'Glossy', 'Tidal', 'Zesty', 'Mighty', 'Soggy', 'Speedy', 'Salty', 'Bubbly', 'Snazzy', 'Drippy', 'Sunny'];
-const TITLE_NOUN = ['Squidkid', 'Inkling', 'Turf Boss', 'Wave Rider', 'Splatter', 'Tentacle', 'Drip Lord', 'Sprayer', 'Rookie', 'Legend', 'Deck Hand', 'Sea Pickle', 'Kelp Fan', 'Ink Slinger', 'Plaza Star', 'Harbor Kid'];
+// player-tag title line ("Fearless Snake Runner"): adjective + subject, picked from the player's name so everyone sees the same
+const TITLE_ADJ = ['Fearless', 'Sneaky', 'Rapid', 'Steady', 'Rad', 'Clutch', 'Wild', 'Cool-Headed', 'Tactical', 'Zesty', 'Mighty', 'Relentless', 'Speedy', 'Salty', 'Lucky', 'Snazzy', 'Paint-Soaked', 'Sunny'];
+const TITLE_NOUN = ['Front Player', 'Back Player', 'Snake Runner', 'Bunker Buster', 'Sharpshooter', 'Wire Walker', 'Rec Ref', 'Hopper Hog', 'Rookie', 'Legend', 'Deck Hand', 'Anchor', 'Dorito Diver', 'Ball Slinger', 'Field Star', 'Harbor Kid'];
 const JOIN_ERR = {
   'Room not found': { title: 'ROOM NOT FOUND', text: 'No room uses that code. Double-check it with your friend — rooms close when everyone leaves.', icon: 'question' },
   'Room is full': { title: 'ROOM IS FULL', text: 'All 8 spots are taken. Ask the host to make space, or open a room of your own.', icon: 'users' },
   'Match in progress': { title: 'MATCH IN PROGRESS', text: 'They are mid-match right now. Try again in a few minutes — the room reopens after the results.', icon: 'clock' },
-  'Could not connect': { title: 'CAN\u2019T CONNECT', text: 'The INKWAVE servers didn\u2019t answer. Check your connection, then try again.', icon: 'signal' },
+  'Could not connect': { title: 'CAN\u2019T CONNECT', text: 'The BREAKOUT servers didn\u2019t answer. Check your connection, then try again.', icon: 'signal' },
   'Room code taken': { title: 'TRY AGAIN', text: 'That room code was just taken. Give it another go.', icon: 'reset' },
   'Lost connection to the room': { title: 'CONNECTION LOST', text: 'The link to the room dropped. Check your connection and join again.', icon: 'signal' },
 };
@@ -63,21 +63,21 @@ const TIME_INFO = {
 };
 
 const TIPS = [
-  'Swim in your own ink to zip around and refill your tank.',
-  'Hold [SHIFT] to dive into your ink — you are nearly invisible while swimming.',
-  'Enemy ink slows you down and chips away at your health. Paint over it!',
-  'Swim up any wall you have inked to reach high ground.',
-  'Only turf counts when time runs out. Splats just buy you space.',
-  'Your special gauge fills as you ink. Press [F] when it glows!',
-  'A Splat Bomb costs most of your tank — throw it where it claims the most turf.',
-  'Chargers splat in one fully-charged shot. Keep moving and use cover.',
-  'Rollers paint huge stripes. Flick the roller to splash foes at range.',
-  'Low on ink? Dive in, refill, then push again.',
-  'Hold [TAB] to open the big map and spot unpainted turf.',
+  'One life per round. Get hit enough and you are OUT until the next round.',
+  'Hold [SHIFT] to sprint between bunkers — you can\u2019t shoot while sprinting.',
+  'Press [R] to reload before you peek. A dry hopper mid-fight is a free elimination.',
+  'No health regen: every hit you take sticks until the round is over.',
+  'Time up? The team with more players still in wins the round — then most HP left.',
+  'Your special fills as you deal damage. Press [F] when it glows!',
+  'You get two Paint Grenades a round — use them to flush players out of cover.',
+  'A fully pumped Longshot shot is a one-hit elimination. Keep moving and stay behind cover.',
+  'Twin Pistols dive-roll when you jump while firing. Roll out, plant, unload.',
+  'First team to 4 rounds takes the match.',
+  'Hold [TAB] to open the big map and see where your team is.',
 ];
 const DIFF_INFO = {
   easy: { pips: 1, text: 'Relaxed bots with shaky aim. Great for learning the ropes.' },
-  normal: { pips: 2, text: 'Balanced bots that push turf and fight back.' },
+  normal: { pips: 2, text: 'Balanced bots that push bunkers and fight back.' },
   hard: { pips: 3, text: 'Sharp, aggressive bots that punish mistakes. Bring your A-game.' },
 };
 // Boss Battle: the same three levels scale HULLBREAKER (HP, damage, pace) — the bots are on your side
@@ -87,23 +87,23 @@ const BOSS_DIFF_INFO = {
   hard: 'Tougher shell, harder hits, relentless pace. Bring the whole squad.',
 };
 const BOSS_DURATIONS = [180, 240, 300];
-const STAT_LABELS = [['range', 'Range'], ['damage', 'Damage'], ['rate', 'Fire rate'], ['mobility', 'Mobility'], ['paint', 'Ink coverage']];
-const KIND_LABEL = { shooter: 'Shooter', roller: 'Roller', charger: 'Charger', blaster: 'Blaster', dualies: 'Dualies', slosher: 'Slosher', splatling: 'Splatling' };
-const STAT_ICONS = { range: GLYPHS.target, damage: GLYPHS.bolt, rate: GLYPHS.clock, mobility: GLYPHS.feather, paint: GLYPHS.drop };
+const STAT_LABELS = [['range', 'Range'], ['damage', 'Damage'], ['rate', 'Fire rate'], ['mobility', 'Mobility'], ['hopper', 'Hopper']];
+const KIND_LABEL = { shooter: 'Marker', roller: 'Marker', charger: 'Sniper', blaster: 'Launcher', dualies: 'Pistols', slosher: 'Marker', splatling: 'Auto Marker' };
+const STAT_ICONS = { range: GLYPHS.target, damage: GLYPHS.bolt, rate: GLYPHS.clock, mobility: GLYPHS.feather, paint: GLYPHS.drop, hopper: GLYPHS.drop };
 const LOCKER_TABS = [
-  { id: 'kids', label: 'SQUIDKIDS', icon: 'users', sections: ['_presets'] },
+  { id: 'kids', label: 'PLAYERS', icon: 'users', sections: ['_presets'] },
   { id: 'hair', label: 'HAIR', icon: 'hair', sections: ['hair', 'hat'] },
   { id: 'face', label: 'FACE', icon: 'eye', sections: ['eyes', 'brows', 'skin'] },
-  { id: 'outfit', label: 'OUTFIT', icon: 'shirt', sections: ['outfit'] },
+  { id: 'outfit', label: 'JERSEY', icon: 'shirt', sections: ['outfit'] },
 ];
 const MENU_DESC = {
-  play: 'Turf War 4 v 4 — or team up with the bots against HULLBREAKER in a Boss Battle',
+  play: 'Elimination 4 v 4 — one life per round, first to 4 — or team up against HULLBREAKER in a Boss Battle',
   online: 'Private rooms for up to 8 friends — create one or join with a room code',
-  loadout: 'Choose your weapon: stats, sub and special for every kind',
-  locker: 'Choose your squidkid — tentacles, headgear, eyes, skin and outfit',
+  loadout: 'Choose your marker: stats, hopper, grenades and special for each one',
+  locker: 'Choose your player — hair, mask and headgear, eyes, skin and jersey',
   settings: 'Controls, video, audio and gameplay options',
   howto: 'The rules in 30 seconds, plus every control',
-  credits: 'The squidkids and code behind INKWAVE',
+  credits: 'The players and code behind BREAKOUT',
 };
 
 const pctFmt = (v) => Math.round(v * 100) + '%';
@@ -118,30 +118,30 @@ const SETTINGS_TABS = [
   ] },
   { id: 'video', label: 'Video', icon: 'monitor', rows: [
     { key: 'quality', label: 'Graphics quality', type: 'seg', options: [['low', 'Low'], ['medium', 'Med'], ['high', 'High'], ['ultra', 'Ultra']], help: 'Resolution scale, shadow detail, anti-aliasing and particle counts.' },
-    { key: 'fov', label: 'Field of view', type: 'slider', min: 65, max: 100, step: 1, fmt: (v) => Math.round(v) + '°', help: 'Wider shows more of the turf around you.' },
+    { key: 'fov', label: 'Field of view', type: 'slider', min: 65, max: 100, step: 1, fmt: (v) => Math.round(v) + '°', help: 'Wider shows more of the field around you.' },
     { key: 'shadows', label: 'Shadows', type: 'toggle', help: 'Soft sun shadows. Turn off for extra speed on older machines.' },
-    { key: 'bloom', label: 'Bloom glow', type: 'toggle', help: 'A soft glow around bright ink and specials.' },
+    { key: 'bloom', label: 'Bloom glow', type: 'toggle', help: 'A soft glow around bright paint and specials.' },
     { key: 'showFps', label: 'Show FPS counter', type: 'toggle', help: 'Displays frames per second in the corner during matches.' },
   ] },
   { id: 'audio', label: 'Audio', icon: 'speaker', rows: [
     { key: 'master', label: 'Master volume', type: 'slider', min: 0, max: 1, step: 0.05, fmt: pctFmt, help: 'Overall loudness of everything.' },
     { key: 'music', label: 'Music', type: 'slider', min: 0, max: 1, step: 0.05, fmt: pctFmt, help: 'Menu and battle soundtrack.' },
-    { key: 'sfx', label: 'Sound effects', type: 'slider', min: 0, max: 1, step: 0.05, fmt: pctFmt, help: 'Weapons, splats, voices and menu sounds.' },
+    { key: 'sfx', label: 'Sound effects', type: 'slider', min: 0, max: 1, step: 0.05, fmt: pctFmt, help: 'Markers, hits, whistles, voices and menu sounds.' },
   ] },
   { id: 'gameplay', label: 'Gameplay', icon: 'swords', rows: [
     { key: 'cameraShake', label: 'Camera shake', type: 'slider', min: 0, max: 1, step: 0.05, fmt: pctFmt, help: 'Screen shake from explosions, slams and hits.' },
-    { key: 'rumble', label: 'Vibration', type: 'slider', min: 0, max: 1, step: 0.05, fmt: pctFmt, help: 'Controller rumble for hits, splats, bombs and specials. Only while you play with a controller.' },
-    { key: 'colorblind', label: 'Colorblind-safe inks', type: 'toggle', help: 'Always use high-contrast yellow vs. blue team inks.' },
-    { key: 'minimap', label: 'Minimap', type: 'toggle', help: 'Show the turf minimap in the corner during matches.' },
+    { key: 'rumble', label: 'Vibration', type: 'slider', min: 0, max: 1, step: 0.05, fmt: pctFmt, help: 'Controller rumble for hits, eliminations, grenades and specials. Only while you play with a controller.' },
+    { key: 'colorblind', label: 'Colorblind-safe paint', type: 'toggle', help: 'Always use high-contrast yellow vs. blue team paint.' },
+    { key: 'minimap', label: 'Minimap', type: 'toggle', help: 'Show the field minimap in the corner during matches.' },
     { key: 'difficulty', label: 'Default bot skill', type: 'seg', options: null, help: 'Starting difficulty for new matches.' },
-    { key: 'matchLength', label: 'Default match length', type: 'seg', options: null, help: 'How long each Turf War lasts.' },
+    // (no match-length row: Elimination rounds are fixed — ROUNDS.roundTime — and Boss Battle picks its length on the stage screen)
   ] },
 ];
 const TAB_BLURB = {
   controls: 'Look speed, invert, aim assist and the full control reference.',
   video: 'Quality tier, field of view and screen effects.',
   audio: 'Master, music and sound-effect levels.',
-  gameplay: 'Shake, vibration, colour-safe inks, minimap and match defaults.',
+  gameplay: 'Shake, vibration, colour-safe paint, minimap and bot skill.',
 };
 
 const durLabel = (s) => (s < 120 ? `${s} SEC` : `${Math.round(s / 60)} MIN`);
@@ -170,7 +170,7 @@ export class Menus {
     this._focusMem = {};
     this._binds = new WeakMap();
     this._modal = null;
-    this._loading = { target: 0, shown: 0, label: 'Mixing the ink…' };
+    this._loading = { target: 0, shown: 0, label: 'Filling the hoppers…' };
     this._results = null;
     this._resultsDirty = false;
     this._input = 'kbm';
@@ -801,7 +801,7 @@ export class Menus {
       h('div', { class: 'iw-title__scrim' }),
       h('div', { class: 'iw-title__logo iw-in iw-in--logo' }, h('i', { class: 'iw-title__shock' }), h('div', { class: 'iw-title__logoin', html: logoMarkup(GAME_TITLE, GAME_SUBTITLE, 'xl') })),
       press,
-      h('div', { class: 'iw-corner iw-corner--bl iw-in' }, h('b', null, GAME_TITLE), ' · an original turf-war shooter'),
+      h('div', { class: 'iw-corner iw-corner--bl iw-in' }, h('b', null, GAME_TITLE), ' · an original 4v4 paintball shooter'),
       h('div', { class: 'iw-corner iw-corner--br iw-in' }, `v${this._version()}`));
     return {
       el, noCursor: true,
@@ -820,7 +820,7 @@ export class Menus {
     const sp = this._specials()[W.special] || Object.values(this._specials())[0];
     const sub = this._sub();
     const items = [
-      { id: 'play', label: 'PLAY', sub: 'Turf War · Boss Battle', icon: GLYPHS.play, cls: 'iw-btn--menu iw-btn--xl iw-btn--primary', accept: () => this._go('mode'), sound: 'ui_confirm' },
+      { id: 'play', label: 'PLAY', sub: 'Elimination · Boss Battle', icon: GLYPHS.play, cls: 'iw-btn--menu iw-btn--xl iw-btn--primary', accept: () => this._go('mode'), sound: 'ui_confirm' },
       { id: 'online', label: 'ONLINE', sub: 'Play with friends · private rooms', icon: GLYPHS.online, cls: 'iw-btn--menu iw-btn--online', accept: () => this._go('online'), sound: 'ui_confirm',
         badge: h('span', { class: 'iw-btn__live' }, h('i'), 'LIVE') },
       { id: 'loadout', label: 'LOADOUT', icon: weaponIcon(W.kind || lo.weapon), cls: 'iw-btn--menu', accept: () => this._go('loadout') },
@@ -879,7 +879,7 @@ export class Menus {
     };
   }
 
-  // ================================================================ SCREEN: mode (offline Play: Turf War | Boss Battle)
+  // ================================================================ SCREEN: mode (offline Play: Elimination | Boss Battle)
   _scr_mode() {
     const s = this._settings();
     const st = this._setup || (this._setup = { times: {} });
@@ -887,11 +887,11 @@ export class Menus {
     const cur = st.mode || (s.lastMode === 'boss' ? 'boss' : 'turf');
     const bossLen = [180, 240, 300].includes(s.bossLength) ? s.bossLength : 240;
     const MODES = [
-      { id: 'turf', name: 'TURF WAR', kicker: 'CLASSIC', img: stageArt('tidewater', 'day'),
-        blurb: 'Two teams of four, one harbour. Ink the most ground before the whistle.',
-        chips: [[GLYPHS.users, '4 V 4'], [GLYPHS.clock, durLabel(s.matchLength || MATCH.defaultDuration || 180)], [GLYPHS.bot, 'VS BOTS']] },
+      { id: 'turf', name: 'ELIMINATION', kicker: '4 V 4', img: stageArt('speedball', 'day'), imgAlt: stageArt('tidewater', 'day'),
+        blurb: `Two teams of four, one life per round. Wipe the other side out — first to ${ROUNDS.toWin} rounds wins.`,
+        chips: [[GLYPHS.users, '4 V 4'], [GLYPHS.flag, `FIRST TO ${ROUNDS.toWin}`], [GLYPHS.clock, `${ROUNDS.roundTime}S ROUNDS`]] },
       { id: 'boss', name: 'BOSS BATTLE', kicker: 'CO-OP', img: stageArt('kelpline', 'dusk'), badge: 'NEW!', beta: true,
-        blurb: `Everyone's one squad against ${BOSS_NAME}, a giant crab in a rusted container. Sink it before time runs out!`,
+        blurb: `Bonus mode: everyone's one squad against ${BOSS_NAME}, a giant crab in a rusted container. Sink it before time runs out!`,
         chips: [[GLYPHS.users, 'SQUAD OF 8'], [GLYPHS.clock, durLabel(bossLen)], [BOSS_GLYPH, '1 BOSS']] },
     ];
     let picking = false;
@@ -908,7 +908,7 @@ export class Menus {
     };
     const cards = MODES.map((m, i) => {
       const img = h('img', { class: 'iw-mode__img', alt: '', draggable: 'false' });
-      img.addEventListener('error', () => img.remove(), { once: true });
+      img.addEventListener('error', () => { if (m.imgAlt && img.src !== m.imgAlt) img.src = m.imgAlt; else img.remove(); });
       img.src = m.img;
       const hero = m.id === 'boss'
         ? h('span', { class: 'iw-mode__hero is-boss', html: bossSilhouette() })
@@ -935,7 +935,8 @@ export class Menus {
     const setBg = (id) => {
       const m = MODES.find((x) => x.id === id);
       const im = h('img', { class: 'iw-ss__bgimg', alt: '', draggable: 'false' });
-      im.addEventListener('error', () => im.remove(), { once: true });
+      const alt = m.imgAlt && m.imgAlt.replace('.webp', '-sm.webp');
+      im.addEventListener('error', () => { if (alt && !im.src.endsWith(alt)) im.src = alt; else im.remove(); });
       im.src = m.img.replace('.webp', '-sm.webp');
       const olds = [...bg.children];
       bg.appendChild(im);
@@ -1146,7 +1147,7 @@ export class Menus {
       c.classList.toggle('is-dusk', t === 'dusk');
       c.classList.toggle('is-sel', c._mid === st.mapId);
     };
-    const listEl = h('div', { class: 'iw-ss__list' }, tickets);
+    const listEl = h('div', { class: 'iw-ss__list' + (tickets.length > 3 ? ' is-many' : '') }, tickets);
 
     // ---- match options (bot skill + length)
     const dOpts = Object.values(diffs).map((d) => [d.id, h('span', { class: 'iw-diffopt' }, h('span', { class: 'iw-pips' }, Array.from({ length: 3 }, (_, k) => h('i', { class: k < (DIFF_INFO[d.id]?.pips || 2) ? 'on' : '' }))), d.name)]);
@@ -1158,27 +1159,36 @@ export class Menus {
     dText.textContent = diffText(st.difficulty);
     const diffRow = h('div', { class: 'iw-setrow iw-setrow--stack' }, h('div', { class: 'iw-setrow__label' }, h('i', { html: boss ? BOSS_GLYPH : GLYPHS.bot }), boss ? 'DIFFICULTY' : 'BOT SKILL'), diffSeg.el);
     this._bind(diffRow, { id: 'difficulty', type: 'row', adjust: diffSeg.adjust, accept: diffSeg.cycle });
-    const lOpts = durations.map((d) => [d, durLabel(d)]);
-    const lenSeg = this._seg(lOpts, st.duration, (v) => {
-      st.duration = v; safeCall(() => this.api.setSettings && this.api.setSettings(boss ? { bossLength: v } : { matchLength: v })); updateStart();
-    });
-    const lenRow = h('div', { class: 'iw-setrow iw-setrow--stack' }, h('div', { class: 'iw-setrow__label' }, h('i', { html: GLYPHS.clock }), 'MATCH LENGTH'), lenSeg.el);
-    this._bind(lenRow, { id: 'length', type: 'row', adjust: lenSeg.adjust, accept: lenSeg.cycle });
-    const matchPanel = this._panel('iw-ss__match iw-in iw-in--up', diffRow, dText, lenRow);
+    // match length: Boss Battle picks one; Elimination is a fixed format (first to ROUNDS.toWin, ROUNDS.roundTime s rounds)
+    let lenRow = null;
+    if (boss) {
+      const lOpts = durations.map((d) => [d, durLabel(d)]);
+      const lenSeg = this._seg(lOpts, st.duration, (v) => {
+        st.duration = v; safeCall(() => this.api.setSettings && this.api.setSettings({ bossLength: v })); updateStart();
+      });
+      lenRow = h('div', { class: 'iw-setrow iw-setrow--stack' }, h('div', { class: 'iw-setrow__label' }, h('i', { html: GLYPHS.clock }), 'MATCH LENGTH'), lenSeg.el);
+      this._bind(lenRow, { id: 'length', type: 'row', adjust: lenSeg.adjust, accept: lenSeg.cycle });
+    }
+    const fmtRow = boss ? null : h('div', { class: 'iw-setrow iw-setrow--stack iw-setrow--info' },
+      h('div', { class: 'iw-setrow__label' }, h('i', { html: GLYPHS.flag }), 'FORMAT'),
+      h('div', { class: 'iw-setup__fmt' },
+        h('span', { class: 'iw-chip' }, h('i', { html: GLYPHS.crown }), `FIRST TO ${ROUNDS.toWin}`),
+        h('span', { class: 'iw-chip' }, h('i', { html: GLYPHS.clock }), `${ROUNDS.roundTime}S ROUNDS`)));
+    const matchPanel = this._panel('iw-ss__match iw-in iw-in--up', diffRow, dText, lenRow || fmtRow);
 
     // ---- your weapon + your look + START
     const lo = this._loadout();
     const W = this._weapons()[lo.weapon];
     const weaponChip = h('button', { class: 'iw-wchip iw-in' },
       h('span', { class: 'iw-wchip__icon', html: weaponIcon(W.kind || lo.weapon) }),
-      h('span', { class: 'iw-wchip__text' }, h('small', null, 'WEAPON'), h('b', null, W.name)),
+      h('span', { class: 'iw-wchip__text' }, h('small', null, 'MARKER'), h('b', null, W.name)),
       h('span', { class: 'iw-wchip__edit' }, h('i', { html: GLYPHS.pencil })));
     this._fx(weaponChip);
     this._bind(weaponChip, { id: 'weapon', accept: () => { this._sfx('ui_click'); this._go('loadout'); } });
     const prof = this._profile();
     const lookAv = h('span', { class: 'iw-lchip__av' }, h('span', { class: 'iw-lchip__blob', html: splatSVG({ seed: 17, cls: 'iw-fa', r: 62, arms: 8, drops: 0 }) }), h('span', { class: 'iw-lchip__squid', html: SQUID }));
     const lookChip = h('button', { class: 'iw-wchip iw-lchip iw-in' }, lookAv,
-      h('span', { class: 'iw-wchip__text' }, h('small', null, 'SQUIDKID'), h('b', null, prof.name)),
+      h('span', { class: 'iw-wchip__text' }, h('small', null, 'PLAYER'), h('b', null, prof.name)),
       h('span', { class: 'iw-wchip__edit' }, h('i', { html: GLYPHS.hanger })));
     this._fx(lookChip);
     this._bind(lookChip, { id: 'look', accept: () => { this._sfx('ui_click'); this._go('locker'); } });
@@ -1190,7 +1200,7 @@ export class Menus {
     start.append(h('span', { class: 'iw-start__charge' }, h('i')), h('span', { class: 'iw-start__ready' }, h('i', { html: GLYPHS.check }), 'READY'), h('span', { class: 'iw-start__chev' }, h('i'), h('i'), h('i')));
     const updateStart = () => {
       const m = byId(st.mapId);
-      startSub.textContent = `${m ? m.name : ''} · ${TIME_INFO[timeOf(st.mapId)].label} · ${diffs[st.difficulty].name} · ${durLabel(st.duration)}`;
+      startSub.textContent = `${m ? m.name : ''} · ${TIME_INFO[timeOf(st.mapId)].label} · ${diffs[st.difficulty].name} · ${boss ? durLabel(st.duration) : `FIRST TO ${ROUNDS.toWin}`}`;
     };
 
     // ---- state changes
@@ -1206,7 +1216,7 @@ export class Menus {
       const m = byId(st.mapId), i = maps.indexOf(m);
       nameEl.innerHTML = m.name.split(' ').map((w, wi) => `<span class="iw-ss__word">${[...w].map((ch, k) => `<span style="--i:${wi * 4 + k}">${esc(ch)}</span>`).join('')}</span>`).join(' ');
       blurbEl.textContent = m.blurb || '';
-      counter.innerHTML = `STAGE <b>${String(i + 1).padStart(2, '0')}</b><em>/ ${String(maps.length).padStart(2, '0')}</em>`;
+      counter.innerHTML = `FIELD <b>${String(i + 1).padStart(2, '0')}</b><em>/ ${String(maps.length).padStart(2, '0')}</em>`;
       layoutMap.innerHTML = m.thumb || mapThumb(m, i + 2);
       if (anim) { restartAnim(caption, 'is-in'); restartAnim(layoutEl, 'is-in'); restartAnim(counter, 'is-in'); }
       renderTime(false);
@@ -1254,22 +1264,22 @@ export class Menus {
 
     const el = h('div', { class: 'iw-screen iw-setup iw-ss' + (boss ? ' is-boss' : '') },
       bg, h('div', { class: 'iw-ss__scrim' }),
-      boss ? this._header('BOSS BATTLE', { sub: `Pick a stage and the time of day · your squad of 8 vs ${BOSS_NAME}` })
-        : this._header('TURF WAR', { sub: 'Pick a stage and the time of day · 4 v 4 against bots' }),
-      h('div', { class: 'iw-ss__left' }, h('div', { class: 'iw-seclabel iw-in' }, h('i', { html: GLYPHS.map }), 'STAGES'), listEl, matchPanel),
+      boss ? this._header('BOSS BATTLE', { sub: `Pick a field and the time of day · your squad of 8 vs ${BOSS_NAME}` })
+        : this._header('ELIMINATION', { sub: `Pick a field and the time of day · 4 v 4 against bots · first to ${ROUNDS.toWin} rounds` }),
+      h('div', { class: 'iw-ss__left' }, h('div', { class: 'iw-seclabel iw-in' }, h('i', { html: GLYPHS.map }), 'FIELDS'), listEl, matchPanel),
       hero,
       h('div', { class: 'iw-ss__foot' }, weaponChip, lookChip, start),
-      this._prompts([[['↑', '↓'], 'DPad', 'Stage'], [['←', '→'], null, 'Day · Dusk'], ['Enter', 'A', 'Select'], ['Esc', 'B', 'Back']]));
+      this._prompts([[['↑', '↓'], 'DPad', 'Field'], [['←', '→'], null, 'Day · Dusk'], ['Enter', 'A', 'Select'], ['Esc', 'B', 'Back']]));
     el.querySelector('.iw-prompts').children[1].querySelector('.iw-padg').innerHTML = padGlyph('LB') + padGlyph('RB');
 
     // explicit focus graph (rows with ←/→ adjust would otherwise trap the pad in a column)
     const selTicket = () => tickets.find((x) => x._mid === st.mapId) || tickets[0];
     const graph = new Map();
     tickets.forEach((t, i) => graph.set(t, { up: tickets[i - 1] || null, down: tickets[i + 1] || diffRow }));
-    graph.set(diffRow, { up: selTicket, down: lenRow });
-    graph.set(lenRow, { up: diffRow, down: start });
+    graph.set(diffRow, { up: selTicket, down: lenRow || start });
+    if (lenRow) graph.set(lenRow, { up: diffRow, down: start });
     graph.set(tgl, { up: null, down: start });
-    graph.set(weaponChip, { up: tgl, down: null, left: lenRow, right: lookChip });
+    graph.set(weaponChip, { up: tgl, down: null, left: lenRow || diffRow, right: lookChip });
     graph.set(lookChip, { up: tgl, down: null, left: weaponChip, right: start });
     graph.set(start, { up: tgl, down: null, left: lookChip, right: null });
 
@@ -1320,7 +1330,7 @@ export class Menus {
     });
   }
 
-  /** Put a live 3D portrait of the player's squidkid into `host` (replacing its fallback squid glyph) when the
+  /** Put a live 3D portrait of the player into `host` (replacing its fallback mask glyph) when the
    *  showcase can render one (the UI lab can't → the glyph stays). */
   _portraitInto(host, { kind = 'head', size = 128, style = null } = {}) {
     const sc = G.game && G.game.showcase;
@@ -1354,22 +1364,22 @@ export class Menus {
     if (g && g.profile) { g.profile.style = clean; try { localStorage.setItem('inkwave.profile', JSON.stringify(g.profile)); } catch (e) { /* private mode */ } }
   }
 
-  // ================================================================ SCREEN: locker (choose + customise your squidkid)
+  // ================================================================ SCREEN: locker (choose + customise your player)
   /** Catalog slots the locker can edit, built from the live tables in character-style.js (never hard-coded counts). */
   _lockerSlots() {
     const L = LOOK;
     const n = (x) => (Array.isArray(x) ? x.length : Math.max(0, x | 0));
     return {
-      hair: { key: 'hair', title: 'TENTACLE STYLE', count: n(L.HAIR_STYLES), names: L.HAIR_STYLE_NAMES || L.HAIR_NAMES, art: 'portrait', kind: 'head', cause: 'hair' },
-      hat: { key: 'hat', title: 'HEADGEAR', count: n(L.HATS), names: L.HAT_NAMES, art: 'portrait', kind: 'head', cause: 'hair' },
+      hair: { key: 'hair', title: 'HAIR', count: n(L.HAIR_STYLES), names: L.HAIR_STYLE_NAMES || L.HAIR_NAMES, art: 'portrait', kind: 'head', cause: 'hair' },
+      hat: { key: 'hat', title: 'MASK & HEADGEAR', count: n(L.HATS), names: L.HAT_NAMES, art: 'portrait', kind: 'head', cause: 'hair' },
       eyes: { key: 'eyes', title: 'EYES', count: n(L.IRIS), names: L.IRIS_NAMES, art: 'iris', cause: 'eyes' },
       brows: { key: 'brows', title: 'BROWS', count: n(L.BROWS), names: L.BROW_NAMES, art: 'portrait', kind: 'face', cause: 'eyes' },
       skin: { key: 'skin', title: 'SKIN TONE', count: n(L.SKIN_TONES), names: L.SKIN_NAMES, art: 'skin', cause: 'skin' },
-      outfit: { key: 'outfit', title: 'OUTFIT', count: n(L.OUTFITS), names: L.OUTFIT_NAMES, art: 'portrait', kind: 'body', cause: 'outfit' },
+      outfit: { key: 'outfit', title: 'JERSEY', count: n(L.OUTFITS), names: L.OUTFIT_NAMES, art: 'portrait', kind: 'body', cause: 'outfit' },
     };
   }
 
-  /** Squidkid name field (Enter/click to edit, Esc cancels, blank names are refused). */
+  /** Player name field (Enter/click to edit, Esc cancels, blank names are refused). */
   _nameRow() {
     const prof = this._profile();
     const input = h('input', { class: 'iw-name__input', type: 'text', maxlength: '16', spellcheck: 'false', autocomplete: 'off', value: prof.name });
@@ -1449,7 +1459,7 @@ export class Menus {
 
     const el = h('div', { class: 'iw-screen iw-locker' },
       h('div', { class: 'iw-scrim-left' }),
-      this._header('LOCKER', { sub: 'Choose your squidkid, then make it yours' }),
+      this._header('LOCKER', { sub: 'Choose your player, then gear up — mask, hair and jersey' }),
       body, tag, spinHint,
       this._prompts([['Enter', 'A', 'Wear'], [['Q', 'E'], null, 'Tabs'], ['R', null, 'Shuffle'], ['Esc', 'B', 'Done']]));
     el.querySelector('.iw-prompts').children[1].querySelector('.iw-padg').innerHTML = padGlyph('LB') + padGlyph('RB');
@@ -1487,7 +1497,7 @@ export class Menus {
       tiles = [];
       const tab = tabs[tabIdx];
       for (const k of tab.sections) {
-        const sec = k === '_presets' ? { key: '_presets', title: 'CHOOSE YOUR SQUIDKID', count: presets.length, art: 'portrait', kind: 'bust', cause: 'preset' } : slots[k];
+        const sec = k === '_presets' ? { key: '_presets', title: 'CHOOSE YOUR PLAYER', count: presets.length, art: 'portrait', kind: 'bust', cause: 'preset' } : slots[k];
         const grid = h('div', { class: `iw-lgrid iw-lgrid--${sec.art === 'portrait' ? sec.kind : 'swatch'}`, style: { '--cols': cols(sec) } });
         for (let i = 0; i < sec.count; i++) { const t = makeTile(sec, i, tiles.length); tiles.push(t); grid.appendChild(t); }
         gridWrap.appendChild(h('section', { class: 'iw-lsec', style: { '--dir': dirSign } },
@@ -1525,7 +1535,7 @@ export class Menus {
     };
     const showInfo = (t) => {
       const sec = t._sec, i = t._i;
-      infoSub.textContent = sec.key === '_presets' ? 'SQUIDKID' : sec.title;
+      infoSub.textContent = sec.key === '_presets' ? 'PLAYER' : sec.title;
       infoName.textContent = optName(sec, i);
       infoText.textContent = sec.key === '_presets' ? (presets[i].blurb || '') : `${i + 1} of ${sec.count}`;
       info.classList.toggle('is-on', isOn(t));
@@ -1533,7 +1543,7 @@ export class Menus {
     };
     // the current look as a sticker sheet (one chip per slot)
     const renderSheet = () => {
-      const rows = [['hair', 'HAIR'], ['hat', 'HAT'], ['eyes', 'EYES'], ['brows', 'BROWS'], ['skin', 'SKIN'], ['outfit', 'OUTFIT']].filter(([k]) => slots[k] && slots[k].count > 0);
+      const rows = [['hair', 'HAIR'], ['hat', (LOOK.isMasked && LOOK.isMasked(style)) ? 'MASK' : 'HAT'], ['eyes', 'EYES'], ['brows', 'BROWS'], ['skin', 'SKIN'], ['outfit', 'JERSEY']].filter(([k]) => slots[k] && slots[k].count > 0);
       sheet.innerHTML = '';
       for (const [k, label] of rows) {
         const sec = slots[k], i = style[k] | 0;
@@ -1619,7 +1629,7 @@ export class Menus {
         const inp = nameRow._input;
         if (document.activeElement === inp) inp.blur();
         // the loadout / online hub keep the kid on the pedestal (camera glides over); the lobby takes the stage back
-        // itself; anything else sends it back into the ink
+        // itself; anything else sends it off the pedestal
         if (sc && !['loadout', 'online', 'lobby'].includes(this.current)) safeCall(() => sc.hide());
       },
     };
@@ -1640,9 +1650,9 @@ export class Menus {
     const seen = new Set(Array.isArray(s0.seenWeapons) ? s0.seenWeapons : ['shooter', 'roller', 'charger', 'blaster']);
     const markSeen = (id) => { if (seen.has(id)) return; seen.add(id); this._setSetting('seenWeapons', [...seen]); };
 
-    // ---- weapon cards (grid scales 4 → 9+: 4 columns up to 8, then 5)
+    // ---- weapon cards (grid scales 4 → 9+: one row up to 5, then 4 columns up to 8, then 5)
     const n = order.length;
-    const cols = n <= 4 ? Math.max(1, n) : n <= 8 ? 4 : 5;
+    const cols = n <= 5 ? Math.max(1, n) : n <= 8 ? 4 : 5;
     const compact = n > cols;
     const cards = order.map((id, i) => {
       const w = Ws[id];
@@ -1678,17 +1688,28 @@ export class Menus {
     const eqBadge = h('span', { class: 'iw-wd__eq' }, h('i', { html: GLYPHS.check }), 'EQUIPPED');
     const cmpBadge = h('span', { class: 'iw-wd__cmp' }, h('i', { class: 'iw-wd__cmpdot' }), 'vs ', h('b'));
     const blurb = h('p', { class: 'iw-wd__blurb' });
-    const statKeys = [...STAT_LABELS.map(([k]) => k), ...Object.keys((Ws[order[0]] && Ws[order[0]].stats) || {}).filter((k) => !STAT_LABELS.some(([x]) => x === k))].slice(0, 6);
+    // bars: the config's 0..1 display stats, plus Hopper (balls per load, scaled to the biggest hopper; shows the count).
+    // stats.paint is cosmetic in BREAKOUT (ground paint scores nothing) so it is not shown.
+    const HIDDEN_STATS = new Set(['paint']);
+    const maxHopper = Math.max(1, ...order.map((id) => +Ws[id].hopper || 0));
+    const statVal = (w, k) => (k === 'hopper' ? clamp((+w.hopper || 0) / maxHopper) : clamp((w.stats && w.stats[k]) || 0));
+    const statNum = (w, k) => (k === 'hopper' ? Math.round(+w.hopper || 0) : statVal(w, k) * 100);
+    const statKeys = [...STAT_LABELS.map(([k]) => k), ...Object.keys((Ws[order[0]] && Ws[order[0]].stats) || {}).filter((k) => !HIDDEN_STATS.has(k) && !STAT_LABELS.some(([x]) => x === k))].slice(0, 6);
     const statEls = statKeys.map((k, i) => {
       const label = (STAT_LABELS.find(([x]) => x === k) || [k, k[0].toUpperCase() + k.slice(1)])[1];
       const bar = h('span', { class: 'iw-stat__bar' }, h('i', { class: 'iw-stat__ghost' }), h('i', { class: 'iw-stat__fill' }), h('i', { class: 'iw-stat__ticks' }));
       const num = h('b', { class: 'iw-stat__num' }, '0');
       const delta = h('em', { class: 'iw-stat__delta' });
-      const row = h('div', { class: 'iw-stat', style: { '--i': i } }, h('span', { class: 'iw-stat__label' }, h('i', { html: STAT_ICONS[k] || GLYPHS.star }), label), bar, num, delta);
-      return { k, row, bar, num, delta, cur: 0, target: 0, shownInt: -1, delay: 0.25 + i * 0.07 };
+      const row = h('div', { class: 'iw-stat' + (k === 'hopper' ? ' iw-stat--hopper' : ''), style: { '--i': i } }, h('span', { class: 'iw-stat__label' }, h('i', { html: STAT_ICONS[k] || GLYPHS.star }), label), bar, num, delta);
+      return { k, row, bar, num, delta, cur: 0, target: 0, v: 0, shownInt: -1, delay: 0.25 + i * 0.07 };
     });
     const subIcon = h('span', { class: 'iw-kit__icon' }), subName = h('b'), subText = h('span');
-    const subChip = h('div', { class: 'iw-kit' }, subIcon, h('div', null, h('small', null, 'SUB WEAPON'), subName, subText));
+    const subChip = h('div', { class: 'iw-kit' }, subIcon, h('div', null, h('small', null, 'GRENADES'), subName, subText));
+    // reload / hits-to-OUT facts line (the hopper size is the Hopper bar's number)
+    const reloadEl = h('b'), hitsEl = h('b');
+    const specs = h('div', { class: 'iw-wd__specs' },
+      h('span', { class: 'iw-wd__spec' }, h('i', { html: GLYPHS.reset }), h('small', null, 'RELOAD'), reloadEl),
+      h('span', { class: 'iw-wd__spec' }, h('i', { html: GLYPHS.target }), h('small', null, 'HITS TO OUT'), hitsEl));
     const spIcon = h('span', { class: 'iw-kit__icon is-sp' });
     const spName = h('b'); const spBlurb = h('span'); const spCost = h('em', { class: 'iw-kit__cost' });
     const spChip = h('div', { class: 'iw-kit' }, spIcon, h('div', null, h('small', null, 'SPECIAL'), h('div', { class: 'iw-kit__row' }, spName, spCost), spBlurb));
@@ -1696,7 +1717,8 @@ export class Menus {
       h('div', { class: 'iw-wd__head' }, h('div', { class: 'iw-wd__title' }, kind, nm), h('div', { class: 'iw-wd__badges' }, cmpBadge, eqBadge)),
       blurb,
       h('div', { class: 'iw-wd__stats' }, statEls.map((s) => s.row)),
-      h('div', { class: 'iw-wd__kits' }, subChip, spChip));
+      h('div', { class: 'iw-wd__kits' }, subChip, spChip),
+      specs);
 
     let entered = false;
     const render = (id) => {
@@ -1710,49 +1732,54 @@ export class Menus {
       detail.classList.toggle('is-compare', id !== equipped);
       cmpBadge.lastChild.textContent = eqW.name;
       for (const s of statEls) {
-        const v = clamp((w.stats && w.stats[s.k]) || 0);
-        const g = clamp((eqW.stats && eqW.stats[s.k]) || 0);
-        s.target = v * 100;
+        const v = statVal(w, s.k);
+        const g = statVal(eqW, s.k);
+        s.target = statNum(w, s.k); s.v = v;
         if (entered) s.bar.style.setProperty('--v', v.toFixed(3));
         s.bar.style.setProperty('--g', (id === equipped ? 0 : g).toFixed(3));
         const up = id !== equipped && v > g + 0.01, down = id !== equipped && v < g - 0.01;
         s.bar.classList.toggle('is-up', up); s.bar.classList.toggle('is-down', down);
         s.num.classList.toggle('is-up', up); s.num.classList.toggle('is-down', down);
-        const d = Math.round((v - g) * 100);
+        const d = Math.round(statNum(w, s.k) - statNum(eqW, s.k));
         s.delta.textContent = up ? `+${d}` : down ? `${d}` : '';
         s.delta.className = 'iw-stat__delta' + (up ? ' is-up' : down ? ' is-down' : '');
       }
       const sub = subOf(w);
       subIcon.innerHTML = SUB_ICONS[sub.id] || SUB_ICONS.bomb;
       subName.textContent = sub.name;
-      subText.textContent = `Costs ${Math.round(sub.inkCost || 70)}% of your ink tank. Hold to aim, release to throw.`;
+      const nG = Math.max(1, sub.count | 0 || 2);
+      subName.textContent = `${sub.name} ×${nG}`;
+      subText.textContent = `${nG} per round, refilled every round. Hold to aim, release to throw.`;
+      reloadEl.textContent = w.reloadTime ? `${(+w.reloadTime).toFixed(1)}s` : '—';
+      const hit = w.damageMax || w.directDamage || w.damage || 0;
+      hitsEl.textContent = hit ? (Math.ceil(100 / hit) <= 1 ? '1 (full charge)' : `${Math.ceil(100 / hit)}`) : '—';
       const sp = specials[w.special] || Object.values(specials)[0];
       spIcon.innerHTML = specialIcon(sp.id);
       spName.textContent = sp.name;
       spBlurb.textContent = sp.blurb || '';
-      spCost.textContent = w.specialCost ? `${Math.round(w.specialCost)}p` : '';
-      spCost.title = 'Turf points to fill the special gauge';
+      spCost.textContent = w.specialCost ? `${Math.round(w.specialCost)} DMG` : '';
+      spCost.title = 'Damage to deal to fill the special gauge';
       if (!first) restartAnim(detail, 'is-swap');
       markSeen(id);
     };
     render(equipped);
 
-    // ---- your squidkid (→ locker)
+    // ---- your player (→ locker)
     const prof = this._profile();
     const lookAv = h('span', { class: 'iw-lchip__av' }, h('span', { class: 'iw-lchip__blob', html: splatSVG({ seed: 17, cls: 'iw-fa', r: 62, arms: 8, drops: 0 }) }), h('span', { class: 'iw-lchip__squid', html: SQUID }));
     const lookChip = h('button', { class: 'iw-wchip iw-lchip iw-lchip--sm iw-in iw-in--down' }, lookAv,
-      h('span', { class: 'iw-wchip__text' }, h('small', null, 'SQUIDKID'), h('b', null, prof.name)),
+      h('span', { class: 'iw-wchip__text' }, h('small', null, 'PLAYER'), h('b', null, prof.name)),
       h('span', { class: 'iw-wchip__edit' }, h('i', { html: GLYPHS.hanger }), 'LOCKER'));
     this._fx(lookChip);
     this._bind(lookChip, { id: 'look', accept: () => { this._sfx('ui_click'); this._go('locker'); } });
     this._portraitInto(lookAv, { kind: 'head', size: 128 });
 
-    const grid = h('div', { class: 'iw-wgrid' + (compact ? ' is-compact' : ''), style: { '--cols': cols } }, cards);
+    const grid = h('div', { class: 'iw-wgrid' + (compact ? ' is-compact' : '') + (!compact && cols >= 5 ? ' is-row5' : ''), style: { '--cols': cols } }, cards);
     const el = h('div', { class: 'iw-screen iw-loadout' },
       h('div', { class: 'iw-scrim-left' }),
-      this._header('LOADOUT', { sub: `${n} weapons · every one comes with a sub and a special` }),
+      this._header('LOADOUT', { sub: `${n} markers · every one comes with Paint Grenades and a special` }),
       h('div', { class: 'iw-loadout__body' },
-        h('div', { class: 'iw-seclabel iw-in' }, h('i', { html: WEAPON_ICONS.shooter }), 'WEAPON', h('span', { class: 'iw-seclabel__count' }, `${order.indexOf(equipped) + 1} / ${n}`)),
+        h('div', { class: 'iw-seclabel iw-in' }, h('i', { html: WEAPON_ICONS.shooter }), 'MARKER', h('span', { class: 'iw-seclabel__count' }, `${order.indexOf(equipped) + 1} / ${n}`)),
         grid,
         detail),
       h('div', { class: 'iw-loadout__look' }, lookChip),
@@ -1770,7 +1797,7 @@ export class Menus {
         // stat bars grow in from zero once the panel has popped in
         requestAnimationFrame(() => requestAnimationFrame(() => {
           entered = true;
-          for (const s of statEls) s.bar.style.setProperty('--v', (s.target / 100).toFixed(3));
+          for (const s of statEls) s.bar.style.setProperty('--v', s.v.toFixed(3));
         }));
       },
       tick: (dt) => {
@@ -2057,32 +2084,33 @@ export class Menus {
       ['Move', null, K('W', 'A', 'S', 'D'), padGlyph('LS')],
       ['Aim', null, K('MOUSE'), padGlyph('RS')],
       ['Fire', null, K('LMB'), padGlyph('RT')],
-      ['Swim · squid form', 'hold', K('SHIFT'), padGlyph('LT')],
-      ['Jump', null, K('SPACE'), padGlyph('A')],
-      ['Aim bomb · release to throw', 'hold', K('RMB', 'or', 'E'), padGlyph('RB')],
+      ['Sprint', 'hold', K('SHIFT'), padGlyph('LT')],
+      ['Reload', null, K('R'), padGlyph('X')],
+      ['Jump · Pistols: dive roll', null, K('SPACE'), padGlyph('A')],
+      ['Paint grenade · release to throw', 'hold', K('RMB', 'or', 'E'), padGlyph('RB')],
       ['Special', null, K('F', 'or', 'Q'), padGlyph('Y')],
       ['Map', 'hold', K('TAB'), padGlyph('View')],
       ['Pause', null, K('ESC'), padGlyph('Start')],
     ];
-    const list = compact ? rows.filter((r) => ['Move', 'Fire', 'Swim · squid form', 'Jump', 'Aim bomb · release to throw', 'Special'].includes(r[0])) : rows;
+    const list = compact ? rows.filter((r) => ['Fire', 'Sprint', 'Reload', 'Jump · Pistols: dive roll', 'Paint grenade · release to throw', 'Special'].includes(r[0])) : rows;
     return h('div', { class: 'iw-ctl' + (compact ? ' iw-ctl--compact' : '') }, list.map(([act, hold, kb, pad]) =>
       h('div', { class: 'iw-ctl__row' },
-        h('span', { class: 'iw-ctl__act' }, compact ? act.replace(' · release to throw', '').replace(' · squid form', '') : act, hold ? h('em', null, hold) : null),
+        h('span', { class: 'iw-ctl__act' }, compact ? act.replace(' · release to throw', '').replace(' · Pistols: dive roll', '') : act, hold ? h('em', null, hold) : null),
         h('span', { class: 'iw-ctl__keys', html: mode === 'pad' ? pad : kb }))));
   }
 
   _scr_howto() {
     const rules = [
-      ['turf', 'Ink the turf', 'Paint the ground in your team’s color. When time runs out, the team with the most turf wins.'],
-      ['swim', 'Swim to refill', 'Dive into your own ink as a squid to move fast, hide and refill your ink tank.'],
-      ['enemy', 'Avoid enemy ink', 'Enemy ink slows you down and hurts. Paint over it to take the ground back.'],
-      ['climb', 'Climb inked walls', 'Ink a wall, then swim straight up it as a squid to reach high ground.'],
+      ['elim', 'One life per round', 'Take enough hits and you’re OUT — no respawns, no health regen. Wipe out the other team to win the round.'],
+      ['rounds', `First to ${ROUNDS.toWin} rounds`, `Rounds last ${ROUNDS.roundTime} seconds. At the whistle, the team with more players standing wins — then the most HP left.`],
+      ['hopper', 'Mind your hopper', 'Every marker holds a limited load of paintballs. Reload with [R] behind cover — you can’t shoot while you swap pods.'],
+      ['cover', 'Sprint, cover, grenade', 'Hold [SHIFT] to sprint between bunkers (no firing). Two Paint Grenades a round flush players out of cover.'],
     ];
     const cards = rules.map(([art, title, text], i) => h('div', { class: 'iw-rule iw-in iw-in--pop', style: { '--tilt': `${[-1.2, 1, 0.8, -1][i]}deg` } },
       h('div', { class: 'iw-rule__art', html: RULE_ART[art] }),
       h('div', { class: 'iw-rule__num' }, String(i + 1)),
       h('div', { class: 'iw-rule__title' }, title),
-      h('p', { class: 'iw-rule__text' }, text)));
+      h('p', { class: 'iw-rule__text', html: richText(text) })));
     let mode = this._input;
     const listWrap = h('div', { class: 'iw-ctl-wrap' });
     const renderList = () => { listWrap.innerHTML = ''; listWrap.appendChild(this._controlsList(mode)); restartAnim(listWrap, 'is-in'); };
@@ -2092,7 +2120,7 @@ export class Menus {
     renderList();
     const el = h('div', { class: 'iw-screen iw-howto' },
       h('div', { class: 'iw-scrim-full' }),
-      this._header('HOW TO PLAY', { sub: 'Turf War in 30 seconds' }),
+      this._header('HOW TO PLAY', { sub: 'Elimination in 30 seconds' }),
       h('div', { class: 'iw-howto__body' },
         h('div', { class: 'iw-howto__rules' }, cards),
         this._panel('iw-howto__ctl iw-in iw-in--right', h('div', { class: 'iw-seclabel' }, h('i', { html: GLYPHS.gamepad }), 'CONTROLS'), segRow, listWrap)),
@@ -2113,13 +2141,13 @@ export class Menus {
     const cast = h('div', { class: 'iw-cred__cast' }, BOT_NAMES.map((n, i) => h('span', { style: { '--c': i % 2 ? 'var(--b)' : 'var(--a)' } }, h('i', { html: SQUID }), n)));
     const roll = h('div', { class: 'iw-cred__roll' },
       h('div', { class: 'iw-cred__logo', html: logoMarkup(GAME_TITLE, GAME_SUBTITLE, 'md') }),
-      h('p', { class: 'iw-cred__lead' }, 'An original 4 v 4 turf-war shooter.'),
-      sec('Made with', 'Procedural everything — squidkids, weapons, stage, ink, music and sound are all generated in code.'),
+      h('p', { class: 'iw-cred__lead' }, 'An original 4 v 4 paintball shooter.'),
+      sec('Made with', 'Procedural everything — players, markers, fields, paint, music and sound are all generated in code.'),
       sec('Rendering', 'three.js', h('p', { class: 'dim' }, 'by the three.js authors & contributors')),
       sec('Typography', 'Titan One — Font Diner', 'Rubik — Hubert & Fischer', h('p', { class: 'dim' }, 'SIL Open Font License')),
-      sec('Starring the squidkids', cast),
-      sec('Special thanks', 'Everyone who ever painted a wall', 'Every bot that got splatted in testing', 'And you, for playing'),
-      h('div', { class: 'iw-cred__end' }, h('div', { class: 'iw-cred__endsplat', html: splatSVG({ seed: 77, cls: 'iw-fa' }) }), h('span', { class: 'iw-display' }, 'STAY FRESH!')));
+      sec('Starring the players', cast),
+      sec('Special thanks', 'Every ref who ever called a hit', 'Every bot that got eliminated in testing', 'And you, for playing'),
+      h('div', { class: 'iw-cred__end' }, h('div', { class: 'iw-cred__endsplat', html: splatSVG({ seed: 77, cls: 'iw-fa' }) }), h('span', { class: 'iw-display' }, 'GAME ON!')));
     const viewport = h('div', { class: 'iw-cred__view' }, roll);
     const el = h('div', { class: 'iw-screen iw-credits' },
       h('div', { class: 'iw-scrim-full' }),
@@ -2222,7 +2250,7 @@ export class Menus {
       h('span', { class: 'iw-hubcard__text' },
         h('span', { class: 'iw-hubcard__kicker iw-tape' }, h('i', { html: GLYPHS.crown }), 'YOU HOST'),
         h('span', { class: 'iw-hubcard__title' }, 'CREATE A ROOM'),
-        h('span', { class: 'iw-hubcard__sub' }, 'Pick the stage, share the code, start when everyone’s ready.'),
+        h('span', { class: 'iw-hubcard__sub' }, 'Pick the field, share the code, start when everyone’s ready.'),
         createStatus),
       h('span', { class: 'iw-hubcard__go' }, h('b', null, 'GO!'), this._hint('Enter', 'A')),
       h('span', { class: 'iw-hubcard__drips', html: dripsSVG([[46, 1.1], [120, 1.7], [168, 0.8], [300, 1.3], [352, 0.9]], 'iw-fhv') }));
@@ -2264,7 +2292,7 @@ export class Menus {
 
     // ---- how it works: three little stickers, comic-strip style
     const steps = h('div', { class: 'iw-hub__steps iw-in iw-in--up' },
-      [['1', 'Create or join', GLYPHS.flag], ['2', 'Share the code', GLYPHS.copy], ['3', 'Ready up & ink!', GLYPHS.check]].map(([n, t, ic], i) =>
+      [['1', 'Create or join', GLYPHS.flag], ['2', 'Share the code', GLYPHS.copy], ['3', 'Ready up & break!', GLYPHS.check]].map(([n, t, ic], i) =>
         h('div', { class: 'iw-hubstep', style: { '--tilt': `${[-2, 1.5, -1][i]}deg` } }, h('b', { html: splatSVG({ seed: 30 + i * 7, cls: 'iw-fa', r: 56, arms: 8, drops: 2 }) }, h('span', null, n)), h('i', { html: ic }), h('span', null, t))));
 
     const body = h('div', { class: 'iw-hub__body' }, create, join, steps);
@@ -2284,7 +2312,7 @@ export class Menus {
     colorVars(stag, 'tc', this._accent()[0]);
     const wChip = h('button', { class: 'iw-wchip iw-hub__chip iw-in iw-in--right' },
       h('span', { class: 'iw-wchip__icon', html: weaponIcon(W.kind || lo.weapon) }),
-      h('span', { class: 'iw-wchip__text' }, h('small', null, 'WEAPON'), h('b', null, W.name)),
+      h('span', { class: 'iw-wchip__text' }, h('small', null, 'MARKER'), h('b', null, W.name)),
       h('span', { class: 'iw-wchip__edit' }, h('i', { html: GLYPHS.pencil })));
     this._fx(wChip);
     this._bind(wChip, { id: 'weapon', accept: () => { this._sfx('ui_click'); this._go('loadout'); } });
@@ -2296,7 +2324,7 @@ export class Menus {
     this._bind(lChip, { id: 'look', accept: () => { this._sfx('ui_click'); this._go('locker'); } });
     this._portraitInto(lookAv, { kind: 'head', size: 128 });
     const me = h('div', { class: 'iw-hub__me' },
-      h('div', { class: 'iw-hub__metag iw-in iw-in--down' }, h('span', { class: 'iw-hub__metaglbl iw-tape' }, 'YOUR SPLASHTAG'), stag),
+      h('div', { class: 'iw-hub__metag iw-in iw-in--down' }, h('span', { class: 'iw-hub__metaglbl iw-tape' }, 'YOUR PLAYER TAG'), stag),
       h('div', { class: 'iw-hub__chips' }, wChip, lChip));
 
     const promptsIdle = this._prompts([['Enter', 'A', 'Select'], ['Esc', 'B', 'Back']]);
@@ -2310,7 +2338,7 @@ export class Menus {
     promptsBusy.classList.add('is-busy');
     const el = h('div', { class: 'iw-screen iw-online' },
       h('div', { class: 'iw-scrim-left' }),
-      this._header('ONLINE', { sub: 'Private rooms · 4 v 4 · up to 8 squidkids' }),
+      this._header('ONLINE', { sub: 'Private rooms · 4 v 4 elimination · up to 8 players' }),
       body, me, promptsIdle, promptsEntry, promptsBusy);
 
     // ---- code entry
@@ -2619,7 +2647,7 @@ export class Menus {
     const pipsA = h('span', { class: 'iw-lob__pips is-a' }), pipsB = h('span', { class: 'iw-lob__pips is-b' });
     const statusTxt = h('span', { class: 'iw-lob__statustxt' });
     const status = h('div', { class: 'iw-lob__status iw-in iw-in--down' },
-      h('div', { class: 'iw-lob__count' }, h('small', { class: 'iw-lob__countlbl' }, 'SQUIDKIDS'), countEl, h('small', null, '/8')),
+      h('div', { class: 'iw-lob__count' }, h('small', { class: 'iw-lob__countlbl' }, 'PLAYERS'), countEl, h('small', null, '/8')),
       h('div', { class: 'iw-lob__teams' },
         h('div', { class: 'iw-lob__tline is-a' }, h('span', { class: 'iw-lob__tl is-a' }, TEAM_LABEL[0]), pipsA),
         h('em', { class: 'iw-lob__vs', html: splatSVG({ seed: 5, fill: '#15121c', r: 52, arms: 8, drops: 2 }) }, h('b', null, 'VS')),
@@ -2645,7 +2673,9 @@ export class Menus {
     stArrows.children[0].addEventListener('click', (e) => { e.stopPropagation(); this._setFocus(stage); setMap(-1); });
     stArrows.children[1].addEventListener('click', (e) => { e.stopPropagation(); this._setFocus(stage); setMap(1); });
     const timeSeg = this._seg([['day', h('span', { class: 'iw-segico' }, h('i', { html: GLYPHS.sun }), 'DAY')], ['dusk', h('span', { class: 'iw-segico' }, h('i', { html: GLYPHS.moon }), 'DUSK')]], lob.time === 'dusk' ? 'dusk' : 'day', (v) => hostSet({ time: v }));
-    const lenSegT = this._seg(durations.map((d) => [d, durLabel(d)]), lob.duration, (v) => hostSet({ duration: v }));
+    // Elimination has a fixed format (first to ROUNDS.toWin, ROUNDS.roundTime s rounds): a read-only sticker, not a choice
+    const lenSegT = { el: h('span', { class: 'iw-seg iw-lob__fixedlen' }, h('span', { class: 'iw-seg__opt is-sel' }, `FIRST TO ${ROUNDS.toWin} · ${ROUNDS.roundTime}S`)),
+      adjust: () => this._sfx('ui_error', 0.15), cycle: () => this._sfx('ui_error', 0.15), refresh: () => {} };
     const lenSegB = this._seg(BOSS_DURATIONS.map((d) => [d, durLabel(d)]), BOSS_DURATIONS.includes(lob.duration) ? lob.duration : 240, (v) => hostSet({ duration: v }));
     const lenSeg = { el: h('span', { class: 'iw-lob__lensegs' }, lenSegT.el, lenSegB.el), adjust: (d) => (bossMode() ? lenSegB : lenSegT).adjust(d), cycle: () => (bossMode() ? lenSegB : lenSegT).cycle(),
       refresh: (v) => (bossMode() ? lenSegB : lenSegT).refresh(v) };
@@ -2657,26 +2687,26 @@ export class Menus {
       r._id = id;
       return r;
     };
-    const rStage = srow('stage', GLYPHS.map, 'STAGE', stage);
+    const rStage = srow('stage', GLYPHS.map, 'FIELD', stage);
     // stage rules sticker (config onlineOnly / noBots — Cargo Terminal), slapped across the ticket's top edge
     const stRules = h('span', { class: 'iw-lstage__rules' }, h('i', { html: GLYPHS.users }), h('b'));
     rStage.querySelector('.iw-lset__label').appendChild(stRules);
     const rTime = srow('time', GLYPHS.sun, 'TIME', timeSeg.el);
-    const rLen = srow('len', GLYPHS.clock, 'LENGTH', lenSeg.el);
+    const rLen = srow('len', GLYPHS.clock, 'MATCH', lenSeg.el);
     const rPair = h('div', { class: 'iw-lset__pair' }, rTime, rLen);
     // the room's ink colours (host picks; everyone's lobby and the match use them)
     const palIdx = () => (Number.isInteger(lob.palette) && TEAM_PALETTES[lob.palette] ? lob.palette : Math.max(0, TEAM_PALETTES.findIndex((p) => p.a.toLowerCase() === String(colors()[0]).toLowerCase())));
     const palSeg = this._seg(TEAM_PALETTES.map((p, i) => [i, h('span', { class: 'iw-palopt', title: p.names.join(' vs ') }, h('i', { style: { background: p.a } }), h('i', { style: { background: p.b } }))]), palIdx(), (v) => hostSet({ palette: v }));
     const palName = h('small', { class: 'iw-lset__note' });
-    const rPal = srow('pal', GLYPHS.palette, 'INK', palSeg.el, palName);
+    const rPal = srow('pal', GLYPHS.palette, 'PAINT', palSeg.el, palName);
     const botsNote = h('small', { class: 'iw-lset__note' });
     const rBots = srow('bots', GLYPHS.bot, 'FILL WITH BOTS', botTgl.el, botsNote);
     const rDiff = srow('diff', GLYPHS.swords, 'BOT SKILL', diffSeg.el);
     const diffLbl = rDiff.querySelector('.iw-lset__label');
     diffLbl.lastChild.textContent = '';   // label text lives in its own span so boss mode can rename it
     diffLbl.appendChild(h('span', { class: 'iw-lset__lbltxt' }, 'BOT SKILL'));
-    // MODE (Turf War | Boss Battle): the panel's headline is the switch — ◀ ▶ for the host, read-only for guests
-    const modeName = h('span', { class: 'iw-display iw-lob__modename' }, 'TURF WAR');
+    // MODE (Elimination | Boss Battle): the panel's headline is the switch — ◀ ▶ for the host, read-only for guests
+    const modeName = h('span', { class: 'iw-display iw-lob__modename' }, 'ELIMINATION');
     const modeIco = h('b', { html: GLYPHS.flag });
     const modeArrows = h('span', { class: 'iw-lob__modearrows' }, h('i', { class: 'is-l', html: GLYPHS.back }), h('i', { class: 'is-r', html: GLYPHS.next }));
     const rMode = h('div', { class: 'iw-lset iw-lset--mode' },
@@ -2696,7 +2726,7 @@ export class Menus {
     // ---- your controls (bottom bar)
     const Ws = this._weapons();
     const wIcon = h('span', { class: 'iw-wchip__icon' }), wName = h('b');
-    const wChip = h('button', { class: 'iw-wchip iw-lob__wchip' }, wIcon, h('span', { class: 'iw-wchip__text' }, h('small', null, 'WEAPON'), wName), h('span', { class: 'iw-wchip__edit' }, h('i', { html: GLYPHS.pencil })));
+    const wChip = h('button', { class: 'iw-wchip iw-lob__wchip' }, wIcon, h('span', { class: 'iw-wchip__text' }, h('small', null, 'MARKER'), wName), h('span', { class: 'iw-wchip__edit' }, h('i', { html: GLYPHS.pencil })));
     this._fx(wChip);
     const lookAv = h('span', { class: 'iw-lchip__av' }, h('span', { class: 'iw-lchip__blob', html: splatSVG({ seed: 17, cls: 'iw-fa', r: 62, arms: 8, drops: 0 }) }), h('span', { class: 'iw-lchip__squid', html: SQUID }));
     const lChip = h('button', { class: 'iw-wchip iw-lchip iw-lob__lchip', title: 'Locker' }, lookAv, h('span', { class: 'iw-lob__lbadge', html: GLYPHS.hanger }), h('small', { class: 'iw-lob__llbl' }, 'LOOK'));
@@ -2777,14 +2807,14 @@ export class Menus {
       restartAnim(rMode, 'is-hit');
       render(false);
       hostSet(map !== (was && was.id) ? { mode: next, duration: dur, map } : { mode: next, duration: dur });
-      if (map !== (was && was.id)) { const n = maps.find((m) => m.id === map); this.toast(`${was ? was.name : 'That stage'} has no Boss Battle — switched to ${n ? n.name : 'another stage'}`, { icon: GLYPHS.map }); }
+      if (map !== (was && was.id)) { const n = maps.find((m) => m.id === map); this.toast(`${was ? was.name : 'That field'} has no Boss Battle — switched to ${n ? n.name : 'another field'}`, { icon: GLYPHS.map }); }
     };
     let shownMap = null, shownTime = null;
     const renderStage = (dir = 0) => {
       const m = maps.find((x) => x.id === lob.map) || maps[0], time = lob.time === 'dusk' ? 'dusk' : 'day';
       // (the count follows the mode's stage list, so it refreshes on a mode switch too)
       const list = stageList(), k = list.indexOf(m);
-      stNum.innerHTML = `STAGE <b>${String((k < 0 ? maps.indexOf(m) : k) + 1).padStart(2, '0')}</b><em>/ ${String(list.length).padStart(2, '0')}</em>`;
+      stNum.innerHTML = `FIELD <b>${String((k < 0 ? maps.indexOf(m) : k) + 1).padStart(2, '0')}</b><em>/ ${String(list.length).padStart(2, '0')}</em>`;
       if (m.id === shownMap && time === shownTime) return;
       const first = shownMap === null;
       shownMap = m.id; shownTime = time;
@@ -2921,6 +2951,8 @@ export class Menus {
       const order = this._weaponOrder().filter((id) => Ws[id]);
       let equipped = this._loadout().weapon;
       const kind = h('span', { class: 'iw-wd__kind' }), nm = h('span', { class: 'iw-wd__name iw-display' }), blurb = h('p', { class: 'iw-wd__blurb' });
+      const maxHopper = Math.max(1, ...order.map((wid) => +Ws[wid].hopper || 0));
+      const statVal = (w, k) => (k === 'hopper' ? clamp((+w.hopper || 0) / maxHopper) : clamp((w.stats && w.stats[k]) || 0));
       const statEls = STAT_LABELS.map(([k, label], i) => {
         const bar = h('span', { class: 'iw-stat__bar' }, h('i', { class: 'iw-stat__ghost' }), h('i', { class: 'iw-stat__fill' }), h('i', { class: 'iw-stat__ticks' }));
         return { k, bar, row: h('div', { class: 'iw-stat', style: { '--i': i } }, h('span', { class: 'iw-stat__label' }, h('i', { html: STAT_ICONS[k] || GLYPHS.star }), label), bar) };
@@ -2931,14 +2963,15 @@ export class Menus {
         kind.textContent = (w.class || KIND_LABEL[w.kind] || '').toUpperCase();
         nm.textContent = w.name; blurb.textContent = w.blurb || '';
         for (const s of statEls) {
-          const v = clamp((w.stats && w.stats[s.k]) || 0), g = clamp((eqW.stats && eqW.stats[s.k]) || 0);
+          const v = statVal(w, s.k), g = statVal(eqW, s.k);
           s.bar.style.setProperty('--v', v.toFixed(3)); s.bar.style.setProperty('--g', (id === equipped ? 0 : g).toFixed(3));
           s.bar.classList.toggle('is-up', id !== equipped && v > g + 0.01); s.bar.classList.toggle('is-down', id !== equipped && v < g - 0.01);
         }
         const sp = this._specials()[w.special] || Object.values(this._specials())[0];
         const sub = (w.sub && (this.api.subs || SUB)[w.sub]) || this._sub();
         kits.innerHTML = '';
-        kits.append(h('span', { class: 'iw-chip' }, h('i', { html: SUB_ICONS[sub.id] || SUB_ICONS.bomb }), sub.name), h('span', { class: 'iw-chip' }, h('i', { html: specialIcon(sp.id) }), sp.name));
+        kits.append(h('span', { class: 'iw-chip' }, h('i', { html: SUB_ICONS[sub.id] || SUB_ICONS.bomb }), `${sub.name} ×${Math.max(1, sub.count | 0 || 2)}`), h('span', { class: 'iw-chip' }, h('i', { html: specialIcon(sp.id) }), sp.name),
+          w.hopper ? h('span', { class: 'iw-chip' }, h('i', { html: GLYPHS.reset }), `${Math.round(w.hopper)} balls · ${(+w.reloadTime || 0).toFixed(1)}s reload`) : null);
         restartAnim(detail, 'is-swap');
       };
       const cards = order.map((id, i) => {
@@ -2970,7 +3003,7 @@ export class Menus {
       const detail = h('div', { class: 'iw-ldr__detail' }, h('div', { class: 'iw-wd__title' }, kind, nm), blurb, h('div', { class: 'iw-wd__stats' }, statEls.map((s) => s.row)), kits);
       const drawer = h('div', { class: 'iw-ldr' },
         h('div', { class: 'iw-ldr__card' },
-          h('div', { class: 'iw-ldr__head' }, h('span', { class: 'iw-seclabel' }, h('i', { html: WEAPON_ICONS.shooter }), 'CHOOSE YOUR WEAPON'), h('span', { class: 'iw-ldr__hint' }, this._hint('Enter', 'A', 'Equip'), this._hint('Esc', 'B', 'Close'))),
+          h('div', { class: 'iw-ldr__head' }, h('span', { class: 'iw-seclabel' }, h('i', { html: WEAPON_ICONS.shooter }), 'CHOOSE YOUR MARKER'), h('span', { class: 'iw-ldr__hint' }, this._hint('Enter', 'A', 'Equip'), this._hint('Esc', 'B', 'Close'))),
           h('div', { class: 'iw-ldr__grid', style: { '--cols': order.length > 8 ? 5 : 4 } }, cards),
           detail));
       drawer.addEventListener('pointerdown', (e) => { if (e.target === drawer) this._closeModal(); });
@@ -3003,7 +3036,7 @@ export class Menus {
 
     // humans-only stage (config noBots): the bots switch is locked off
     const botsLocked = () => mapNoBots(lob.map);
-    const lockedBots = () => { this._sfx('ui_error', 0.15); restartAnim(rBots, 'is-shake'); this.toast('No bots on this stage — it’s humans only', { icon: GLYPHS.bot }); };
+    const lockedBots = () => { this._sfx('ui_error', 0.15); restartAnim(rBots, 'is-shake'); this.toast('No bots on this field — it’s humans only', { icon: GLYPHS.bot }); };
 
     // ---- render from the lobby state
     const renderPlates = () => {
@@ -3067,7 +3100,7 @@ export class Menus {
           const pl = ps.filter((p) => teamOf(p) === t)[k];
           const cls = pl ? (pl.ready || pl.host ? 'is-on is-ready' : 'is-on') : lob.bots !== false ? 'is-bot' : '';
           if (c._c === cls) return;
-          const pop = c._c !== undefined && pl && !String(c._c).startsWith('is-on');   // a squidkid just took this spot
+          const pop = c._c !== undefined && pl && !String(c._c).startsWith('is-on');   // a player just took this spot
           c._c = cls; c.className = cls;
           if (pop) restartAnim(c, 'is-pop');
         });
@@ -3110,7 +3143,7 @@ export class Menus {
       if (rMode._shown !== bm) {
         const first = rMode._shown === undefined;
         rMode._shown = bm;
-        modeName.textContent = bm ? 'BOSS BATTLE' : 'TURF WAR';
+        modeName.textContent = bm ? 'BOSS BATTLE' : 'ELIMINATION';
         modeIco.innerHTML = bm ? BOSS_GLYPH : GLYPHS.flag;
         el.classList.toggle('is-bossmode', bm);
         diffLbl.querySelector('.iw-lset__lbltxt').textContent = bm ? 'DIFFICULTY' : 'BOT SKILL';
@@ -3121,7 +3154,7 @@ export class Menus {
       lenSeg.refresh(lob.duration);
       rDiff.classList.toggle('is-off', lob.bots === false);
       const humans = players().length;
-      botsNote.textContent = botsLocked() ? 'No bots on this stage' : lob.bots !== false ? (humans < 8 ? `${8 - humans} bot${8 - humans === 1 ? '' : 's'} join ${bossMode() ? 'the squad' : 'in'}` : 'Room is full') : 'Empty spots stay empty';
+      botsNote.textContent = botsLocked() ? 'No bots on this field' : lob.bots !== false ? (humans < 8 ? `${8 - humans} bot${8 - humans === 1 ? '' : 's'} join ${bossMode() ? 'the squad' : 'in'}` : 'Room is full') : 'Empty spots stay empty';
       rBots.classList.toggle('is-locked', botsLocked());
       if (bossMode()) { const P1 = TEAM_PALETTES[palIdx()]; if (P1) palName.textContent = `${P1.names[0]} squad · ${P1.names[1]} boss`; }
       const host = players().find((p) => p.host);
@@ -3135,11 +3168,11 @@ export class Menus {
         if (prev.difficulty !== lob.difficulty) flash(rDiff);
         if ((prev.mode || 'turf') !== (lob.mode || 'turf')) {
           flash(rMode);
-          if (!isHost()) this.toast(`${host ? host.name : 'The host'} picked ${bossMode() ? `BOSS BATTLE — everyone vs ${BOSS_NAME}!` : 'TURF WAR'}`, { icon: bossMode() ? BOSS_GLYPH : GLYPHS.flag });
+          if (!isHost()) this.toast(`${host ? host.name : 'The host'} picked ${bossMode() ? `BOSS BATTLE — everyone vs ${BOSS_NAME}!` : 'ELIMINATION'}`, { icon: bossMode() ? BOSS_GLYPH : GLYPHS.flag });
         }
         if (!isHost() && (prev.map !== lob.map || prev.time !== lob.time)) {
           const m = maps.find((x) => x.id === lob.map);
-          this.toast(`${host ? host.name : 'The host'} picked ${m ? m.name : 'a stage'}${lob.time === 'dusk' ? ' at dusk' : ''}`, { icon: GLYPHS.map });
+          this.toast(`${host ? host.name : 'The host'} picked ${m ? m.name : 'a field'}${lob.time === 'dusk' ? ' at dusk' : ''}`, { icon: GLYPHS.map });
         }
       }
     };
@@ -3160,7 +3193,7 @@ export class Menus {
       const waiting = players().filter((p) => !p.you && !p.ready && !p.host);
       const humans = players().length;
       const block = (net && net.startBlock ? net.startBlock() : noBotsStartBlock(lob)) || null;   // humans-only stage: 2+ players, one per side
-      startSub.textContent = ok ? (humans <= 1 && lob.bots !== false ? 'Just you and the bots' : humans <= 1 ? 'Nobody to play against yet!' : 'Everyone’s ready — let’s ink!') : block || (waiting.length ? `Waiting for ${listNames(waiting)}` : 'Getting ready…');
+      startSub.textContent = ok ? (humans <= 1 && lob.bots !== false ? 'Just you and the bots' : humans <= 1 ? 'Nobody to play against yet!' : 'Everyone’s ready — game on!') : block || (waiting.length ? `Waiting for ${listNames(waiting)}` : 'Getting ready…');
       // team seg follows your actual side unless a request is pending
       if (me && !S.pendingTeam) teamSeg.refresh(S.teamPref === 'auto' ? 'auto' : teamOf(me));
       teamRow.dataset.pick = S.teamPref === 'auto' ? 'auto' : String(S.pendingTeam ? S.pendingTeam.team : teamOf(me));
@@ -3443,8 +3476,12 @@ export class Menus {
         const game = G.game || {};
         const hex = G.teamHex || [];
         const [a, b] = this._accent();
+        const elim = !!m.elim;
+        const my = m.local ? m.local.team | 0 : 0;
         return {
-          live: true, time: Math.max(0, +m.time || 0), duration: Math.max(1, +m.duration || 180),
+          live: true, time: Math.max(0, +m.time || 0), duration: Math.max(1, elim ? ROUNDS.roundTime : (+m.duration || 180)),
+          elim, round: elim ? (m.round | 0) || 1 : 0, wins: elim && Array.isArray(m.roundWins) ? [m.roundWins[my] | 0, m.roundWins[1 - my] | 0] : null,
+          boss: !elim && !!(m.opts && m.opts.mode === 'boss'),
           map: (game.mapDef && game.mapDef.name) || '', difficulty: m.opts && m.opts.difficulty,
           colors: [toHex(hex[0] || a), toHex(hex[1] || b)],
           names: (game.palette && game.palette.names) || this._accentNames(),
@@ -3453,7 +3490,7 @@ export class Menus {
             try { sp = !!x.specialReady(); spf = x.specialFrac ? x.specialFrac() : 0; } catch (e) { /* optional */ }
             return {
               name: x.name, team: x.team | 0, weapon: x.weaponId, alive: x.alive !== false, respawn: x.alive === false ? Math.max(0, +x.respawnTimer || 0) : 0,
-              special: sp, specialFrac: spf, isSelf: !!x.isLocal, turf: (x.stats && x.stats.turf) || 0, splats: (x.stats && x.stats.splats) || 0, deaths: (x.stats && x.stats.deaths) || 0,
+              special: sp, specialFrac: spf, isSelf: !!x.isLocal, turf: (x.stats && x.stats.turf) || 0, damage: Math.round((x.stats && x.stats.damage) || 0), splats: (x.stats && x.stats.splats) || 0, deaths: (x.stats && x.stats.deaths) || 0,
             };
           }),
         };
@@ -3466,8 +3503,8 @@ export class Menus {
       [1, 'charger', true, 0, false, 0.5, 488, 2, 1], [1, 'shooter', false, 1.2, false, 0.3, 390, 1, 3], [1, 'blaster', true, 0, true, 1, 520, 3, 2], [1, 'roller', true, 0, false, 0.7, 610, 0, 1],
     ];
     return {
-      live: false, time: 94.4, duration: 180, map: MAPS[0].name, difficulty: 'normal', colors: [a, b], names: this._accentNames(),
-      players: demo.map(([team, weapon, alive, respawn, special, specialFrac, turf, splats, deaths], i) => ({ name: names[i], team, weapon, alive, respawn, special, specialFrac, isSelf: i === 0, turf, splats, deaths })),
+      live: false, time: 44.4, duration: ROUNDS.roundTime, elim: true, round: 4, wins: [2, 1], map: MAPS[0].name, difficulty: 'normal', colors: [a, b], names: this._accentNames(),
+      players: demo.map(([team, weapon, alive, respawn, special, specialFrac, turf, splats, deaths], i) => ({ name: names[i], team, weapon: WEAPON_ORDER.includes(weapon) ? weapon : 'dualies', alive, respawn: 0, special, specialFrac, isSelf: i === 0, turf, damage: Math.round(turf / 3), splats, deaths })),
     };
   }
 
@@ -3480,7 +3517,7 @@ export class Menus {
       { id: 'howto', label: 'HOW TO PLAY', icon: GLYPHS.question, cls: 'iw-btn--menu', accept: () => this._go('howto') },
       { id: 'quit', label: online ? 'LEAVE ROOM' : 'QUIT MATCH', icon: online ? GLYPHS.exit : GLYPHS.close, cls: 'iw-btn--menu iw-btn--danger', accept: () => this._openModal({
         title: online ? 'LEAVE ROOM?' : 'QUIT MATCH?', danger: true,
-        text: online ? 'You\u2019ll leave the match and the room \u2014 a bot takes over your squidkid for the team.' : 'You will leave this Turf War and head back to the lobby. Your turf will not count.',
+        text: online ? 'You\u2019ll leave the match and the room \u2014 a bot takes over your player for the team.' : 'You will leave this match and head back to the menu. It won\u2019t count as played.',
         buttons: [
           { label: 'KEEP PLAYING', accept: () => this._closeModal(), sound: null },
           { label: 'QUIT', cls: 'iw-btn--danger', sound: 'ui_confirm', accept: () => {
@@ -3506,7 +3543,7 @@ export class Menus {
       const n = h('span', { class: `iw-pstat ${cls}` }, h('i', { html: icon }), b, h('small', null, label));
       return { el: n, b };
     };
-    const sTurf = stat('iw-pstat--turf', GLYPHS.drop, 'TURF'), sSplat = stat('', SPLAT_ICON, 'SPLATS'), sDeath = stat('', DEATH_ICON, 'SPLATTED'), sSp = stat('iw-pstat--sp', specialIcon((this._weapons()[selfP.weapon] || {}).special), 'SPECIAL');
+    const sTurf = stat('iw-pstat--turf', awardIcon('pow'), 'DAMAGE'), sSplat = stat('', SPLAT_ICON, 'ELIMS'), sDeath = stat('', DEATH_ICON, 'OUTS'), sSp = stat('iw-pstat--sp', specialIcon((this._weapons()[selfP.weapon] || {}).special), 'SPECIAL');
     const you = h('div', { class: 'iw-pyou' },
       h('span', { class: 'iw-pyou__av', html: SQUID }),
       h('div', { class: 'iw-pyou__id' }, h('small', null, 'YOUR MATCH'), h('b', null, selfP.name || 'You')),
@@ -3528,11 +3565,12 @@ export class Menus {
     };
     const teams = h('div', { class: 'iw-pteams' }, roster(0), roster(1));
     const ctlWrap = h('div', { class: 'iw-pctl' }, h('div', { class: 'iw-seclabel' }, h('i', { html: GLYPHS.gamepad }), 'QUICK CONTROLS'), this._controlsList(this._input, true));
+    const roundScore = snap.wins ? h('b', { class: 'iw-pmatch__score' }, `${snap.wins[0]} – ${snap.wins[1]}`) : null;
     const matchPanel = this._panel('iw-pmatch iw-panel--flat iw-in iw-in--right',
       h('div', { class: 'iw-pmatch__top' },
         h('div', { class: 'iw-pmatch__info' },
-          h('div', { class: 'iw-pmatch__mode' }, h('span', { class: 'iw-pmatch__tag' }, 'TURF WAR'), diff ? h('span', { class: 'iw-pmatch__diff' }, h('i', { html: GLYPHS.bot }), `${diff.name} bots`) : null),
-          h('div', { class: 'iw-pmatch__map' }, h('i', { html: GLYPHS.map }), snap.map || 'Turf War')),
+          h('div', { class: 'iw-pmatch__mode' }, h('span', { class: 'iw-pmatch__tag' }, snap.boss ? 'BOSS BATTLE' : snap.elim ? `ELIMINATION · ROUND ${snap.round}` : 'ELIMINATION'), diff ? h('span', { class: 'iw-pmatch__diff' }, h('i', { html: GLYPHS.bot }), `${diff.name} bots`) : null),
+          h('div', { class: 'iw-pmatch__map' }, h('i', { html: GLYPHS.map }), snap.map || 'Elimination', roundScore)),
         clock),
       you, teams, ctlWrap);
     colorVars(matchPanel, 'ta', snap.colors[0]);
@@ -3543,9 +3581,10 @@ export class Menus {
       const tLeft = s.time, frac = clamp(tLeft / s.duration);
       clockNum.textContent = fmtTime(tLeft);
       clock.style.setProperty('--f', frac.toFixed(4));
-      clock.classList.toggle('is-low', tLeft <= 60);
+      clock.classList.toggle('is-low', tLeft <= (s.elim ? 15 : 60));
+      if (roundScore && s.wins) roundScore.textContent = `${s.wins[0]} – ${s.wins[1]}`;
       const me = s.players.find((p) => p.isSelf) || selfP;
-      sTurf.b.innerHTML = `${fmtInt(me.turf || 0)}<small>p</small>`;
+      sTurf.b.textContent = fmtInt(me.damage || 0);
       sSplat.b.textContent = String(me.splats || 0);
       sDeath.b.textContent = String(me.deaths || 0);
       sSp.b.textContent = me.special ? 'READY' : `${Math.round(clamp(me.specialFrac || 0) * 100)}%`;
@@ -3554,12 +3593,12 @@ export class Menus {
       for (const r of rosterRows) {
         const p = s.players.find((x) => x.name === r.name && x.team === r.team);
         if (!p) continue;
-        const sig = !p.alive ? `d${Math.ceil(p.respawn)}` : p.special ? 's' : 'a';
+        const sig = !p.alive ? (s.elim ? 'out' : `d${Math.ceil(p.respawn)}`) : p.special ? 's' : 'a';
         if (sig === r.sig) continue;
         r.sig = sig;
         r.row.classList.toggle('is-dead', !p.alive);
         r.row.classList.toggle('is-sp', p.alive && p.special);
-        if (!p.alive) r.st.innerHTML = `<span class="iw-st iw-st--dead"><i>${DEATH_ICON}</i><b>${Math.max(1, Math.ceil(p.respawn))}s</b></span>`;
+        if (!p.alive) r.st.innerHTML = `<span class="iw-st iw-st--dead"><i>${DEATH_ICON}</i><b>${s.elim ? 'OUT' : `${Math.max(1, Math.ceil(p.respawn))}s`}</b></span>`;
         else if (p.special) r.st.innerHTML = `<span class="iw-st iw-st--sp"><i>${specialIcon((this._weapons()[p.weapon] || {}).special)}</i>READY</span>`;
         else r.st.innerHTML = `<span class="iw-st iw-st--alive"><i>${SQUID}</i></span>`;
       }
@@ -3592,15 +3631,19 @@ export class Menus {
   _scr_results() {
     const d = this._results || this._demoResults();
     const boss = d.mode === 'boss';   // Boss Battle: VICTORY / DEFEAT vs HULLBREAKER, one squad ranked by damage
+    // Elimination: the headline is the round score (roundWins); the tables rank by damage, then eliminations / times OUT
+    const elim = !boss && (d.mode === 'elim' || Array.isArray(d.roundWins));
+    const rw = elim ? (Array.isArray(d.roundWins) ? d.roundWins : [d.win ? ROUNDS.toWin : 0, d.win ? 0 : ROUNDS.toWin]).map((v) => Math.max(0, v | 0)) : null;
     const colors = (d.colors || [TEAM_PALETTES[0].a, TEAM_PALETTES[0].b]).map((c) => toHex(c));
-    const [pa, pb] = pct(...(d.percents || [50, 50]));
+    const [pa, pb] = elim ? (rw[0] + rw[1] > 0 ? [100 * rw[0] / (rw[0] + rw[1]), 100 * rw[1] / (rw[0] + rw[1])] : [50, 50]) : pct(...(d.percents || [50, 50]));
     const names = d.teamNames || TEAM_NAMES;
     const win = !!d.win;
     const raw = d.players || [];
-    const awards = boss ? computeBossAwards(raw) : computeAwards(raw, { win, percents: [pa, pb] });
+    const awards = boss ? computeBossAwards(raw) : elim ? computeElimAwards(raw, { win, roundWins: rw }) : computeAwards(raw, { win, percents: [pa, pb] });
     const all = raw.map((p, i) => ({ ...p, _aw: awards.byPlayer[i] || [] }));
+    const score = (p) => (elim ? (p.damage || 0) : (p.turf || 0));   // the counted-up column
     const players = boss ? all.slice().sort((x, y) => ((y.damage || 0) - (x.damage || 0)) || ((y.turf || 0) - (x.turf || 0)))
-      : all.slice().sort((x, y) => (x.team - y.team) || (y.turf - x.turf));
+      : all.slice().sort((x, y) => (x.team - y.team) || (score(y) - score(x)) || ((y.splats || 0) - (x.splats || 0)));
     const B = boss ? { name: BOSS_NAME, defeated: win, time: 0, hpLeft: win ? 0 : 1, phase: 1, ...(d.boss || {}) } : null;
     if (B) B.name = String(B.name || BOSS_NAME).toUpperCase();
     const self = all.find((p) => p.isSelf) || null;
@@ -3622,23 +3665,28 @@ export class Menus {
     const head = h('div', { class: 'iw-res__head iw-in iw-in--pop' + (win ? ' is-win' : ' is-lose') },
       h('div', { class: 'iw-res__splat', html: splatSVG({ seed: win ? 9 : 14, cls: 'iw-fta', r: 60, arms: 10, drops: 4 }) }),
       titleEl,
-      h('div', { class: 'iw-res__metarow' }, h('div', { class: 'iw-res__meta' }, h('i', { html: GLYPHS.map }), `${d.mapName || (boss ? 'Boss Battle' : 'Turf War')} · ${boss ? 'Boss Battle' : 'Turf War'}`), tags,
+      h('div', { class: 'iw-res__metarow' }, h('div', { class: 'iw-res__meta' }, h('i', { html: GLYPHS.map }), `${d.mapName || (boss ? 'Boss Battle' : 'Elimination')} · ${boss ? 'Boss Battle' : 'Elimination'}`), tags,
         boss ? h('span', { class: 'iw-beta iw-res__beta' }, 'PUBLIC BETA') : null),
       medalRow);
 
     // ---- coverage bar (JS-driven growth so the numbers + sound land together)
     const crownA = h('i', { class: 'iw-cover__crown', html: GLYPHS.crown });
     const crownB = h('i', { class: 'iw-cover__crown', html: GLYPHS.crown });
-    const numA = h('b', null, '0.0%'), numB = h('b', null, '0.0%');
+    const numA = h('b', null, elim ? '0' : '0.0%'), numB = h('b', null, elim ? '0' : '0.0%');
     const coverBar = h('div', { class: 'iw-cover', style: { '--pa': (pa / 100).toFixed(4), '--pb': (pb / 100).toFixed(4), '--ga': reduced ? 1 : 0 } },
       h('div', { class: 'iw-cover__a' }, h('i', { class: 'iw-cover__shine' })),
       h('div', { class: 'iw-cover__b' }, h('i', { class: 'iw-cover__shine' })),
       h('i', { class: 'iw-cover__mid' }));
-    const cover = boss ? null : h('div', { class: 'iw-res__cover iw-in' + (pa >= pb ? ' is-a' : ' is-b') },
+    // elimination: who won each round, in order (draws grey) under the score bar
+    const roundLog = elim && Array.isArray(d.rounds) && d.rounds.length ? h('div', { class: 'iw-res__rounds' },
+      h('small', null, 'ROUNDS'), d.rounds.map((r, i) => h('i', { class: r && r.winner === 0 ? 'ta' : r && r.winner === 1 ? 'tb' : 'is-draw', title: `Round ${i + 1}${r && r.reason ? ` · ${r.reason === 'wipe' ? 'wipeout' : 'time'}` : ''}` }, String(i + 1)))) : null;
+    const aWins = elim ? rw[0] >= rw[1] : pa >= pb;
+    const cover = boss ? null : h('div', { class: 'iw-res__cover iw-in' + (aWins ? ' is-a' : ' is-b') + (elim ? ' is-elim' : '') },
       h('div', { class: 'iw-cover__names' },
-        h('span', { class: 'ta' + (pa >= pb ? ' is-win' : '') }, pa >= pb ? crownA : null, names[0] || 'Alpha', numA),
-        h('span', { class: 'tb' + (pb > pa ? ' is-win' : '') }, numB, names[1] || 'Bravo', pb > pa ? crownB : null)),
-      coverBar);
+        h('span', { class: 'ta' + (aWins ? ' is-win' : '') }, aWins ? crownA : null, names[0] || 'Alpha', numA),
+        elim ? h('small', { class: 'iw-cover__cap' }, 'ROUNDS WON') : null,
+        h('span', { class: 'tb' + (!aWins ? ' is-win' : '') }, numB, names[1] || 'Bravo', !aWins ? crownB : null)),
+      coverBar, roundLog);
     // boss: HULLBREAKER's HP drains to what was left, the clock counts up, then SUNK! / ESCAPED is stamped on it
     let bossP = null;
     if (boss) {
@@ -3672,14 +3720,15 @@ export class Menus {
     const rowFx = [];
     const table = (team) => {
       const rows = players.filter((p) => p.team === team);
-      const best = Math.max(...rows.map((p) => p.turf || 0), 1);
+      const best = Math.max(...rows.map((p) => score(p)), 1);
       const isWin = team === winTeam;
       return h('div', { class: `iw-ttable iw-ttable--${team ? 'b' : 'a'} ${isWin ? 'is-win' : 'is-lose'}` },
         h('div', { class: 'iw-ttable__head iw-in' },
           h('span', { class: 'iw-ttable__team' }, h('i', { class: 'iw-ttable__dot' }), names[team] || TEAM_NAMES[team], isWin ? h('em', { class: 'iw-ttable__win' }, h('i', { html: GLYPHS.crown }), 'WIN') : null),
-          h('span', { class: 'iw-ttable__col', title: 'Turf inked' }, h('i', { html: GLYPHS.drop }), 'TURF'),
-          h('span', { class: 'iw-ttable__col', title: 'Splats' }, h('i', { html: SPLAT_ICON })),
-          h('span', { class: 'iw-ttable__col', title: 'Times splatted' }, h('i', { html: DEATH_ICON }))),
+          elim ? h('span', { class: 'iw-ttable__col', title: 'Damage dealt' }, h('i', { html: awardIcon('pow') }), 'DAMAGE')
+            : h('span', { class: 'iw-ttable__col', title: 'Ground painted' }, h('i', { html: GLYPHS.drop }), 'PAINT'),
+          h('span', { class: 'iw-ttable__col', title: 'Eliminations' }, h('i', { html: SPLAT_ICON })),
+          h('span', { class: 'iw-ttable__col', title: 'Times eliminated' }, h('i', { html: DEATH_ICON }))),
         rows.map((p, ri) => {
           const turfNum = h('b', null, '0');
           const turfBar = h('i', { class: 'iw-prow__turfbar' });
@@ -3690,9 +3739,9 @@ export class Menus {
           const row = h('div', { class: 'iw-prow iw-in iw-in--left' + (p.isSelf ? ' is-self' : '') + (isMvp ? ' is-mvp' : '') },
             h('span', { class: 'iw-prow__w', html: weaponIcon((this._weapons()[p.weapon] || {}).kind || p.weapon) }),
             h('span', { class: 'iw-prow__name' }, h('span', { class: 'iw-prow__nm' }, p.name), p.isSelf ? h('em', null, 'YOU') : null, badges),
-            h('span', { class: 'iw-prow__turf' }, turfBar, turfNum, h('small', null, 'p')),
+            h('span', { class: 'iw-prow__turf' }, turfBar, turfNum, elim ? null : h('small', null, 'p')),
             nSplat, nDeath);
-          rowFx.push({ row, turfNum, turfBar, nSplat, nDeath, badges, turf: p.turf || 0, rel: (p.turf || 0) / best, aws: p._aw.slice(0, 3), start: 0.8 + ri * 0.13, shown: -1, done: false });
+          rowFx.push({ row, turfNum, turfBar, nSplat, nDeath, badges, turf: score(p), rel: score(p) / best, aws: p._aw.slice(0, 3), start: 0.8 + ri * 0.13, shown: -1, done: false });
           return row;
         }));
     };
@@ -3705,8 +3754,8 @@ export class Menus {
         h('div', { class: 'iw-ttable__head iw-in' },
           h('span', { class: 'iw-ttable__team' }, h('i', { class: 'iw-ttable__dot' }), start ? 'SQUAD · 5–8' : 'SQUAD · TOP 4', !start && win ? h('em', { class: 'iw-ttable__win' }, h('i', { html: GLYPHS.crown }), 'SUNK IT') : null),
           h('span', { class: 'iw-ttable__col', title: 'Damage to the boss' }, h('i', { html: awardIcon('pow') }), 'DAMAGE'),
-          colIco(awardIcon('crit'), 'Weak-point hits'), colIco(SPLAT_ICON, 'Splats (crablets)'), colIco(DEATH_ICON, 'Times splatted'),
-          h('span', { class: 'iw-ttable__col', title: 'Turf inked' }, h('i', { html: GLYPHS.drop }), 'TURF')),
+          colIco(awardIcon('crit'), 'Weak-point hits'), colIco(SPLAT_ICON, 'Crablets popped'), colIco(DEATH_ICON, 'Times down'),
+          h('span', { class: 'iw-ttable__col', title: 'Ground painted' }, h('i', { html: GLYPHS.drop }), 'PAINT')),
         rows.map((p, ri) => {
           const dmgNum = h('b', null, '0');
           const dmgBar = h('i', { class: 'iw-prow__turfbar' });
@@ -3739,13 +3788,15 @@ export class Menus {
     const bd = [];
     if (self) {
       const base = win ? PROGRESSION.xpWin : PROGRESSION.xpLose;
-      const tx = Math.round((self.turf || 0) * PROGRESSION.xpPerTurfPoint), sx = Math.round((self.splats || 0) * PROGRESSION.xpPerSplat);
+      const tx = Math.round((self.turf || 0) * (PROGRESSION.xpPerTurfPoint || 0)), sx = Math.round((self.splats || 0) * (PROGRESSION.xpPerElim ?? PROGRESSION.xpPerSplat));
       const dx = boss ? Math.round((self.damage || 0) * 0.04) : 0;   // main.js _bossResults: damage × 0.04 XP
-      if (xp.gained > 0 && Math.abs(base + tx + sx + dx - xp.gained) <= 2) {
+      const rx = elim ? Math.round((rw[selfTeam] || 0) * (PROGRESSION.xpPerRoundWin || 0)) : 0;   // main.js: every round your team took
+      if (xp.gained > 0 && Math.abs(base + tx + sx + dx + rx - xp.gained) <= 2) {
         bd.push([win ? 'WIN BONUS' : 'MATCH', base]);
         if (dx) bd.push(['DAMAGE', dx]);
-        bd.push([`TURF`, tx]);
-        if (sx) bd.push(['SPLATS', sx]);
+        if (rx) bd.push(['ROUNDS', rx]);
+        if (tx) bd.push(['PAINT', tx]);
+        if (sx) bd.push([boss ? 'CRABLETS' : 'ELIMS', sx]);
       }
     }
     let acc = 0;
@@ -3810,6 +3861,12 @@ export class Menus {
     const setCover = (k) => {
       if (bossP) { bossP.set(k); return; }
       coverBar.style.setProperty('--ga', k.toFixed(4));
+      if (elim) {
+        const va = Math.round(rw[0] * k), vb = Math.round(rw[1] * k);
+        if (va !== lastA) { lastA = va; numA.textContent = String(va); }
+        if (vb !== lastB) { lastB = vb; numB.textContent = String(vb); }
+        return;
+      }
       const va = Math.round(pa * k * 10), vb = Math.round(pb * k * 10);
       if (va !== lastA) { lastA = va; numA.textContent = (va / 10).toFixed(1) + '%'; }
       if (vb !== lastB) { lastB = vb; numB.textContent = (vb / 10).toFixed(1) + '%'; }
@@ -3967,8 +4024,9 @@ export class Menus {
     const pal = TEAM_PALETTES[0];
     const names = BOT_NAMES.slice(0, 8);
     return {
+      mode: 'elim', roundWins: [4, 2], rounds: [{ winner: 0, reason: 'wipe' }, { winner: 1, reason: 'wipe' }, { winner: 0, reason: 'time' }, { winner: -1, reason: 'time' }, { winner: 1, reason: 'wipe' }, { winner: 0, reason: 'wipe' }, { winner: 0, reason: 'wipe' }],
       win: true, percents: [51.2, 42.7], colors: [pal.a, pal.b], teamNames: pal.names, mapName: MAPS[0].name,
-      players: names.map((n, i) => ({ name: i === 0 ? this._profile().name : n, team: i < 4 ? 0 : 1, weapon: WEAPON_ORDER[i % 4], turf: 1400 - i * 90, splats: (i * 3) % 7, deaths: (i * 5) % 4, isSelf: i === 0 })),
+      players: names.map((n, i) => ({ name: i === 0 ? this._profile().name : n, team: i < 4 ? 0 : 1, weapon: WEAPON_ORDER[i % WEAPON_ORDER.length], turf: 1400 - i * 90, damage: 720 - i * 55 + ((i * 37) % 90), splats: (i * 3) % 7, elims: (i * 3) % 7, deaths: (i * 5) % 4, isSelf: i === 0 })),
       xp: { gained: 1640, levelBefore: 4, levelAfter: 5, xpBefore: 1700, xpAfter: 1140, xpToNextBefore: 2200, xpToNextAfter: 2550 },
     };
   }

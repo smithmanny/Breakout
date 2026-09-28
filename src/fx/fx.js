@@ -1,4 +1,12 @@
-// INKWAVE — ink particle FX. Pooled, allocation-free per frame, 7 draw calls total.
+// BREAKOUT (formerly INKWAVE) — paint particle FX. Pooled, allocation-free per frame, 8 draw calls total.
+//
+// Paintball recipes: ballSplat(pos, normal, color, dir, { size, count, flecks, radius }) — a ball breaking on a surface
+// (crisp star-splat pop, low drops, bouncing shell fragments) · ballHit(pos, back, color, damage) — a ball breaking on a
+// body (bright star splat burst + spray + shell bits) · streak(pos, tail, color, width, alpha) — immediate-mode motion
+// streak behind a ball in flight (call after fx.update each frame) · muzzle() = a CO2 vapour puff (no flash) ·
+// splatted() = the elimination splat burst · ghost() = the "OUT" hands-up silhouette · explosion() = paint grenade burst.
+// Squid-era recipes (wake / dive / emerge / climb / bubbles / sizzle …) are kept for old callers; wake() is a no-op
+// unless fx.swimFx is set.
 //
 // const fx = new FX(scene, { quality: 'high' });      // quality: QUALITY key | QUALITY preset | particles multiplier
 // fx.setCollider((from, to) => ({ point, normal }) | null)
@@ -28,9 +36,10 @@
 // Ambient: a GPU dust-mote field around the camera (no CPU cost) — fx.motes.visible to toggle.
 //
 // Pools: glossy droplets (sphere impostors stretched along velocity, 2 tris; matte mode for dust grains), soft puffs
-// (billboards, alpha: mist / storm cloud / feather / squid ghost / dust), glows (billboards, additive HDR → bloom above the
+// (billboards, alpha: mist / storm cloud / feather / "OUT" silhouette / dust / paintball star splat), glows (billboards, additive HDR → bloom above the
 // engine's 2.4 threshold: soft glow / star glint / bubble / halo ring), rings (normal-aligned decal quads: ink shockwave,
-// ripple, splash disc, bomb danger ring, super-jump target, dust ring, splat blot, thin shockwave), shells (displaced ink
+// ripple, splash disc, bomb danger ring, super-jump target, dust ring, splat blot, thin shockwave, star splat), streaks
+// (paintball motion smears, immediate), shells (displaced ink
 // spheres), beams (geysers + immediate light pillars), motes. Peak geometry ≈ 2 tris per sprite/droplet + 320/shell +
 // 336/beam — a heavy moment (bomb + slam + 8 players fighting) stays ≈ 10–16k triangles.
 import * as THREE from 'three';
@@ -44,13 +53,13 @@ const easeOut = (t) => 1 - (1 - t) * (1 - t) * (1 - t);
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
 // droplet flags
-const F_PAINT = 1, F_RING = 2, F_NOCOL = 4, F_QUIET = 8, F_MATTE = 16;
+const F_PAINT = 1, F_RING = 2, F_NOCOL = 4, F_QUIET = 8, F_MATTE = 16, F_BOUNCE = 32;
 // glow kinds (encoded as kind * 10 + core in the shader)
 const G_SOFT = 0, G_STAR = 10, G_BUBBLE = 20, G_HALO = 30;
 // puff kinds
-const P_MIST = 0, P_CLOUD = 1, P_FEATHER = 2, P_GHOST = 3, P_DUST = 4;
+const P_MIST = 0, P_CLOUD = 1, P_FEATHER = 2, P_GHOST = 3, P_DUST = 4, P_SPLAT = 5;
 // ring styles
-const R_WAVE = 0, R_RIPPLE = 1, R_DISC = 2, R_DANGER = 3, R_TARGET = 4, R_DUST = 5, R_BLOT = 6, R_THIN = 7;
+const R_WAVE = 0, R_RIPPLE = 1, R_DISC = 2, R_DANGER = 3, R_TARGET = 4, R_DUST = 5, R_BLOT = 6, R_THIN = 7, R_STAR = 8;
 
 // ---------------------------------------------------------------------------------------------------------------
 // shared GLSL
@@ -59,6 +68,35 @@ const GLSL_HASH = /* glsl */`
 float fxHash(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float fxNoise(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f*f*(3.0-2.0*f);
   return mix(mix(fxHash(i), fxHash(i+vec2(1.0,0.0)), u.x), mix(fxHash(i+vec2(0.0,1.0)), fxHash(i+vec2(1.0,1.0)), u.x), u.y); }
+`;
+// Paintball splat silhouette (uv −1..1): a round core, 11–15 sharp tapered radial streaks of uneven length (they shoot
+// out over the first third of t), a bead where some streaks end and a few loose droplets flung past them. Returns
+// anti-aliased coverage; needs GLSL_HASH.
+const GLSL_STAR = /* glsl */`
+float fxStar(vec2 uv, float seed, float t) {
+  float r = length(uv);
+  float ang = atan(uv.y, uv.x);
+  float N = 11.0 + floor(fxHash(vec2(seed, 3.1)) * 5.0);
+  float sa = ang / 6.2831853 * N + seed * 7.0;
+  float id = floor(sa + 0.5);
+  float f = sa - id;
+  float h = fxHash(vec2(id, seed)), h2 = fxHash(vec2(id + 17.0, seed)), hd = fxHash(vec2(id + 5.0, seed + 1.0));
+  float grow = clamp(t * 3.2, 0.0, 1.0);
+  float core = 0.33 + 0.07 * (fxNoise(vec2(ang * 1.3 + seed * 11.0, seed)) - 0.5);
+  float len = core + (0.12 + 0.46 * h * h) * (0.35 + 0.65 * grow);
+  float arc = 6.2831853 / N * max(r, 0.05);
+  float along = clamp((r - core * 0.75) / max(len - core * 0.75, 1e-3), 0.0, 1.0);
+  float wid = mix(0.3 + 0.14 * h2, 0.03, pow(along, 0.8));
+  float sdS = max((abs(f) - wid) * arc, r - len);
+  float a0 = (id - seed * 7.0) / N * 6.2831853;
+  vec2 u = vec2(cos(a0), sin(a0));
+  float bead = length(uv - u * (len + 0.015)) - (0.022 + 0.03 * h2) * step(0.5, h);
+  vec2 v = vec2(-u.y, u.x) * (hd - 0.5) * 0.12;
+  float drop = length(uv - u * (len + 0.07 + 0.16 * hd) - v) - (0.014 + 0.022 * h2) * step(0.55, hd) * grow;
+  float sd = min(min(r - core, sdS), min(bead, drop));
+  float fw = max(fwidth(sd), 1e-4);
+  return 1.0 - smoothstep(-fw, fw, sd);
+}
 `;
 const OUT_CHUNKS = /* glsl */`
   #include <tonemapping_fragment>
@@ -169,6 +207,8 @@ void main() {
 `;
 const PUFF_FRAG = /* glsl */`
 ${GLSL_HASH}
+${GLSL_STAR}
+float fxSeg(vec2 p, vec2 a, vec2 b, float r) { vec2 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h) - r; }
 varying vec2 vUv;
 varying vec4 vCol;
 varying vec4 vMisc;
@@ -180,33 +220,34 @@ void main() {
   float a = 0.0;
   vec3 col = vCol.rgb;
   float kind = vMisc.w;
-  if (kind > 3.5) {
+  if (kind > 4.5) {
+    // paintball splat burst: a crisp star-shaped splat of paint in the air, glossy core highlight
+    a = fxStar(vUv, vMisc.y * 13.0, vMisc.z);
+    float hl = smoothstep(0.16, 0.0, length(vUv - vec2(-0.1, 0.12)));
+    col = vCol.rgb * (0.9 + 0.22 * (1.0 - r)) + vec3(0.45) * hl;
+  } else if (kind > 3.5) {
     // dust: grainy, soft-edged, lit from the top
     float n2 = fxNoise(vUv * 4.0 + seed + vMisc.z * 2.0);
     float edge = 0.55 + (n - 0.5) * 0.6;
     a = smoothstep(1.0, edge * 0.4, r + (n2 - 0.5) * 0.35) * (0.72 + 0.28 * n2);
     col = vCol.rgb * (0.86 + 0.24 * clamp(vUv.y * 0.8 + 0.2, -1.0, 1.0)) * (0.92 + 0.12 * n2);
   } else if (kind > 2.5) {
-    // squid ghost: pointed mantle with fins, round head, two dark eyes, four wavy tentacles
-    vec2 q = vUv * vec2(1.0, 1.05);
-    float t = clamp((q.y - 0.05) / 0.9, 0.0, 1.0);
-    float mw = mix(0.46, 0.0, pow(t, 0.9));
-    float fin = 0.22 * exp(-pow((q.y - 0.3) / 0.12, 2.0));
-    float mantle = step(0.02, q.y) * step(q.y, 0.95) * smoothstep(mw + fin + 0.025, mw + fin - 0.025, abs(q.x));
-    float head = smoothstep(0.43, 0.39, length(q - vec2(0.0, -0.12)));
-    float tent = 0.0;
-    for (int i = 0; i < 4; i++) {
-      float fi = float(i);
-      float wx = -0.27 + 0.18 * fi + 0.05 * sin(q.y * 9.0 + vMisc.z * 14.0 + fi * 1.7);
-      tent = max(tent, smoothstep(0.07, 0.045, abs(q.x - wx)) * smoothstep(-0.95, -0.85, q.y) * step(q.y, -0.25));
+    // "OUT": the eliminated player's silhouette with both hands up, flat colour with a bright rim
+    vec2 q = vUv * 1.04;
+    float sd = length(q - vec2(0.0, 0.5)) - 0.15;
+    sd = min(sd, fxSeg(q, vec2(0.0, 0.25), vec2(0.0, -0.1), 0.15));
+    for (int i = 0; i < 2; i++) {
+      float sx = i == 0 ? -1.0 : 1.0;
+      sd = min(sd, fxSeg(q, vec2(0.12 * sx, 0.28), vec2(0.3 * sx, 0.5), 0.055));
+      sd = min(sd, fxSeg(q, vec2(0.3 * sx, 0.5), vec2(0.31 * sx, 0.8), 0.05));
+      sd = min(sd, length(q - vec2(0.31 * sx, 0.85)) - 0.068);
+      sd = min(sd, fxSeg(q, vec2(0.08 * sx, -0.16), vec2(0.11 * sx, -0.86), 0.07));
     }
-    float body = max(max(mantle, head), tent);
-    float eyes = max(smoothstep(0.105, 0.085, length(q - vec2(-0.15, -0.1))), smoothstep(0.105, 0.085, length(q - vec2(0.15, -0.1))));
-    float shine = smoothstep(0.035, 0.02, length(q - vec2(-0.17, -0.07))) + smoothstep(0.035, 0.02, length(q - vec2(0.13, -0.07)));
-    a = body;
-    col = mix(vCol.rgb, vec3(1.0), 0.3) * (0.88 + 0.22 * clamp(q.y + 0.4, 0.0, 1.0));
-    col = mix(col, vec3(0.06, 0.06, 0.1), eyes * 0.9);
-    col = mix(col, vec3(1.0), clamp(shine, 0.0, 1.0));
+    float fw = max(fwidth(sd), 1e-4);
+    float body = 1.0 - smoothstep(-fw, fw, sd);
+    float rim = 1.0 - smoothstep(-fw, fw, sd - 0.04);
+    a = rim;
+    col = mix(vec3(1.0), vCol.rgb * (0.85 + 0.25 * clamp(q.y + 0.4, 0.0, 1.0)), body);
   } else if (kind > 1.5) {
     // feather: tapered curved vane with barbs, a notch and a quill
     vec2 q = vUv;
@@ -299,6 +340,7 @@ void main() {
 `;
 const RING_FRAG = /* glsl */`
 ${GLSL_HASH}
+${GLSL_STAR}
 uniform float uTime;
 varying vec2 vUv;
 varying vec4 vCol;
@@ -374,12 +416,17 @@ void main() {
     a = smoothstep(edge, edge - 0.14, r) * pow(1.0 - vT, 1.5);
     float hl = smoothstep(0.35, 0.0, length(vUv - vec2(-0.22, 0.26)));
     col = col * (0.82 + 0.3 * (1.0 - r)) + vec3(0.3) * hl;
-  } else {
+  } else if (st < 7.5) {
     // thin shockwave (air bursts / pulses)
     float w = mix(0.14, 0.035, vT) * max(vMisc.z, 0.3);
     float d = (r - 0.93) / w;
     a = exp(-d * d) * pow(1.0 - vT, 1.1);
     col = mix(col, vec3(1.0), 0.4);
+  } else {
+    // paintball splat on a surface: crisp star burst, glossy core, fades out fast at the end (the paint atlas keeps it)
+    a = fxStar(vUv, vMisc.x * 13.0, min(1.0, vT * 1.6 + 0.12)) * (1.0 - smoothstep(0.55, 1.0, vT));
+    float hl = smoothstep(0.18, 0.0, length(vUv - vec2(-0.1, 0.12)));
+    col = col * (0.9 + 0.2 * (1.0 - r)) + vec3(0.4) * hl;
   }
   gl_FragColor = vec4(col, a * vCol.a);
   if (gl_FragColor.a < 0.004) discard;
@@ -574,6 +621,46 @@ void main() {
 // ---------------------------------------------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------------------------------------------
+// ---- paintball motion streaks (immediate mode): a faint tapered smear behind each ball in flight, camera-facing,
+// brightest at the ball and fading to nothing at the tail; dithered away right in front of the lens.
+const STREAK_VERT = /* glsl */`
+attribute vec4 aHead;   // xyz, width
+attribute vec4 aTail;   // xyz, alpha
+attribute vec3 aCol;
+varying vec2 vQ;
+varying vec3 vCol;
+varying float vA;
+void main() {
+  vec4 h = viewMatrix * vec4(aHead.xyz, 1.0), t = viewMatrix * vec4(aTail.xyz, 1.0);
+  // keep the whole smear in front of the lens (a tail behind the near plane would blow up across the screen)
+  if (h.z > -0.35) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); vQ = vec2(0.0); vCol = aCol; vA = 0.0; return; }
+  if (t.z > -0.3) t = mix(h, t, clamp((h.z + 0.3) / (h.z - t.z), 0.0, 1.0));
+  vec2 d = h.xy - t.xy;
+  float l = length(d);
+  vec2 ax = l > 1e-5 ? d / l : vec2(0.0, 1.0);
+  vec2 bx = vec2(-ax.y, ax.x);
+  float k = position.y + 0.5;                       // 0 tail … 1 head
+  vec4 c = mix(t, h, k);
+  float w = aHead.w * mix(0.25, 1.0, k);
+  c.xy += bx * position.x * 2.0 * w + ax * k * aHead.w;
+  vQ = vec2(position.x * 2.0, k);
+  vCol = aCol;
+  vA = aTail.w * smoothstep(0.9, 2.6, -h.z);
+  gl_Position = projectionMatrix * c;
+}
+`;
+const STREAK_FRAG = /* glsl */`
+varying vec2 vQ;
+varying vec3 vCol;
+varying float vA;
+void main() {
+  float a = (1.0 - vQ.x * vQ.x) * pow(vQ.y, 1.6) * vA;
+  if (a < 0.004) discard;
+  gl_FragColor = vec4(vCol, a);
+  ${OUT_CHUNKS}
+}
+`;
+
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _v4 = new THREE.Vector3();
 const _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
 const _tA = new THREE.Vector3(), _tB = new THREE.Vector3();
@@ -587,6 +674,7 @@ const GRAIN = new THREE.Color('#b9ae9c');
 const FOAM = new THREE.Color('#eef9ff');
 const WATER = new THREE.Color('#bfe9ff');
 const FEATHER = new THREE.Color('#f3f0e8');
+const VAPOR = new THREE.Color('#e9eef2');
 
 // Random unit vector in a cone of half-angle maxAngle around axis n (n must be normalised).
 function coneDir(n, maxAngle, out) {
@@ -673,6 +761,7 @@ export class FX {
     this.onSpeck = null;       // (point, normal, color, size): cosmetic ink speck where a non-painting droplet lands
     this.onRipple = null;      // (pos, amp, wavelength, speed, life): ripple through the ink surface (paint.ripple)
     this.paintEffects = true;  // explosion / splatted / flick droplets may leave cosmetic paint via onDropletLand
+    this.swimFx = false;       // BREAKOUT: no swimming — wake() is a no-op unless turned back on
     this.maxChecks = Math.round(1100 * this.q);
     this._checks = 0;
     this._dt = 1 / 60;
@@ -702,6 +791,7 @@ export class FX {
     this._initShells(32);
     this._initBeams(10);
     this._initMotes(Math.round(300 * this.q));
+    this._initStreaks(Math.round(160 * Math.min(1, this.q)) + 32);
     // scheduler: [t, op, px, py, pz, nx, ny, nz, r, g, b, a0, a1, a2]
     this._sq = new Float32Array(96 * 14); this._sqN = 0;
   }
@@ -832,6 +922,19 @@ export class FX {
         K[i3] = nx; K[i3 + 1] = ny; K[i3 + 2] = nz;
         if (hit) {
           _hitP.copy(hit.point); _hitN.copy(hit.normal);
+          if (flags & F_BOUNCE) {
+            // shell fleck: one bounce off the surface (restitution ≈ 0.35, a little scatter), then lands quietly
+            const vn = Vv[i3] * _hitN.x + Vv[i3 + 1] * _hitN.y + Vv[i3 + 2] * _hitN.z;
+            if (vn < 0) {
+              Vv[i3] = (Vv[i3] - 1.35 * vn * _hitN.x) * 0.55 + (rand() - 0.5) * 0.6;
+              Vv[i3 + 1] = (Vv[i3 + 1] - 1.35 * vn * _hitN.y) * 0.55;
+              Vv[i3 + 2] = (Vv[i3 + 2] - 1.35 * vn * _hitN.z) * 0.55 + (rand() - 0.5) * 0.6;
+            }
+            P[i3] = K[i3] = _hitP.x + _hitN.x * 0.01; P[i3 + 1] = K[i3 + 1] = _hitP.y + _hitN.y * 0.01; P[i3 + 2] = K[i3 + 2] = _hitP.z + _hitN.z * 0.01;
+            A[i8 + 7] = (flags & ~F_BOUNCE) | F_QUIET;
+            A[i8 + 2] = Math.min(A[i8 + 2], A[i8 + 1] + 0.5);
+            continue;
+          }
           this._landDrop(i, _hitP.x, _hitP.y, _hitP.z, _hitN.x, _hitN.y, _hitN.z, false);
           this._killDrop(i); i--; continue;
         }
@@ -959,7 +1062,7 @@ export class FX {
     R.N[i3] = normal.x / nl; R.N[i3 + 1] = normal.y / nl; R.N[i3 + 2] = normal.z / nl;
     R.C[i3] = col.r; R.C[i3 + 1] = col.g; R.C[i3 + 2] = col.b;
     R.X[x] = radius; R.X[x + 1] = 0; R.X[x + 2] = life; R.X[x + 3] = alpha; R.X[x + 4] = style; R.X[x + 5] = thick; R.X[x + 6] = rand();
-    R.X[x + 7] = style === R_DISC || style === R_BLOT ? 0.55 : style === R_DUST ? 0.35 : 0.22;
+    R.X[x + 7] = style === R_DISC || style === R_BLOT ? 0.55 : style === R_STAR ? 0.45 : style === R_DUST ? 0.35 : 0.22;
     return i;
   }
   // Immediate-mode decal for this frame only (drawn next frame, then discarded).
@@ -1159,6 +1262,32 @@ export class FX {
     this.root.add(mesh);
   }
 
+  // ------------------------------------------------------------------ streaks (immediate mode, one draw)
+  _initStreaks(cap) {
+    const geo = makeQuadGeo(cap, [['aHead', 4], ['aTail', 4], ['aCol', 3]]);
+    const mat = new THREE.ShaderMaterial({ vertexShader: STREAK_VERT, fragmentShader: STREAK_FRAG, transparent: true, depthWrite: false, fog: false });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.frustumCulled = false; mesh.renderOrder = 6; mesh.name = 'FX_Streaks';
+    this.root.add(mesh);
+    this.streaks = { cap, n: 0, geo, mesh };
+  }
+  // Paintball in flight (call every frame per visible ball): a faint short smear from `tail` to the ball at `pos`.
+  streak(pos, tail, color, width = 0.05, alpha = 0.35) {
+    const S = this.streaks;
+    if (S.n >= S.cap) return;
+    const col = this._color(color, this._colB);
+    const i = S.n++, i4 = i * 4, i3 = i * 3;
+    const aH = S.geo.attributes.aHead.array, aT = S.geo.attributes.aTail.array, aC = S.geo.attributes.aCol.array;
+    aH[i4] = pos.x; aH[i4 + 1] = pos.y; aH[i4 + 2] = pos.z; aH[i4 + 3] = width;
+    aT[i4] = tail.x; aT[i4 + 1] = tail.y; aT[i4 + 2] = tail.z; aT[i4 + 3] = alpha;
+    aC[i3] = col.r * 0.75 + 0.25; aC[i3 + 1] = col.g * 0.75 + 0.25; aC[i3 + 2] = col.b * 0.75 + 0.25;
+    S.geo.instanceCount = S.n;
+    markUpdated(S.geo, S.n);
+  }
+  // fx.update() runs before the hooks each frame: the previous frame's streaks are dropped here, this frame's are added
+  // after it (drawn the same frame, no lag behind the balls)
+  _flushStreaks() { const S = this.streaks; S.n = 0; S.geo.instanceCount = 0; }
+
   // ------------------------------------------------------------------ scheduler (delayed stages; allocation-free)
   _after(delay, op, pos, normal, col, a0 = 0, a1 = 0, a2 = 0) {
     if (this._sqN >= 96) return;
@@ -1288,31 +1417,34 @@ export class FX {
     this._ringRaw(p, n, col, opts.radius ?? 1.5, opts.life ?? 0.35, opts.style ?? R_WAVE, opts.alpha ?? 0.95, opts.thickness ?? 1);
   }
 
-  // A bomb / blast / slam: a brief hot flash, then the ink itself — a glossy sheet that balloons out and tears into
-  // ribbons, ligaments flung off it, heavy gloops that paint satellite splats, fine spray, a fast ink wave over the
-  // ground and a ripple through the wet ink. Volumetric parts (flash, sheet, mist) are capped so a big blast (e.g.
-  // Tidal Slam) never swallows the camera; the ground wave + droplets still show the full radius.
+  // A paint grenade / launcher round / slam going off: a big radial paint burst — a crisp star splat of paint in the
+  // air, a dense fan of fast streaking drops (lots of streaks), heavy gloops that paint satellite splats, fine spray,
+  // bits of the broken casing bouncing away, a star splat + thin air ring on the ground and a thin paint mist. Only a
+  // faint flash (paint doesn't burn). Volumetric parts are capped so a big blast never swallows the camera.
   explosion(pos, color, radius = 3) {
     const col = this._color(color, this._col);
     const q = this.q, R = radius;
     const Rv = Math.min(R, 2.4);
     const paint = this.paintEffects ? F_PAINT : 0;
     const spd = Math.sqrt(R / 3);
-    this._colB.copy(col).multiplyScalar(4.5);
-    this._sprite(this.glows, pos.x, pos.y, pos.z, 0, 0, 0, this._colB, Rv * 0.4, Rv * 0.85, 0.12, 1, 2.2, 0, G_SOFT + 6.0, 0);
-    this._colB.copy(col).multiplyScalar(1.15);
-    this._sprite(this.glows, pos.x, pos.y, pos.z, 0, 0, 0, this._colB, Rv * 0.9, Rv * 1.6, 0.17, 0.5, 2.2, 0, G_SOFT, 0);
-    this._shell(pos, col, Rv * 0.2, Rv * 0.78, 0.09, 0.34, 1, 0, 0, 0.2);
-    this._burstDrops(pos, col, Rv, spd, paint, 26, 6, 18);
+    this._colB.copy(col).lerp(_white, 0.5).multiplyScalar(1.6);
+    this._sprite(this.glows, pos.x, pos.y, pos.z, 0, 0, 0, this._colB, Rv * 0.3, Rv * 0.7, 0.08, 0.8, 2.2, 0, G_SOFT + 2.0, 0);
+    this._sprite(this.puffs, pos.x, pos.y, pos.z, 0, 0, 0, col, Rv * 0.45, Rv * 1.5, 0.3, 1, 0, 0, P_SPLAT, 0.0, 0.6, 0, 0.12);
+    this._sprite(this.puffs, pos.x, pos.y + 0.05, pos.z, 0, 0.4, 0, col, Rv * 0.3, Rv * 1.05, 0.24, 1, 0, 0, P_SPLAT, 0.03, 0.6, 0, 0.1);
+    this._burstDrops(pos, col, Rv, spd, paint, 46, 7, 26);
+    this._shellFlecks(pos, UP, col, 8, 5 * spd, 1.4);
     if (this._probeDown(pos, R + 1.5, _v2, _v3)) {
-      this._ripple(_v2, 0.011 + 0.0028 * R, 0.24 + 0.03 * R, 2.1 + 0.4 * R, 1.05, _v3, col);
+      this._ringRaw(_v2, _v3, col, R * 0.95, 0.42, R_STAR, 1, 1);
+      this._colB.copy(col).lerp(_white, 0.6);
+      this._ringRaw(_v2, _v3, this._colB, R * 1.1, 0.26, R_THIN, 0.35, 1);
+      this._ripple(_v2, 0.009 + 0.002 * R, 0.22 + 0.03 * R, 2.1 + 0.4 * R, 0.9, _v3, null);
     }
-    this._colB.copy(col).lerp(_white, 0.42);
-    const m = Math.round(4 * q);
+    this._colB.copy(col).lerp(_white, 0.5);
+    const m = Math.round(3 * q);
     for (let i = 0; i < m; i++) {
       randSphere(_v1); _v1.y = Math.abs(_v1.y) * 0.5;
       const d = R * (0.2 + rand() * 0.4);
-      this._sprite(this.puffs, pos.x + _v1.x * d, pos.y + _v1.y * d * 0.6, pos.z + _v1.z * d, _v1.x * 1.8, 0.5 + rand() * 0.6, _v1.z * 1.8, this._colB, Rv * (0.25 + rand() * 0.15), Rv * (0.55 + rand() * 0.25), 0.55 + rand() * 0.3, 0.12, 2.8, 0.2);
+      this._sprite(this.puffs, pos.x + _v1.x * d, pos.y + _v1.y * d * 0.6, pos.z + _v1.z * d, _v1.x * 1.8, 0.4 + rand() * 0.5, _v1.z * 1.8, this._colB, Rv * (0.2 + rand() * 0.12), Rv * (0.5 + rand() * 0.2), 0.5 + rand() * 0.25, 0.09, 2.8, 0.2);
     }
   }
   // droplets of a burst: nl ligaments (fast, streaked, some paint), ng heavy gloops (slow arcs, all paint), nf fine spray
@@ -1323,7 +1455,7 @@ export class FX {
       randSphere(_v1); _v1.y = Math.abs(_v1.y) * 0.85 + 0.12; _v1.normalize();
       const sp = (6 + rand() * 7) * spd;
       const o = Rv * 0.3;
-      this._spawnDrop(pos.x + _v1.x * o, pos.y + _v1.y * o, pos.z + _v1.z * o, _v1.x * sp, _v1.y * sp, _v1.z * sp, col, 0.03 + rand() * 0.03, 1.6, 1, 1.5, rand() < 0.3 ? paint : 0);
+      this._spawnDrop(pos.x + _v1.x * o, pos.y + _v1.y * o, pos.z + _v1.z * o, _v1.x * sp * 1.15, _v1.y * sp * 1.15, _v1.z * sp * 1.15, col, 0.022 + rand() * 0.026, 1.6, 1, 2.2, rand() < 0.3 ? paint : 0);
     }
     n = Math.round(ng * q);
     for (let i = 0; i < n; i++) {
@@ -1338,28 +1470,105 @@ export class FX {
     }
   }
 
-  // A character bursting into ink: flash, a sheet of ink tearing open around the body, droplets, ground wave.
+  // Elimination: the big paintball splat — a bright star splat bursting off the body (two layered), a ring of fast
+  // streaking drops, heavy gloops that paint the floor, shell fragments bouncing away, a star splat + air ring on the
+  // ground under the player and a little paint mist.
   splatted(pos, color) {
     const col = this._color(color, this._col);
     const q = this.q;
     const paint = this.paintEffects ? F_PAINT : 0;
-    this._colB.copy(col).multiplyScalar(3.6);
-    this._sprite(this.glows, pos.x, pos.y, pos.z, 0, 0, 0, this._colB, 0.8, 1.6, 0.14, 1, 2.2, 0, G_SOFT + 5.0, 0);
-    this._shell(pos, col, 0.28, 0.9, 0.09, 0.34, 1, 0, 0, 0.2);
-    this._burstDrops(pos, col, 1.2, 1, paint, 30, 7, 22);
-    this._colB.copy(col).lerp(_white, 0.45);
-    for (let i = 0; i < Math.round(3 * q); i++) {
+    this._colB.copy(col).lerp(_white, 0.45).multiplyScalar(2.2);
+    this._sprite(this.glows, pos.x, pos.y, pos.z, 0, 0, 0, this._colB, 0.5, 1.1, 0.09, 1, 2.2, 0, G_SOFT + 3.0, 0);
+    this._sprite(this.puffs, pos.x, pos.y, pos.z, 0, 0, 0, col, 0.5, 1.9, 0.34, 1, 0, 0, P_SPLAT, 0.0, 0.8, 0, 0.14);
+    this._sprite(this.puffs, pos.x, pos.y + 0.25, pos.z, 0, 0.5, 0, col, 0.35, 1.25, 0.28, 1, 0, 0, P_SPLAT, 0.04, 0.8, 0, 0.1);
+    this._burstDrops(pos, col, 1.2, 1.1, paint, 38, 7, 24);
+    this._shellFlecks(pos, UP, col, 10, 4.5, 1.6);
+    this._colB.copy(col).lerp(_white, 0.5);
+    for (let i = 0; i < Math.round(2 * q); i++) {
       randSphere(_v1);
-      this._sprite(this.puffs, pos.x + _v1.x * 0.35, pos.y + _v1.y * 0.3, pos.z + _v1.z * 0.35, _v1.x * 1.4, 0.8 + rand() * 0.5, _v1.z * 1.4, this._colB, 0.4, 1.0 + rand() * 0.3, 0.6 + rand() * 0.3, 0.14, 2, 0.5);
+      this._sprite(this.puffs, pos.x + _v1.x * 0.35, pos.y + _v1.y * 0.3, pos.z + _v1.z * 0.35, _v1.x * 1.4, 0.6 + rand() * 0.4, _v1.z * 1.4, this._colB, 0.35, 0.9 + rand() * 0.3, 0.5 + rand() * 0.25, 0.1, 2, 0.5);
     }
-    if (this._probeDown(pos, 3, _v2, _v3)) this._ripple(_v2, 0.014, 0.26, 2.4, 1.1, _v3, col);
+    if (this._probeDown(pos, 3, _v2, _v3)) {
+      this._ringRaw(_v2, _v3, col, 1.5, 0.4, R_STAR, 1, 1);
+      this._colB.copy(col).lerp(_white, 0.6);
+      this._ringRaw(_v2, _v3, this._colB, 1.9, 0.24, R_THIN, 0.5, 1);
+      this._ripple(_v2, 0.012, 0.24, 2.4, 0.9, _v3, null);
+    }
+  }
+
+  // Broken paintball shell: tiny bright fragments (the gelatin shell, lighter than the fill) flung off in a cone around
+  // `dir`, tumbling glints; each bounces once off whatever it hits, then settles.
+  _shellFlecks(pos, dir, col, n, speed, spread = 1.1) {
+    const count = Math.max(1, Math.round(n * Math.min(1, this.q + 0.2)));
+    _sc.copy(col).lerp(_white, 0.42);
+    for (let i = 0; i < count; i++) {
+      coneDir(dir, spread, _v1);
+      _v1.y += 0.25;
+      const sp = speed * (0.55 + rand() * 0.7);
+      this._spawnDrop(pos.x, pos.y, pos.z, _v1.x * sp, _v1.y * sp, _v1.z * sp, _sc, 0.009 + rand() * 0.009, 0.9 + rand() * 0.4, 1.15, 0.6, F_BOUNCE | F_QUIET);
+    }
+    if (this._near(pos, 18)) {
+      this._colB.copy(_sc).multiplyScalar(2.2);
+      this._sprite(this.glows, pos.x, pos.y, pos.z, 0, 0, 0, this._colB, 0.12, 0.05, 0.08, 1, 0, 0, G_STAR + 1.5, 0, 0.5);
+    }
+  }
+
+  // A paintball breaking on a surface (dir = travel direction): a quick crisp star-splat pop on the surface (the paint
+  // atlas lays the lasting splat under it), a few small drops thrown low along the surface (they leave specks), shell
+  // fragments bouncing off along the ricochet and a wisp of paint mist.
+  ballSplat(pos, normal, color, dir = null, opts = EMPTY) {
+    const col = this._color(color, this._col);
+    const n = normal || UP;
+    const size = opts.size ?? 1;
+    this._ringRaw(_v2.copy(pos).addScaledVector(n, 0.01), n, col, (opts.radius ?? 0.34) * size, 0.22, R_STAR, 1, 1);
+    basis(n, _tA, _v4);
+    const cnt = Math.max(2, Math.round((opts.count ?? 6) * this.q));
+    for (let i = 0; i < cnt; i++) {
+      const a = rand() * TAU, c = Math.cos(a), sn = Math.sin(a);
+      const up = 0.25 + rand() * 0.45, sp = (2.6 + rand() * 2.6) * Math.sqrt(size);
+      let dx = _tA.x * c + _v4.x * sn + n.x * up, dy = _tA.y * c + _v4.y * sn + n.y * up, dz = _tA.z * c + _v4.z * sn + n.z * up;
+      if (dir) { dx += dir.x * 0.5; dy += dir.y * 0.5; dz += dir.z * 0.5; }
+      this._spawnDrop(pos.x + n.x * 0.03, pos.y + n.y * 0.03, pos.z + n.z * 0.03, dx * sp, dy * sp, dz * sp, col, (0.013 + rand() * 0.014) * size, 0.9, 1, 1.5, 0);
+    }
+    // ricochet cone for the shell bits: the travel direction reflected off the surface
+    if (dir) { const d = dir.x * n.x + dir.y * n.y + dir.z * n.z; _v3.set(dir.x - 2 * d * n.x, dir.y - 2 * d * n.y, dir.z - 2 * d * n.z).lerp(n, 0.4).normalize(); }
+    else _v3.copy(n);
+    this._shellFlecks(_v2.copy(pos).addScaledVector(n, 0.04), _v3, col, opts.flecks ?? 3, 3.2, 0.8);
+    if (this._near(pos, 16)) {
+      this._colB.copy(col).lerp(_white, 0.45);
+      this._sprite(this.puffs, pos.x + n.x * 0.08, pos.y + n.y * 0.08, pos.z + n.z * 0.08, n.x * 0.6, n.y * 0.6 + 0.1, n.z * 0.6, this._colB, 0.06 * size, 0.28 * size, 0.28, 0.2, 5);
+    }
+    this._ripple(pos, 0.003, 0.09, 0.9, 0.4, n, null);
+  }
+
+  // A paintball breaking on a player (back = unit vector from the body toward the shooter): a bright star splat
+  // bursting off the body at the hit point, paint spraying on past the body with the ball's momentum, some splashing
+  // back, shell fragments and a short glint so the hit registers at range. amount ≈ damage.
+  ballHit(pos, back, color, amount = 30) {
+    const col = this._color(color, this._col);
+    const k = clamp(amount / 45, 0.5, 1.6);
+    _v3.copy(back); if (_v3.lengthSq() < 1e-6) _v3.set(0, 0, 1); _v3.normalize();
+    _v4.copy(_v3).negate();
+    _v2.copy(pos).addScaledVector(_v3, 0.06);
+    this._sprite(this.puffs, _v2.x, _v2.y, _v2.z, _v3.x * 0.4, 0.1, _v3.z * 0.4, col, 0.16 * k, 0.55 * k, 0.2, 1, 0, 0, P_SPLAT, 0.0, 0.8, 0, 0.08);
+    this._colB.copy(col).lerp(_white, 0.5).multiplyScalar(2.4);
+    this._sprite(this.glows, _v2.x, _v2.y, _v2.z, 0, 0, 0, this._colB, 0.2, 0.42 * k, 0.06, 1, 0, 0, G_SOFT + 3, 0);
+    const n = Math.max(3, Math.round((5 + 5 * k) * this.q));
+    for (let i = 0; i < n; i++) {
+      const bk = i % 3 === 0;
+      coneDir(bk ? _v3 : _v4, bk ? 1.1 : 0.8, _v1);
+      _v1.y += 0.2;
+      const sp = bk ? 1.6 + rand() * 1.8 : 2.8 + rand() * 3;
+      this._spawnDrop(_v2.x, _v2.y, _v2.z, _v1.x * sp, _v1.y * sp, _v1.z * sp, col, 0.014 + rand() * 0.02 * k, 1.0, 1, 1.5, 0);
+    }
+    this._shellFlecks(_v2, _v3, col, 4, 3.4, 1.0);
   }
 
   // Swimming wake: called ~every 0.05 s by the actor while submerged (dir = unit horizontal heading). The ripples and
   // the mound live in the ink surface itself (swimWake.js → level shader); this adds what leaves the surface — a thin
   // rooster tail of glossy drops kicked up off the tail (heavier the faster you swim) and bubbles popping in the trail.
   wake(pos, dir, color, speed = 8, normal = UP) {
-    if (!this._near(pos, 45)) return;
+    if (!this.swimFx || !this._near(pos, 45)) return;   // BREAKOUT: nobody swims (swimFx off → a no-op for old callers)
     const col = this._color(color, this._col);
     const k = Math.min(1, speed / 11.8);
     const rx = dir.z, rz = -dir.x;   // right vector (dir × up)
@@ -1388,50 +1597,22 @@ export class FX {
     }
   }
 
+  // Paintball markers have no muzzle flash: a shot is a puff of CO2 / compressed air — a few cool white vapour puffs
+  // blown out of the barrel that stop dead and hang for a moment, and a faint ring of displaced air popping off the
+  // tip. Bigger for the launcher, a sharp crack for the sniper. (color is unused: the vapour is colourless.)
   muzzle(pos, dir, color, kind = 'shooter') {
-    const col = this._color(color, this._col);
     _v3.copy(dir).normalize();
-    if (kind === 'blaster') {
-      this._colB.copy(col).multiplyScalar(4.5);
-      this._sprite(this.glows, pos.x + _v3.x * 0.1, pos.y + _v3.y * 0.1, pos.z + _v3.z * 0.1, _v3.x * 2, _v3.y * 2, _v3.z * 2, this._colB, 0.35, 0.7, 0.09, 1, 2.2, 0, G_SOFT + 4.0, 0);
-      this._colB.copy(col).lerp(_white, 0.3);
-      this._ringRaw(_v2.copy(pos).addScaledVector(_v3, 0.25), _v3, this._colB, 0.55, 0.16, R_THIN, 0.9, 1.2, _v3.x * 3, _v3.y * 3, _v3.z * 3);
-      const n = Math.max(3, Math.round(9 * this.q));
-      for (let i = 0; i < n; i++) {
-        coneDir(_v3, 0.4, _v1);
-        const sp = 6 + rand() * 6;
-        this._spawnDrop(pos.x, pos.y, pos.z, _v1.x * sp, _v1.y * sp, _v1.z * sp, col, 0.03 + rand() * 0.035, 0.4 + rand() * 0.2, 0.8, 1.3, 0);
-      }
-      this._colB.copy(col).lerp(_white, 0.45);
-      for (let i = 0; i < 2; i++) this._sprite(this.puffs, pos.x + _v3.x * 0.3, pos.y + _v3.y * 0.3, pos.z + _v3.z * 0.3, _v3.x * (2 + i * 1.5), _v3.y * 2 + 0.4, _v3.z * (2 + i * 1.5), this._colB, 0.2, 0.7, 0.4, 0.32, 5);
-      return;
-    }
-    if (kind === 'charger') {
-      this._colB.copy(col).lerp(_white, 0.4).multiplyScalar(3.5);
-      this._sprite(this.glows, pos.x, pos.y, pos.z, 0, 0, 0, this._colB, 0.7, 0.4, 0.14, 1, 0, 0, G_STAR + 3, 0, 0);
-      this._colB.copy(col).lerp(_white, 0.3);
-      this._ringRaw(_v2.copy(pos).addScaledVector(_v3, 0.15), _v3, this._colB, 0.38, 0.14, R_THIN, 0.9, 1, _v3.x * 2, _v3.y * 2, _v3.z * 2);
-      const n = Math.max(2, Math.round(5 * this.q));
-      for (let i = 0; i < n; i++) {
-        coneDir(_v3, 0.14, _v1);
-        const sp = 10 + rand() * 8;
-        this._spawnDrop(pos.x, pos.y, pos.z, _v1.x * sp, _v1.y * sp, _v1.z * sp, col, 0.018 + rand() * 0.02, 0.25, 0.4, 1.8, F_QUIET);
-      }
-      return;
-    }
-    // shooter (default)
-    this._colB.copy(col).multiplyScalar(4);
-    this._sprite(this.glows, pos.x + _v3.x * 0.05, pos.y + _v3.y * 0.05, pos.z + _v3.z * 0.05, _v3.x * 2, _v3.y * 2, _v3.z * 2, this._colB, 0.2, 0.38, 0.07, 1, 2.2, 0, G_SOFT + 4.0, 0);
-    this._colB.copy(col).multiplyScalar(1.2);
-    this._sprite(this.glows, pos.x, pos.y, pos.z, 0, 0, 0, this._colB, 0.4, 0.6, 0.1, 0.8, 2.2, 0, G_SOFT, 0);
-    const n = Math.max(2, Math.round(5 * this.q));
+    const big = kind === 'blaster', crack = kind === 'charger';
+    const n = big ? 4 : crack ? 3 : 2;
     for (let i = 0; i < n; i++) {
-      coneDir(_v3, 0.28, _v1);
-      const sp = 6 + rand() * 7;
-      this._spawnDrop(pos.x, pos.y, pos.z, _v1.x * sp, _v1.y * sp, _v1.z * sp, col, 0.022 + rand() * 0.028, 0.28 + rand() * 0.12, 0.6, 1.4, 0);
+      const f = 0.06 + i * 0.07, sp = (big ? 3.2 : 2.6) + rand() * 1.6;
+      this._sprite(this.puffs, pos.x + _v3.x * f, pos.y + _v3.y * f, pos.z + _v3.z * f,
+        _v3.x * sp + (rand() - 0.5) * 0.5, _v3.y * sp + 0.15 + rand() * 0.2, _v3.z * sp + (rand() - 0.5) * 0.5,
+        VAPOR, (big ? 0.07 : 0.045), (big ? 0.42 : 0.26) + rand() * 0.08, 0.34 + rand() * 0.16, big ? 0.34 : 0.26, 9, 0.25, P_MIST, 0.02, 1.2);
     }
-    this._colB.copy(col).lerp(_white, 0.4);
-    this._sprite(this.puffs, pos.x + _v3.x * 0.15, pos.y + _v3.y * 0.15, pos.z + _v3.z * 0.15, _v3.x * 2.5, _v3.y * 2.5 + 0.3, _v3.z * 2.5, this._colB, 0.12, 0.38, 0.28, 0.3, 6);
+    // a wisp venting sideways from the valve (every few shots)
+    if (rand() < 0.35) this._sprite(this.puffs, pos.x - _v3.x * 0.18, pos.y + 0.02, pos.z - _v3.z * 0.18, (rand() - 0.5) * 0.6, 0.35, (rand() - 0.5) * 0.6, VAPOR, 0.03, 0.14, 0.3, 0.16, 6, 0.3, P_MIST, 0.02, 1);
+    this._ringRaw(_v2.copy(pos).addScaledVector(_v3, 0.08), _v3, VAPOR, big ? 0.28 : crack ? 0.24 : 0.14, big ? 0.14 : 0.1, R_THIN, big ? 0.45 : 0.3, 0.8, _v3.x * 2.5, _v3.y * 2.5, _v3.z * 2.5);
   }
 
   spawnFlash(pos, color) {
@@ -1643,30 +1824,12 @@ export class FX {
     const col = this._color(color, this._col);
     this._spawnDrop(pos.x, pos.y, pos.z, (rand() - 0.5) * 0.5, -0.2 - rand() * 0.4, (rand() - 0.5) * 0.5, col, size * (0.7 + rand() * 0.6), 1.6, 1, 1.3, 0);
   }
-  // ink hitting a body: a small sheet of ink bursts off the body and tears, most of the spray carries on through with
-  // the shot's momentum and some splashes back toward the shooter; a quick flash so the hit registers at range.
-  // dir = shot direction.
+  // a hit on a body without a known impact point (sniper, grenade, old callers): the paintball body splat, at the chest
+  // facing the shooter. dir = shot direction.
   hitSplash(pos, dir, color, amount = 30, killed = false) {
-    const col = this._color(color, this._col);
-    const k = clamp(amount / 60, 0.3, 1.5);
-    _v3.copy(dir); _v3.y *= 0.5; if (_v3.lengthSq() < 1e-6) _v3.set(0, 0, 1); _v3.normalize();
-    _v4.copy(_v3).negate();
-    _v2.copy(pos).addScaledVector(_v4, 0.28);
-    this._shell(_v2, col, 0.08, 0.26 + 0.12 * k, 0.06, 0.2, 0.95, 0, 0, 0.18);
-    const n = Math.max(3, Math.round((6 + 8 * k) * this.q));
-    for (let i = 0; i < n; i++) {
-      const back = i % 3 === 0;
-      coneDir(back ? _v4 : _v3, back ? 1.0 : 0.65, _v1);
-      _v1.y += 0.3;
-      const sp = back ? 1.8 + rand() * 1.8 : 3 + rand() * 3.2;
-      this._spawnDrop(_v2.x, _v2.y, _v2.z, _v1.x * sp, _v1.y * sp, _v1.z * sp, col, 0.02 + rand() * 0.03 * k, 1.1, 1, 1.4, 0);
-    }
-    this._colB.copy(col).multiplyScalar(2.6);
-    this._sprite(this.glows, _v2.x, _v2.y, _v2.z, 0, 0, 0, this._colB, 0.25, 0.45 + 0.15 * k, 0.07, 1, 0, 0, G_SOFT + 2, 0);
-    if (!killed) {
-      this._colB.copy(col).lerp(_white, 0.35);
-      this._sprite(this.puffs, _v2.x, _v2.y, _v2.z, _v3.x * 1.5, 0.3, _v3.z * 1.5, this._colB, 0.18, 0.45 + 0.15 * k, 0.28, 0.22, 4);
-    }
+    void killed;
+    _v5.copy(dir).negate(); _v5.y *= 0.4;
+    this.ballHit(pos, _v5, color, amount);
   }
   // one mist puff (shot trails, spray)
   mist(pos, vel, color, size = 0.2, alpha = 0.25) {
@@ -1674,13 +1837,9 @@ export class FX {
     this._colB.copy(col).lerp(_white, 0.4);
     this._sprite(this.puffs, pos.x, pos.y, pos.z, vel ? vel.x : 0, vel ? vel.y : 0, vel ? vel.z : 0, this._colB, size * 0.45, size * 1.4, 0.3 + rand() * 0.12, alpha, 4.5, 0.2);
   }
-  // shot in flight: faint mist + an occasional shed micro-droplet
+  // shot in flight (old callers): paintballs leave no trail — just the motion streak (streak(), drawn by fxHooks)
   shotTrail(pos, vel, color, big = false) {
-    const col = this._color(color, this._col);
-    this._colB.copy(col).lerp(_white, 0.42);
-    const s = big ? 0.3 : 0.14;
-    this._sprite(this.puffs, pos.x, pos.y, pos.z, vel.x * 0.06, vel.y * 0.06 + 0.1, vel.z * 0.06, this._colB, s * 0.5, s * 1.5, big ? 0.4 : 0.26, big ? 0.3 : 0.2, 5, 0.1);
-    if (rand() < (big ? 0.8 : 0.35)) this._spawnDrop(pos.x, pos.y, pos.z, vel.x * 0.25 + (rand() - 0.5), vel.y * 0.25, vel.z * 0.25 + (rand() - 0.5), col, big ? 0.03 + rand() * 0.02 : 0.016 + rand() * 0.012, 0.8, 1, 1.4, F_QUIET);
+    void pos; void vel; void color; void big;
   }
   // empty tank: a dry wisp from the muzzle
   dryFire(pos, dir) {
@@ -1850,65 +2009,35 @@ export class FX {
     this._sprite(this.glows, pos.x, pos.y, pos.z, 0, 0, 0, this._colB, 0.34, 0.12, 0.16, 1, 0, 0, G_SOFT + 3, 0);
     this._colB.copy(col).lerp(_white, 0.35);
     this._ringRaw(_v4.copy(pos).addScaledVector(_v3, -0.08), _v3, this._colB, 0.46, 0.2, R_THIN, 0.85, 0.8);
-    basis(_v3, _v1, _v2);
-    const n = Math.max(6, Math.round(16 * this.q));
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * TAU + rand() * 0.3, c = Math.cos(a), sn = Math.sin(a);
-      const rx = _v1.x * c + _v2.x * sn, ry = _v1.y * c + _v2.y * sn, rz = _v1.z * c + _v2.z * sn;
-      const tx = -_v1.x * sn + _v2.x * c, ty = -_v1.y * sn + _v2.y * c, tz = -_v1.z * sn + _v2.z * c;
-      const sp = 3.2 + rand() * 1.6;
-      this._spawnDrop(pos.x - _v3.x * 0.1 + rx * 0.07, pos.y - _v3.y * 0.1 + ry * 0.07, pos.z - _v3.z * 0.1 + rz * 0.07,
-        (rx * 0.8 + tx * 0.6) * sp, (ry * 0.8 + ty * 0.6) * sp + 0.8, (rz * 0.8 + tz * 0.6) * sp, col, 0.016 + rand() * 0.014, 0.8, 1, 1.5, 0);
-    }
+    // (BREAKOUT: no ink slung off the barrels — a paintball ramp just whirs up: glow + air ring)
   }
 
   // ---- dualies dodge roll
-  // Push-off (once, at the start): ink slapped back against the roll and out to the sides, a low crown sheet at the
-  // feet, a ripple through the ink. The runner paints the trail stripe under the roll; this is only what flies.
+  // Pistols dive roll (BREAKOUT): no ink — a scuff of dust and grit kicked up as you throw yourself down, a skid of
+  // dust along the roll and a small puff where you plant. (color only tints the dust a touch.)
   dodgeSplash(pos, dir, color) {
     const col = this._color(color, this._col);
-    _v2.set(pos.x, pos.y + 0.03, pos.z);
+    _sc.copy(DUST).lerp(col, 0.06);
+    _v2.set(pos.x, pos.y + 0.02, pos.z);
+    this._dustRing(_v2, _sc, 6, 1.8);
     _v3.set(-dir.x * 0.8, 0.9, -dir.z * 0.8).normalize();
-    const n = Math.max(4, Math.round(14 * this.q));
-    for (let i = 0; i < n; i++) {
-      coneDir(_v3, 1.05, _v1);
-      const sp = 2.4 + rand() * 2.8;
-      this._spawnDrop(_v2.x, _v2.y + 0.05, _v2.z, _v1.x * sp, _v1.y * sp, _v1.z * sp, col, 0.02 + rand() * 0.026, 1.0, 1, 1.4, rand() < 0.25 ? F_PAINT : 0);
-    }
-    this._shell(_v2, col, 0.12, 0.5, 0.06, 0.2, 0.95, 0, 0, 0.2, UP, 1);
-    this._ripple(_v2, 0.008, 0.15, 1.6, 0.8, UP, col);
+    this._grains(_v2, _v3, 6, 2.6);
   }
-  // Mid-roll (every frame, k = roll progress 0..1): a low skid spray fanned off the leading edge along the roll and
-  // ink flung off the tumbling body — both fading as the roll slows.
+  // Mid-roll (every frame, k = roll progress 0..1): dust dragged along the ground behind the tumbling body.
   dodgeSkid(pos, dir, color, k = 0) {
-    const col = this._color(color, this._col);
     const f = 1 - clamp(k, 0, 1);
-    const rx = dir.z, rz = -dir.x;
-    let n = Math.floor((10 + 46 * f) * this._dt * Math.max(0.5, this.q) + rand());
+    let n = Math.floor(14 * f * this._dt * Math.max(0.5, this.q) + rand());
     while (n-- > 0) {
-      const side = (rand() - 0.5) * 2, sp = (3 + rand() * 3) * (0.5 + 0.5 * f);
-      this._spawnDrop(pos.x + dir.x * 0.3 + rx * side * 0.25, pos.y + 0.05, pos.z + dir.z * 0.3 + rz * side * 0.25,
-        dir.x * sp + rx * side * 1.6, 0.5 + rand() * 1.1, dir.z * sp + rz * side * 1.6, col, 0.011 + rand() * 0.014, 0.55, 1, 1.7, F_QUIET);
+      const side = (rand() - 0.5) * 0.5;
+      this._sprite(this.puffs, pos.x - dir.x * 0.2 + dir.z * side, pos.y + 0.08, pos.z - dir.z * 0.2 - dir.x * side, dir.x * 0.8, 0.25 + rand() * 0.2, dir.z * 0.8,
+        DUST, 0.12 + rand() * 0.05, 0.4 + rand() * 0.15, 0.45 + rand() * 0.2, 0.36 * f, 3.2, 0.15, P_DUST, 0.04, 1.2);
     }
-    n = Math.floor(22 * f * this._dt * Math.max(0.5, this.q) + rand());
-    while (n-- > 0) {
-      randSphere(_v1); _v1.y = Math.abs(_v1.y) * 0.8 + 0.3;
-      const sp = 1.5 + rand() * 2;
-      this._spawnDrop(pos.x + _v1.x * 0.25, pos.y + 0.35 + _v1.y * 0.2, pos.z + _v1.z * 0.25, _v1.x * sp + dir.x * 2.2, _v1.y * sp, _v1.z * sp + dir.z * 2.2, col, 0.015 + rand() * 0.018, 0.9, 1, 1.3, 0);
-    }
+    if (rand() < f * 0.5) this._grains(_v2.set(pos.x, pos.y, pos.z), _v3.set(dir.x * 0.6, 0.8, dir.z * 0.6).normalize(), 1, 2);
   }
-  // Roll ends, the kid plants into the turret stance: a squelch — ink carried on by the momentum and a ripple.
+  // Roll ends, you plant into the firing stance: a small dust puff.
   dodgePlant(pos, dir, color) {
-    const col = this._color(color, this._col);
-    _v3.set(dir.x * 0.7, 1, dir.z * 0.7).normalize();
-    const n = Math.max(3, Math.round(9 * this.q));
-    for (let i = 0; i < n; i++) {
-      coneDir(_v3, 0.75, _v1);
-      const sp = 1.8 + rand() * 2;
-      this._spawnDrop(pos.x, pos.y + 0.04, pos.z, _v1.x * sp, _v1.y * sp, _v1.z * sp, col, 0.016 + rand() * 0.02, 0.8, 1, 1.3, 0);
-    }
-    _v2.set(pos.x, pos.y + 0.01, pos.z);
-    this._ripple(_v2, 0.0065, 0.13, 1.3, 0.7, UP, col);
+    void color;
+    this._sprite(this.puffs, pos.x + dir.x * 0.1, pos.y + 0.08, pos.z + dir.z * 0.1, dir.x * 0.5, 0.3, dir.z * 0.5, DUST, 0.12, 0.45, 0.5, 0.4, 3.2, 0.15, P_DUST, 0.04, 1.2);
   }
 
   // ---- slosher
@@ -2116,11 +2245,11 @@ export class FX {
     this._dustRing(_v2, _sc, 8, 3);
   }
 
-  // the victim's squid ghost floating up out of the splat
+  // "OUT": the eliminated player's hands-up silhouette where they stood (pos = feet), holding for a beat and fading
   ghost(pos, color) {
     const col = this._color(color, this._col);
-    this._colB.copy(col).lerp(_white, 0.3);
-    this._sprite(this.puffs, pos.x, pos.y + 0.35, pos.z, 0, 0.5, 0, this._colB, 0.55, 0.85, 1.5, 0.8, 1.2, 0.9, P_GHOST, 0.18, 0, 0.35, 0.6);
+    this._colB.copy(col).lerp(_white, 0.15);
+    this._sprite(this.puffs, pos.x, pos.y + 0.82, pos.z, 0, 0.12, 0, this._colB, 1.62, 1.68, 1.25, 0.92, 1.5, 0.12, P_GHOST, 0.06, 0, 0, 0.45);
   }
   // falling into the sea
   waterSplash(pos, size = 1) {
@@ -2227,11 +2356,12 @@ export class FX {
     this._updateRings(dt);
     this._updateShells(dt);
     this._updateBeams(dt);
+    this._flushStreaks();
   }
 
   clear() {
     this.dN = 0; this.dGeo.instanceCount = 0;
-    for (const p of [this.puffs, this.glows, this.rings, this.shells, this.beams]) { p.n = 0; p.geo.instanceCount = 0; }
+    for (const p of [this.puffs, this.glows, this.rings, this.shells, this.beams, this.streaks]) { p.n = 0; p.geo.instanceCount = 0; }
     this.marks.n = 0; this.pillars.n = 0; this._sqN = 0;
   }
 
@@ -2255,7 +2385,7 @@ export class FX {
   // Triangles currently submitted by the FX meshes (for budget audits).
   triangles() {
     const per = (g) => (g.index ? g.index.count : g.attributes.position.count) / 3;
-    return (this.dGeo.instanceCount + this.puffs.geo.instanceCount + this.glows.geo.instanceCount + this.rings.geo.instanceCount) * 2
+    return (this.dGeo.instanceCount + this.puffs.geo.instanceCount + this.glows.geo.instanceCount + this.rings.geo.instanceCount + this.streaks.geo.instanceCount) * 2
       + this.shells.geo.instanceCount * per(this.shells.geo) + this.beams.geo.instanceCount * per(this.beams.geo)
       + (this.motes.visible ? this.motes.geometry.instanceCount * 2 : 0);
   }

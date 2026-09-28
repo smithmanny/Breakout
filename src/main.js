@@ -6,6 +6,7 @@ import { Input } from './core/input.js';
 import { mapTheme,
   DEFAULT_SETTINGS, QUALITY, TEAM_PALETTES, COLORBLIND_PALETTE, TEAM_NAMES, WEAPONS, WEAPON_ORDER, SUB, SPECIALS,
   MAPS, DIFFICULTY, PLAYER, PROGRESSION, VERSION, MATCH, OFFLINE_MAPS, mapOfflineOk, mapNoBots, mapBossOk,
+  ROUNDS, validWeapon,
 } from './config.js';
 import { Level } from './world/level.js';
 import { MAP_LAYOUTS } from './world/maps.js';
@@ -68,7 +69,7 @@ class Game {
     this.menus?.show('loading');
     this.bootMarks = [];
     const progress = async (p, label) => { this.bootMarks.push([label, Math.round(performance.now() - t0)]); this.menus?.setLoading(p, label); await nextFrame(); };
-    await progress(0.05, 'Mixing ink…');
+    await progress(0.05, 'Mixing paint…');
 
     // renderer / scene
     this.R = new Renderer(app, this.settings);
@@ -77,6 +78,14 @@ class Game {
     const camera = (G.camera = new THREE.PerspectiveCamera(this.settings.fov, innerWidth / innerHeight, 0.15, 6500));
     camera.position.set(0, 40, -60);
     this.R.setScene(scene, camera);
+    // a lost + restored WebGL context (driver reset, GPU switch; often on software GL) empties every render target:
+    // three re-uploads plain textures by itself, but the GPU-baked ones must be baked again — the texture library (else
+    // the whole arena renders black) and the sky's env map. (Paint on the field is lost; it is only cosmetic.)
+    this.R.renderer.domElement.addEventListener('webglcontextrestored', () => {
+      console.warn('[inkwave] WebGL context restored — re-baking GPU textures');
+      try { this.texlib?.rebake?.(); } catch (e) { console.warn('[inkwave] texlib rebake', e); }
+      try { if (G.env?.setTheme) { G.env.setTheme(G.env.theme || this.theme); if (G.env.envMap) G.scene.environment = G.env.envMap; } } catch (e) { console.warn('[inkwave] env rebake', e); }
+    });
     this.input = G.input = new Input(this.R.renderer.domElement);
     this.input.onKey = (e, repeat) => this._onKey(e, repeat);
     this.input.onUnlock = () => this._onPointerUnlock();
@@ -116,7 +125,7 @@ class Game {
     // sky-fill balance (scene.environmentIntensity, hemisphere) + per-theme exposure are the environment theme's job
     // (Environment.setTheme), so a stage/time looks the same booted into or switched to mid-session
     G.renderer.toneMappingExposure = 0.94;
-    await progress(0.55, 'Teaching squids to swim…');
+    await progress(0.55, 'Filling the hoppers…');
     G.projectiles = new Projectiles(scene);
     G.fx = new fxMod.FX(scene, { quality: q });
     G.fx.setLighting?.(G.env.getSkyColors?.());
@@ -138,7 +147,7 @@ class Game {
     // online session (G.net) — the menus' online screens and startNetMatch/netMatchGo/netMatchEnd below drive it
     try { (await import('./net/session.js')).installNet(); } catch (e) { console.error('[inkwave] net', e); }
     G.net?.on?.('lobby', ({ lobby }) => this._roomPalette(lobby));
-    await progress(0.7, 'Tuning the tentacles…');
+    await progress(0.7, 'Chalking the lines…');
 
     this._setPalette(this._pickPalette());
     this._bindEvents();
@@ -168,7 +177,8 @@ class Game {
     window.__inkwave = this; // debug/audit hook
     window.__G = G;
     this.debug = {
-      endMatch: (t = 0.5) => { if (this.match && !this.match.attract) this.match.time = t; },
+      // elimination: hand team 0 the match (skips the remaining rounds); boss: run the clock out
+      endMatch: (t = 0.5) => { const m = this.match; if (!m || m.attract) return; if (m.elim) { if (m.state === 'playing') { m.roundWins[0] = ROUNDS.toWin; m.setState('finish'); } } else m.time = t; },
       paintRandom: (n = 400) => { const v = new THREE.Vector3(); for (let i = 0; i < n; i++) { v.set((Math.random() - 0.5) * 48, 0.4, (Math.random() - 0.5) * 86); G.paint.splat(v, 0.8 + Math.random() * 1.4, Math.random() < 0.5 ? 0 : 1); } },
       // deterministic stepping for audits: freeze(), then step(ms) advances the sim at a fixed 60 Hz and renders once
       freeze: () => { this.frozen = true; },
@@ -330,9 +340,9 @@ class Game {
       setProfileName: (n) => { self.profile.name = String(n || 'Player').slice(0, 16); saveJSON('inkwave.profile', self.profile); },
       // locker look ({ hair, skin, outfit, eyes, hat, brows, … } — indices into character-style.js tables)
       setProfileStyle: (st) => { self.profile.style = { ...(st || {}) }; saveJSON('inkwave.profile', self.profile); },
-      getLoadout: () => ({ weapon: self.profile.weapon || 'shooter' }),
+      getLoadout: () => ({ weapon: validWeapon(self.profile.weapon) }),
       setLoadout: ({ weapon }) => {
-        if (!WEAPONS[weapon]) return;
+        if (!WEAPONS[weapon] || !WEAPON_ORDER.includes(weapon)) return;
         self.profile.weapon = weapon; saveJSON('inkwave.profile', self.profile);
         if (self.menus?.current === 'loadout') self.showcase.showLoadout(weapon, G.teamColors[0], self.profile.style);
       },
@@ -360,7 +370,7 @@ class Game {
 
   _onScreen(s) {
     if (!this.showcase) return;
-    if (s === 'loadout') this.showcase.showLoadout(this.profile.weapon || 'shooter', G.teamColors[0], this.profile.style);
+    if (s === 'loadout') this.showcase.showLoadout(validWeapon(this.profile.weapon), G.teamColors[0], this.profile.style);
     else if (s !== 'results') { if (this.showcase.mode === 'loadout') this.showcase.hide(); }
     if (G.mode === 'menu') {
       if (s === 'title' || s === 'main' || s === 'setup' || s === 'settings' || s === 'howto' || s === 'credits' || s === 'loadout' || s === 'locker' || s === 'online' || s === 'lobby') {
@@ -439,27 +449,47 @@ class Game {
     on('splatted', ({ victim, attacker, cause }) => {
       if (!this.match || this.match.attract) return;
       const local = this.match.local;
+      const elim = this.match.elim;
+      // (elimination: the HUD's own kill feed renders every 'eliminated' — "Viper ⟶ Blotch OUT")
       if (attacker?.isLocal) {
         G.audio?.play('splat_enemy', { volume: 0.9 });
-        this.hud?.feed({ text: `You splatted ${victim.name}!`, color: G.teamHex[local.team], kind: 'kill' });
+        if (!elim) this.hud?.feed({ text: `You took out ${victim.name}!`, color: G.teamHex[local.team], kind: 'kill' });
       } else if (victim.isLocal) {
         G.audio?.play('splatted_self');
         G.audio?.duck?.(0.45, 2.2);
-        const by = attacker ? attacker.name : cause === 'water' ? 'the sea' : 'enemy ink';
-        this.hud?.showSplatted({ by, byColor: attacker ? G.teamHex[attacker.team] : '#6fd0ff', respawn: PLAYER.respawnTime });
+        const by = attacker ? attacker.name : cause === 'water' ? 'the sea' : 'enemy fire';
+        // elimination: no respawn this round (respawn 0: the HUD shows no countdown); the camera moves on to a teammate
+        this.hud?.showSplatted({ by, byColor: attacker ? G.teamHex[attacker.team] : '#6fd0ff', respawn: elim ? 0 : PLAYER.respawnTime, out: elim });
         this.rig.mode = 'spectate';
         this.rig.spectate = { actor: attacker && attacker.alive ? attacker : null, pos: victim.pos.clone(), from: victim.pos.clone() };
         this.rig.lookAt.copy(victim.pos);
       } else if (victim.team === local?.team) {
         G.audio?.play('ally_splatted', { volume: 0.5 });
-        this.hud?.feed({ text: `${victim.name} was splatted${attacker ? ' by ' + attacker.name : ''}`, color: G.teamHex[victim.enemyTeam], kind: 'death' });
-      } else if (attacker && attacker.team === local?.team) {
-        this.hud?.feed({ text: `${attacker.name} splatted ${victim.name}`, color: G.teamHex[attacker.team], kind: 'ally' });
+        if (!elim) this.hud?.feed({ text: `${victim.name} was taken out${attacker ? ' (' + attacker.name + ')' : ''}`, color: G.teamHex[victim.enemyTeam], kind: 'death' });
+      } else if (attacker && attacker.team === local?.team && !elim) {
+        this.hud?.feed({ text: `${attacker.name} took out ${victim.name}`, color: G.teamHex[attacker.team], kind: 'ally' });
       }
     });
     on('respawn', ({ actor }) => {
       if (!this.match || this.match.attract) return;
       if (actor.isLocal) { this.hud?.hideSplatted(); this.rig.follow(actor, true); this.rig.yaw = actor.yaw; this.rig.pitch = -0.12; }
+    });
+    // ---- elimination rounds (match.js): camera + horn here; the HUD owns every round banner / countdown / result card
+    on('round:pre', ({ match }) => {
+      if (match !== this.match || match.attract) return;
+      this.hud?.hideSplatted?.();
+      if (match.local) { this.rig.follow(match.local, true); this.rig.yaw = match.local.yaw; this.rig.pitch = -0.12; }
+    });
+    on('round:count', () => { if (this.match && !this.match.attract) G.audio?.play('final_count'); });
+    on('round:start', ({ match }) => {
+      if (match !== this.match || match.attract) return;
+      G.audio?.play('go_horn');
+    });
+    on('round:end', ({ round, winner, reason, match }) => {
+      if (match !== this.match || match.attract) return;
+      // round log for the results (how each round ended: survivors per side)
+      (this._roundLog || (this._roundLog = []))[round - 1] = { winner, reason, alive: [match.aliveCount(0), match.aliveCount(1)] };
+      G.audio?.play(reason === 'time' ? 'times_up' : 'final_count');
     });
     on('special:ready', ({ actor }) => {
       if (actor.isLocal && !this.match?.attract) { G.audio?.play('special_ready'); }
@@ -469,7 +499,6 @@ class Game {
     });
     on('shake', ({ amount, pos }) => { if (!this.match?.attract) this.rig.addShake(amount, pos); });
     on('recoil', ({ amount }) => { if (!this.match?.attract) this.rig.recoil(amount); });
-    on('lowink', ({ actor }) => { if (actor.isLocal) this._lowInkFlash = 1.2; });
     // footsteps (character animation → 'actor:footstep'): surface-aware, only for actors near the camera
     on('actor:footstep', ({ actor, surface, pos, speed }) => {
       if (!actor || !actor.alive || actor.form === 'squid') return;
@@ -485,13 +514,13 @@ class Game {
       if (match.attract || match !== this.match) return;
       if (state === 'intro') this._intro();
       if (state === 'playing') {
-        this.hud?.banner('go'); G.audio?.play('go_horn');
+        if (!match.elim) { this.hud?.banner('go'); G.audio?.play('go_horn'); }   // elimination: round:start does it
         if (match.mode !== 'boss') this._playMusic('battle');   // boss mode: the boss audio director scores it by phase
         if (this.match.local) { this.rig.follow(this.match.local, true); }
       }
       if (state === 'finish') {
         const bossWon = match.mode === 'boss' && match.boss?.dead;   // the defeat already had its moment (boss:defeat)
-        this.hud?.banner('timesup');
+        if (!match.elim) this.hud?.banner('timesup');   // elimination: the HUD shows MATCH OVER itself
         if (!bossWon) { G.audio?.play('times_up'); if (match.mode !== 'boss') { G.music?.stop?.(0.4); this._musicTrack = null; } }
         this.input.exitLock();
         if (match.boss) this._bossFinishCam(match.boss);
@@ -591,7 +620,7 @@ class Game {
     this.mapDef = map;
     this._setPalette(this._pickPalette());
     const m = (this.match = G.match = new Match({
-      attract: false, duration: opts.duration, difficulty: opts.difficulty, mode: opts.mode, weapon: this.profile.weapon || 'shooter',
+      attract: false, duration: opts.duration, difficulty: opts.difficulty, mode: opts.mode, weapon: validWeapon(this.profile.weapon),
       playerName: this.profile.name || 'Player', CharacterClass: this.CharacterClass, rig: this.rig, input: this.input,
       autopilot: params.has('autopilot'), style: this.profile.style || null, noBots: mapNoBots(map.id),   // (devstage: a solo walk)
     }));
@@ -600,7 +629,7 @@ class Game {
     this.minimap.setViewerTeam(0);
     G.mode = 'match';
     this.hud?.setVisible(false);
-    this.hudPrompt = null; this._hintT = 0; this._hints = {};
+    this.hudPrompt = null; this._hintT = 0; this._hints = {}; this._roundLog = [];
     m.start();
     this._fade(0, 500);
   }
@@ -639,7 +668,7 @@ class Game {
     this.minimap.setViewerTeam(m.local ? m.local.team : 0);
     G.mode = 'match';
     this.hud?.setVisible(false);
-    this.hudPrompt = null; this._hintT = 0; this._hints = {};
+    this.hudPrompt = null; this._hintT = 0; this._hints = {}; this._roundLog = [];
     // hold on the stage (not black) while the others finish loading
     if (m.local) { this.rig.follow(m.local, true); this.rig.yaw = m.local.team === 0 ? 0 : Math.PI; }
     this.rig.dioFlip = !!(m.local && m.local.team === 1);
@@ -814,26 +843,44 @@ class Game {
     if (m.result?.mode === 'boss') return this._bossResults();
     this.hud?.hideSplatted?.();
     this.rig.overview();
-    this.hud?.setVisible(true);
-    const cov = m.result.coverage;
-    const judgeP = this.hud?.judge({ colors: [G.teamHex[0], G.teamHex[1]], percents: [cov[0] * 100, cov[1] * 100], names: this.palette.names || TEAM_NAMES });
-    await (judgeP || new Promise((r) => setTimeout(r, 4000)));
+    const cov = m.result.coverage || G.paint.coverage();
+    // elimination: round wins decide it (online followers get only winner + coverage from the host: use their own tally)
+    const roundWins = m.result.roundWins || (m.elim ? [...m.roundWins] : null);
     const myTeam = m.local ? m.local.team : 0;
     const won = m.result.winner === myTeam;
+    const names = this.palette.names || TEAM_NAMES;
+    // every round: who took it, how (wipe / time) and how many were still standing on each side
+    const rounds = (m.result.rounds || m.rounds || []).map((r, i) => ({ ...r, ...(this._roundLog?.[i] && !r.alive ? { alive: this._roundLog[i].alive } : {}) }));
+    const players = m.actors.map((a) => ({ name: a.name, team: a.team, weapon: a.weaponId, turf: Math.round(a.stats.turf), splats: a.stats.splats, elims: a.stats.splats, deaths: a.stats.deaths,
+      damage: Math.round(a.stats.damage || 0), survived: a.stats.roundsSurvived || 0, isSelf: a.isLocal, bot: !!a.isBot }));
+    if (roundWins) {
+      // BREAKOUT: the HUD's full-time card (final score, round strip, per-player table) instead of the turf judge
+      this.hud?.setVisible(false);
+      const fs = this.hud?.finalScore?.({ colors: [G.teamHex[0], G.teamHex[1]], names, myTeam, roundWins, rounds, players, win: won, mapName: this.mapDef.name });
+      await (fs || new Promise((r) => setTimeout(r, 1800)));
+    } else {
+      this.hud?.setVisible(true);
+      await (this.hud?.judge({ colors: [G.teamHex[0], G.teamHex[1]], percents: [cov[0] * 100, cov[1] * 100], names }) || new Promise((r) => setTimeout(r, 4000)));
+    }
+    if (this.match !== m) return;
     m.setState('results');
     this.hud?.setVisible(false);
-    // profile / XP
+    // profile / XP: a win / loss, every elimination and every round your team took
     const local = m.local;
     const p = this.profile;
     const turf = Math.round(local.stats.turf);
-    const gained = Math.round((won ? PROGRESSION.xpWin : PROGRESSION.xpLose) + turf * PROGRESSION.xpPerTurfPoint + local.stats.splats * PROGRESSION.xpPerSplat);
+    const myRounds = roundWins ? roundWins[myTeam] : 0;
+    const gained = Math.round((won ? PROGRESSION.xpWin : PROGRESSION.xpLose) + turf * (PROGRESSION.xpPerTurfPoint || 0) + local.stats.splats * (PROGRESSION.xpPerElim ?? PROGRESSION.xpPerSplat) + myRounds * (PROGRESSION.xpPerRoundWin || 0));
     const before = { level: p.level, xp: p.xp, toNext: PROGRESSION.xpForLevel(p.level) };
     p.xp += gained; p.matches++; if (won) p.wins++; p.totalTurf += turf;
     while (p.xp >= PROGRESSION.xpForLevel(p.level)) { p.xp -= PROGRESSION.xpForLevel(p.level); p.level++; }
     saveJSON('inkwave.profile', p);
+    // results screen data. Elimination adds: roundWins, rounds [{ winner, reason, alive: [t0, t1] }], myTeam, and per
+    // player elims / damage / deaths (outs) / survived (rounds still standing at the whistle)
     const data = {
-      win: won, percents: [cov[0] * 100, cov[1] * 100], colors: [G.teamHex[0], G.teamHex[1]], teamNames: this.palette.names || TEAM_NAMES,
-      players: m.actors.map((a) => ({ name: a.name, team: a.team, weapon: a.weaponId, turf: Math.round(a.stats.turf), splats: a.stats.splats, deaths: a.stats.deaths, isSelf: a.isLocal, bot: !!a.isBot })),
+      mode: roundWins ? 'elim' : undefined, roundWins, rounds, myTeam,
+      win: won, percents: [cov[0] * 100, cov[1] * 100], colors: [G.teamHex[0], G.teamHex[1]], teamNames: names,
+      players,
       xp: { gained, levelBefore: before.level, levelAfter: p.level, xpBefore: before.xp, xpAfter: p.xp, xpToNextBefore: before.toNext, xpToNextAfter: PROGRESSION.xpForLevel(p.level) },
       mapName: this.mapDef.name,
     };
@@ -910,6 +957,7 @@ class Game {
       if (!m.paused) G.projectiles.update(dt);
       if (m.attract) this._updateAttract(dt);
       else if (m.state === 'playing' && m.local?.alive && this.rig.mode !== 'follow' && this.rig.mode !== 'path') this.rig.follow(m.local, true);
+      else if (m.elim && m.state === 'playing' && m.local && !m.local.alive) this._spectateTeammate(m);
     }
     if (!m || !m.paused) G.fx.update(dt, G.camera);
     if (!m || !m.paused) this.fxHooks?.update?.(dt);
@@ -1030,7 +1078,7 @@ class Game {
     const hs = alive ? Math.hypot(a.vel.x, a.vel.z) : 0;
     want('swim', alive && a.anim.form === 'swim' && hs > 0.5, Math.min(0.6, hs / 11.8 * 0.6 + 0.08), 0.6 + Math.min(1, hs / 11.8));
     want('climb', alive && a.anim.form === 'climb', 0.5, alive ? 0.6 + Math.min(1, Math.abs(a.vel.y) / 7.5) : 1);
-    want('enemy_ink_sizzle', alive && a.grounded && a.groundTeam === 2, 0.45, 1.0);
+    want('enemy_ink_sizzle', false, 0.45, 1.0);   // (BREAKOUT: enemy paint is cosmetic)
   }
 
   _padMenus() {
@@ -1051,6 +1099,18 @@ class Game {
       }
       if (pp.has(9) && this.menus.current === 'pause') this.resume();
     } else if (G.mode === 'match' && pp.has(9)) this.pause();
+  }
+
+  // elimination: out for the round → after the death cam, watch a living teammate (next one when they go down)
+  _spectateTeammate(m) {
+    const rig = this.rig, s = rig.spectate;
+    if (rig.mode !== 'spectate' || !s || rig.spectateT < 2.4) return;
+    const cur = s.actor;
+    if (cur && cur.alive && cur.team === m.local.team) return;
+    const mates = m.actors.filter((o) => o.team === m.local.team && o.alive && o !== m.local);
+    if (!mates.length) return;
+    const next = mates[0];
+    s.actor = next; s.pos = next.pos.clone(); rig.spectateT = 0.8;
   }
 
   _updateHud(dt) {
@@ -1097,21 +1157,27 @@ class Game {
     // contextual prompts (light tutorial)
     this._hintT += dt;
     let prompt = null;
-    const inkF = a.ink / PLAYER.inkMax;
+    // (the hopper widget carries the reload / low / empty calls itself: [R] — RELOAD under the reticle)
     if (m.state === 'playing' && a.alive) {
-      if (m.controller?.mapHeld) prompt = null;   // the map diorama carries its own super-jump hints
+      const pad = this.input.lastDevice === 'pad';
+      if (m.controller?.mapHeld) prompt = null;   // the map diorama carries its own hints
       else if (a.superJumpState) prompt = null;
-      else if (this._lowInkFlash > 0) { this._lowInkFlash -= dt; prompt = 'Low ink! Hold SHIFT in your ink to refill'; }
-      else if (a.specialReady() && (this._hints.specialT = (this._hints.specialT || 0) + dt) > 2) prompt = `Special ready! Press F`;
-      else if (inkF < 0.25 && a.form !== 'squid') prompt = 'Hold SHIFT to swim in your ink and refill';
-      else if (m.duration - m.time < 8 && !this._hints.shot) prompt = 'Paint the ground — most turf wins!';
+      else if (a.specialReady() && (this._hints.specialT = (this._hints.specialT || 0) + dt) > 2) prompt = pad ? 'Special ready! Press {Y}' : 'Special ready! Press [F]';
+      else if (m.elim && m.round === 1 && m.roundPhase === 'live' && m.roundTime > ROUNDS.roundTime - 7 && !this._hints.sprinted) prompt = pad ? 'Hold {LT} to sprint (no firing) · {X} reload · {RB} grenade' : 'Hold [SHIFT] to sprint (no firing) · [R] reload · [E] grenade';
+      else if (!m.elim && m.duration - m.time < 8 && !this._hints.shot) prompt = 'Hit HULLBREAKER — aim for the glowing weak points!';   // (Boss Battle: the only non-elimination match)
       if (!a.specialReady()) this._hints.specialT = 0;
       if (a.intent.fire) this._hints.shot = true;
+      if (a.sprinting) this._hints.sprinted = true;
     }
     const frame = {
       time: m.time,
       teams: a.team === 1 ? m.teamSummary().reverse() : m.teamSummary(),   // HUD: [your team, theirs]
-      ink: a.ink / PLAYER.inkMax, inkLow: a.ink < 18 || (this._lowInkFlash > 0), subCost: SUB.bomb.inkCost / PLAYER.inkMax,
+      ink: a.ink / PLAYER.inkMax, inkLow: a.ammo < a.ammoMax * 0.25, subCost: a.grenades > 0 ? 0 : 2,   // (old tank fields: ink mirrors the hopper; subCost 0 = a grenade is available)
+      // BREAKOUT: hopper / reload / grenades / sprint + the round state
+      ammo: a.ammo, ammoMax: a.ammoMax, reloading: a.reloading > 0, reloadFrac: a.reloadFrac(), grenades: a.grenades, grenadesMax: SUB.bomb.count,
+      sprinting: !!a.sprinting,
+      round: m.elim ? { n: m.round, phase: m.roundPhase, wins: a.team === 1 ? [m.roundWins[1], m.roundWins[0]] : [...m.roundWins], toWin: ROUNDS.toWin, time: m.roundTime,
+        alive: a.team === 1 ? [m.aliveCount(1), m.aliveCount(0)] : [m.aliveCount(0), m.aliveCount(1)] } : null,
       special: a.specialFrac(), specialReady: a.specialReady(), specialActive: !!a.specialActive,
       hp: a.hp / PLAYER.hp,
       weapon: a.weaponId, charge: a.weaponRunner.charge,

@@ -86,3 +86,26 @@ lists them. Mirror rule for L/R pairs: rotations about local X keep their sign, 
 - ✔ (see *Fingers* — rest = grip, curl axis local Z, names `hand{L,R}_*`) fingers (optional) named like `fingerL1`, `thumbR` · character.js curls rotation.x around grips (1.1 rad), relaxes
   when free; `lidL/lidR` (optional) close with blinks (rotation.x up to 1.2) — lids not added (see *Not added*).
 - Already handled if they appear: toeL/toeR, lidL/lidR, jaw, tank, hem/hemF/hemB, finger*/thumb*.
+
+## BREAKOUT (paintball) conversion — what changed on the rig side
+No bone was added, renamed or moved. Existing bones changed meaning / use as follows:
+- **Masks** (`style.hat` 4–6, `HAT_KINDS` `mask` / `maskBeanie` / `maskCrop` in character-geo.js, `MASK_HATS` / `isMasked` in
+  character-style.js): a rigid paintball mask (goggle frame + thermal lens, vented jaw guard, ear pieces, strap) plus a
+  headwrap / beanie / buzz-crop dome, all built into the hair mesh and weighted 100 % to `head`. Every hair strand is
+  dropped under a mask (`exitMax: -1`), so the `hair*` / `hairTip*` bones sit idle at the head centre; brows are not
+  built. Default headgear: `randomStyle()` always rolls a mask, and `resolveStyle()` gives a seed-picked mask when a look
+  never chose headgear (new profiles, name-seeded bots). Saved looks keep their `hat`.
+- `earL/earR`: character.js scales them to 0.02 under a mask (the ears fold into the ear pieces) and to 0.62 bare-headed
+  (small human-ish ears). The droop/perk rotation still runs on top.
+- `eyeL/eyeR`, `browL/R`, `mouth`, `jaw`, `cheek*`: still animated; under a mask the eyes mesh is hidden
+  (`Character.masked`, skipped in `_setTier` / `_startFade`) and the face is covered, so they are simply invisible.
+- `tank`: now the **pod pack** — four pods in a tray on the harness back panel (character-outfit.js `PODS`, `addTank`).
+  `tankGlass()` returns the 4 pod shells + a 4-column paintball fill (unit height, `fillBottom` / `fillHeight` come with
+  it); character.js scales the fill with `AnimState.ink` (= hopper/ammo fraction) exactly as before. Spring sway unchanged.
+- Skin sub-materials added (aEx): **4** jersey sleeve (arms), **5** padded pants (legs), **6** glove (hands + nails). The
+  arm/leg lofts are inflated a little (loose padded sleeves, elbow + knee pads) — same bones, same weights.
+- Hair locks (no mask): natural colour (`hairColor(style)` → `uHairCol`) with team-dyed tips; no suction cups, no club tip.
+- Sprint: `AnimState.sprinting` (or ground speed past run speed) blends `wSprint` → extra forward lean of hips/spine/chest,
+  chin tucked, bigger arm pump. Squid form is untouched but never triggered by BREAKOUT gameplay.
+- Paintball hits (`setHurt(amount, enemyColor)`): discrete glossy splats (one per ~14 % damage) stamped in bind space on
+  jersey, pants, sleeves and the mask (skin, cloth and hair materials share `HURT_FRAG`).

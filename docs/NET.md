@@ -83,6 +83,25 @@ the same turf; other players' shots are visual-only ghosts. Hits are decided by 
 the victim's owner (`{k:'hit'}`); splats, specials and respawns are forwarded as events. The host's final count is the
 result on every screen.
 
+**Elimination rounds (BREAKOUT, docs/PAINTBALL.md).** The host is authoritative on rounds. On every `round:pre` /
+`round:start` / `round:end` it records `['rd', match.netRoundState()]` on its event timeline, and every 0.5 s its tick
+carries the same state as `msg.r`; followers play both on the host's playback timeline (so the kill that ended a round
+shows before the round-end banner) and call `match.applyNetRound(d)`. Until the first one arrives a follower runs the
+round logic itself; afterwards it only follows. Every client resets the squidkids it owns at `round:pre` (Match emits
+`respawn` with `round`); that `respawn` is forwarded like any other, and proxies hide until their owner's first sample at
+base (`netTp` bumped) and then appear there without a spawn flash. A splatted squidkid is out for the round on every
+screen: remote splats never auto-respawn (only the owner's `respawn` revives a proxy), and a squidkid adopted after its
+player left stays out until the next round (the adopter resets it at `round:pre`; `Match.canRespawn()` is false). Events
+the leaver had already sent are played at once, on every screen, before the adoption, so everyone continues from the
+same alive/dead state; as a last safety net the owner's `alive` snapshot flag wins if it disagrees for > 0.5 s.
+Snapshots also carry sprint (remote players lean), reload (pose + `reload:start`/`reload:end` for remote actors),
+grenades left and damage dealt (counted by the attacker's owner, which also credits hits it sends). `ink` is still
+packed: it is the hopper's 0..100 mirror. The result (`{k:'res'}`) carries `rw` (round wins) and `rd` (the round log);
+followers show `{ mode: 'elim', winner, roundWins, rounds, coverage }` exactly as the host judged it. Remote splats and
+respawns are re-emitted locally (`splatted` → kill feed, Match's `eliminated`; `respawn`). `lobby.duration` is ignored in
+elimination (the start config carries `ROUNDS.roundTime`); it only sets a Boss Battle's length. Lobby weapons pass
+through `validWeapon` (retired roller / slosher become a playable marker).
+
 **Relay (server/).** One Durable Object per room code: membership, host election, join refusal (unknown / full /
 match running) and blind fan-out of `b|` / `s|to|` payloads. Clients send `"ping"` every 2 s, answered by the runtime
 without waking the room; a sweep drops sockets silent for 10 s during a match (150 s in the lobby).
@@ -92,6 +111,18 @@ clients against the local relay and reports consistency (clock, coverage, roster
 per-frame "kink" and path error of every remote squidkid against its owner's own frames.
 `--clients 3 --leave host --drop kill|freeze` tests migration, `--full` plays through results back to the lobby,
 `--net "netlag=40&netjitter=30&netspike=0.01"` simulates a real connection, `WORST=8` explains the worst frames.
+Elimination: `--rounds 2:15` (default 2:18, `real` = config ROUNDS) sets test-only round rules on every client; every
+6 s (and, with `--full`, at every round / phase change) it checks that all clients agree on round, phase, round wins
+and each squidkid's alive state, and that no eliminated squidkid is drawn; `--full` also compares the final result
+(winner, round wins, round log, damage, K/D). On Linux it uses `/opt/pw-browsers/chromium` (or `CHROME_PATH`) with
+SwiftShader: keep windows tiny (`--w 320 --h 180 --quality low`); on a busy box run the relay with
+`npx wrangler dev --port 8787 --var SILENT_MATCH_MS:180000` so a tab stalled compiling shaders isn't dropped.
+`node tools/net-rounds-sim.mjs [--clients 3] [--lag 40 --jitter 25] [--drop guest|host]` checks the round protocol in
+seconds without a browser: each client is a worker thread running the real Match + NetMatch on stubbed rendering /
+physics through an in-process relay (in-order links with latency / jitter). Scripted hits play five short rounds
+(wipes both ways, one decided on the clock), drop a player right after they are eliminated (or the host: migration),
+and every client must agree with the host on round, phase, round wins, alive states, "out = not drawn", everyone
+back at base after each reset, and the final result.
 
 ## Showcase lobby set (src/game/showcase.js)
 

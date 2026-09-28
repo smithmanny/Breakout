@@ -5,6 +5,8 @@
 //   sfx.update(dt, game)                // every frame (main.js), before the composer renders
 //   sfx.test(name, opts)                // debug/audit triggers: 'splat' 'water' 'flood' 'reveal' 'blast' 'jump' 'land' …
 //
+// BREAKOUT (paintball): a hit on the local player splats paint on the "goggle lens" (LensInk.goggle, enemy colour,
+// runs a little, wiped off after ≈ 1.2 s); the swim / emerge / enemy-ink-underfoot triggers are retired.
 // Effects (all event/state driven, idle cost = zero because the pass disables itself):
 //   lens ink splats (enemy hits, stepping in enemy ink, storm rain, sea water) · enemy-ink edge goo · low-HP heartbeat
 //   vignette · hit chromatic kick + zoom punch · explosion/slam radial blur + shock ring + chroma pulse · swim speed
@@ -403,7 +405,7 @@ class LensInk {
       const p = this.parts[k]; this.parts.splice(k, 1); this.pool.push(p);
     }
     const p = this.pool.pop() || {};
-    p.vx = 0; p.vy = 0; p.rot = 0; p.age = 0; p.slide = false; p.trailT = 0; p.hold = 0; p.pop = 1; p.grow = 0; p.seed = Math.random() * 100;
+    p.vx = 0; p.vy = 0; p.rot = 0; p.age = 0; p.slide = false; p.trailT = 0; p.hold = 0; p.pop = 1; p.grow = 0; p.seed = Math.random() * 100; p.wipe = 0;
     this.parts.push(p);
     return p;
   }
@@ -452,6 +454,43 @@ class LensInk {
     this.dirty = true;
   }
 
+  // A paintball smacking into your goggles: a compact core, a crisp star of thin streaks with beads on the long ones,
+  // flung specks — it runs a little (short drips from the heavy parts), then gets wiped off sideways (wipe = ±1, the
+  // sweep direction) around `life` s. Total on screen ≈ life + 0.35 s.
+  goggle(ch, cx, cy, size, aspect, { life = 0.9, wipe = 1 } = {}) {
+    const rot0 = Math.random() * TAU;
+    const P = (x, y, a, d) => [x + (Math.cos(a) * d) / aspect, y + Math.sin(a) * d];
+    const tag = (q) => { q.wipe = wipe; return q; };
+    const core = tag(this.add('drop', ch, cx, cy, size * 0.62, { I: 1.5, life: life * rnd(0.95, 1.05), stick: rnd(0.18, 0.35), pop: 0.05 }));
+    core.mass = 1;
+    for (let i = 0; i < 3; i++) {
+      const a = rot0 + (i / 3) * TAU + rnd(-0.6, 0.6);
+      const [x, y] = P(cx, cy, a, size * rnd(0.18, 0.32));
+      const l = tag(this.add('drop', ch, x, y, size * rnd(0.36, 0.48), { I: 1.35, life: life * rnd(0.9, 1.0), stick: rnd(0.25, 0.6), pop: 0.05 }));
+      l.mass = 0.6;
+    }
+    const arms = 10 + ((Math.random() * 5) | 0);
+    for (let i = 0; i < arms; i++) {
+      const a = rot0 + ((i + rnd(-0.25, 0.25)) / arms) * TAU;
+      const long = Math.random() < 0.4;
+      const L = size * (long ? rnd(1.25, 1.9) : rnd(0.75, 1.1));
+      const [nx, ny] = P(cx, cy, a, L * 0.52);
+      tag(this.add('arm', ch, nx, ny, size * 0.14, { rx: size * rnd(0.1, 0.15), ry: L * 0.52, rot: a - Math.PI / 2, I: 1.45, life: life * rnd(0.85, 1.0), pop: 0.04 }));
+      if (long || Math.random() < 0.3) {
+        const [bx, by] = P(cx, cy, a, L * 1.02);
+        const b = tag(this.add('drop', ch, bx, by, size * rnd(0.13, 0.2), { I: 1.4, life: life * rnd(0.85, 1.0), stick: rnd(0.3, 0.8), pop: 0.05 }));
+        b.mass = 0.35;
+      }
+    }
+    const sats = 6 + ((Math.random() * 6) | 0);
+    for (let i = 0; i < sats; i++) {
+      const a = Math.random() * TAU, d = size * rnd(1.5, 2.6), sr = size * rnd(0.06, 0.12);
+      const [x, y] = P(cx, cy, a, d);
+      tag(this.add('sat', ch, x, y, sr, { rx: sr * 0.75, ry: sr * 1.6, rot: a - Math.PI / 2, I: 1.35, life: life * rnd(0.7, 1.0), pop: 0.04 }));
+    }
+    this.dirty = true;
+  }
+
   // small single droplet (rain, stepping splashes, emerging from ink)
   droplet(ch, x, y, r, { slide = 0.25, life = 1.1 } = {}) {
     const d = this.add('drop', ch, x, y, r, { I: 1.3, life, stick: slide, pop: 0.05 });
@@ -469,7 +508,9 @@ class LensInk {
       p.age += dt;
       if (p.grow < 1) p.grow = Math.min(1, p.grow + dt / Math.max(0.01, p.pop));
       // fade out after life (the metaball shrinks through the threshold → reads as ink evaporating / soaking away)
-      const fade = p.age > p.life ? 1 - (p.age - p.life) / (p.kind === 'trail' ? 0.9 : 0.55) : 1;
+      const fade = p.age > p.life ? 1 - (p.age - p.life) / (p.wipe ? 0.35 : p.kind === 'trail' ? 0.9 : 0.55) : 1;
+      // goggle splats get wiped: the whole splat smears off sideways (and a little down) as it fades
+      if (p.wipe && p.age > p.life) { const k = (p.age - p.life) / 0.35; p.x += p.wipe * dt * (0.5 + 2.2 * k); p.y -= dt * 0.08; p.rx *= 1 + dt * 1.5; }
       if (p.kind === 'trail') p.I = p.I0 * clamp(1 - p.age / p.life, 0, 1);
       else p.I = p.I0 * clamp(fade, 0, 1);
       if (p.I <= 0.01) { P.splice(i, 1); this.pool.push(p); continue; }
@@ -733,26 +774,29 @@ export class ScreenFX {
     s.flash = Math.max(s.flash, 0.35);
   }
 
-  // lens splat for a damage burst, placed on the screen edge toward the attacker (never over the player character)
+  // Goggle splat for a damage burst: the paintball splats on your lens on the side the shot came from (kept off the
+  // crosshair and the player character), runs a little and is wiped off after ≈ 1.2 s. In the enemy colour.
   _damageSplat(amount, attacker) {
     const G = this.G, cam = G.camera, a = this._aspect;
-    const k = clamp(amount / 70, 0.18, 1.2);
+    const k = clamp(amount / 45, 0.35, 1.4);
     let ang = null;
     if (attacker && cam && attacker.pos) {
       _v.copy(attacker.pos); _v.y += 1; _v.project(cam);
       let dx = _v.x, dy = _v.y;
       const behind = _v.z > 1;
       if (behind) { dx = -dx; dy = -dy; }
-      if (!behind && Math.abs(dx) < 1 && Math.abs(dy) < 1) { ang = dx >= 0 ? 0 : Math.PI; ang += rnd(-0.35, 0.35); }
+      if (!behind && Math.abs(dx) < 1 && Math.abs(dy) < 1) { ang = dx >= 0 ? 0 : Math.PI; ang += rnd(-0.5, 0.5); }
       else ang = Math.atan2(dy, dx * a);
     }
     if (ang === null) ang = Math.random() * TAU;
-    const n = k > 0.7 ? 2 : 1;
+    const n = k > 1.05 ? 2 : 1;
     for (let i = 0; i < n; i++) {
-      const aa = ang + (i ? rnd(-0.7, 0.7) : rnd(-0.18, 0.18));
-      const size = (0.045 + 0.05 * k) * (i ? 0.6 : 1) * rnd(0.85, 1.15);
-      const p = this._edgePoint(aa, size * rnd(0.2, 0.9));
-      this.lens.splat(CH_ENEMY, p.x, p.y, size, a, { arms: 6 + ((Math.random() * 4) | 0), sats: 5 + ((Math.random() * 5) | 0), life: 1.5 + k * 0.9 });
+      const aa = ang + (i ? rnd(-0.8, 0.8) : rnd(-0.2, 0.2));
+      const size = (0.085 + 0.05 * k) * (i ? 0.6 : 1) * rnd(0.9, 1.12);
+      const p = this._edgePoint(aa, rnd(0.22, 0.34));
+      // never over the crosshair
+      if (Math.abs(p.x - 0.5) * a < 0.16 && Math.abs(p.y - 0.5) < 0.16) p.x = 0.5 + Math.sign(p.x - 0.5 || 1) * 0.17 / a;
+      this.lens.goggle(CH_ENEMY, p.x, p.y, size, a, { life: 0.8 + 0.12 * k, wipe: p.x < 0.5 ? -1 : 1 });
     }
   }
 
@@ -886,12 +930,8 @@ export class ScreenFX {
     // --- damage bursts → lens splats
     if (s.dmgT > 0) { s.dmgT -= dt; if (s.dmgT <= 0) { if (s.dmgAcc > 0 && alive) this._damageSplat(s.dmgAcc, s.dmgAtk); s.dmgAcc = 0; s.dmgAtk = null; } }
 
-    // --- speed (swimming fast) + super jump flight
-    const hs = alive ? Math.hypot(a.vel.x, a.vel.z) : 0;
-    const form = alive ? a.anim.form : 'kid';
-    const swimming = form === 'swim' || form === 'climb';
-    let speedT = swimming ? clamp((hs - 6.5) / 5.3, 0, 1) * 0.55 : 0;
-    let stretchT = swimming ? clamp((hs - 7) / 4.8, 0, 1) * 0.045 : 0;
+    // --- speed: super jump flight only (BREAKOUT: no swimming; sprint feel is the camera's FOV kick + bob)
+    let speedT = 0, stretchT = 0;
     const sj = alive ? a.superJumpState : null;
     if (sj && sj.phase === 'flight') {
       const kk = clamp(sj.t / (sj.dur || 1.2), 0, 1);
@@ -907,28 +947,9 @@ export class ScreenFX {
     // charge glow
     if (sj && sj.phase === 'charge') s.jumpCharge = Math.min(1, s.jumpCharge + dt / 0.75); else s.jumpCharge = Math.max(0, s.jumpCharge - dt * 3);
 
-    // --- swim tint
-    s.swim = damp(s.swim, alive && form === 'swim' ? 1 : 0, 7, dt);
-    // emerging from ink with speed → a few own-ink droplets on the lower lens
-    if (alive && s.lastForm === 'swim' && form !== 'swim' && form !== 'climb' && (hs > 7 || a.vel.y > 4) && s.emergeT <= 0) {
-      s.emergeT = 0.6;
-      const n = 2 + ((Math.random() * 3) | 0);
-      for (let i = 0; i < n; i++) { const side = Math.random() < 0.5 ? rnd(0.04, 0.3) : rnd(0.7, 0.96); this.lens.droplet(CH_OWN, side, rnd(0.03, 0.22), rnd(0.008, 0.016), { slide: rnd(0.05, 0.2), life: rnd(0.45, 0.8) }); }
-    }
-    s.emergeT -= dt;
-    s.lastForm = form;
-
-    // --- enemy ink underfoot: edge goo + splashes on the lower lens when walking through it
-    const inEnemy = alive && (a.onEnemy !== undefined ? !!a.onEnemy : a.grounded && a.groundTeam === 2 && !a.submerged);
-    s.edgeInk = damp(s.edgeInk, inEnemy ? 1 : 0, inEnemy ? 9 : 3, dt);
-    if (inEnemy && hs > 0.8) {
-      s.stepT -= dt * (0.6 + hs / 3);
-      if (s.stepT <= 0) {
-        s.stepT = rnd(0.22, 0.4);
-        const side = Math.random() < 0.5 ? rnd(0.03, 0.34) : rnd(0.66, 0.97);
-        this.lens.droplet(CH_ENEMY, side, rnd(0.02, 0.14), rnd(0.012, 0.024), { slide: rnd(0.1, 0.4), life: rnd(0.6, 1.1) });
-      }
-    }
+    // (BREAKOUT: the swim tint, emerge droplets and enemy-ink edge goo are retired — no swimming, enemy paint is
+    // cosmetic; their uniforms stay at 0 so the composite skips them)
+    s.swim = 0; s.edgeInk = damp(s.edgeInk, 0, 6, dt);
 
     // --- storm rain on the lens
     const clouds = G.projectiles?.clouds;
@@ -1018,6 +1039,9 @@ export class ScreenFX {
       else if (t < 0.5) s.flood = 1;
       else s.flood = lerp(1, 0.17, easeOut((t - 0.5) / 0.8));
       s.floodDrip = Math.min(0.4, t < 0.5 ? 0.05 : 0.05 + (t - 0.5) * 0.08);
+      // elimination: out until the next round (up to a minute of spectating teammates) — once the OUT! moment has
+      // landed, the dripping frame and the grey wash clear so the rest of the round is watchable
+      if (t > 3.2 && this.G.match?.elim) s.floodMode = 'fadeout';
     } else if (s.floodMode === 'reveal') {
       // own-colour ink covers everything, then an iris opens from the centre with a bright rim
       s.flood = 1;
@@ -1041,6 +1065,7 @@ export class ScreenFX {
     if (!a) { this.U.uLensColA.value.copy(enemy); this.U.uLensColB.value.copy(own); this.U.uEdgeInk.value.set(enemy.r, enemy.g, enemy.b, 0); }
     switch (name) {
       case 'splat': { const ang = o.angle ?? Math.random() * TAU; const p = this._edgePoint(ang, o.inset ?? 0.05); this.lens.splat(CH_ENEMY, o.x ?? p.x, o.y ?? p.y, o.size ?? 0.08, this._aspect, { life: o.life ?? 2.2 }); break; }
+      case 'goggle': { const p = this._edgePoint(o.angle ?? Math.random() * TAU, o.inset ?? 0.28); this.lens.goggle(CH_ENEMY, o.x ?? p.x, o.y ?? p.y, o.size ?? 0.13, this._aspect, { life: o.life ?? 0.9, wipe: (o.x ?? p.x) < 0.5 ? -1 : 1 }); break; }
       case 'damage': this._damageSplat(o.amount ?? 50, o.attacker || null); s.chroma = Math.min(1.2, s.chroma + 0.7); this._kickPunch(-0.025); break;
       case 'water': this._startFlood(null, 'water'); break;
       case 'flood': this.U.uFlood.value.set(enemy.r, enemy.g, enemy.b, 0); this.U.uFloodClear.value = 0; s.floodMode = 'in'; s.floodT = o.t ?? 0; break;

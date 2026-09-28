@@ -23,8 +23,8 @@
 // Boss mode (docs/BOSS.md): src/ui/hud-boss.js (hud.boss) adds the boss bar / title card / callouts / damage numbers and
 // the endings; the roster slots show the 8-kid squad in squad ink. It switches on match.mode === 'boss' or boss:spawn.
 import { h, clamp, colorVars, toHex, fmtTime, fmtInt, splatSVG, splatShape, pct, shade, lerp, easeOutBack, easeOutCubic, restartAnim, prefersReducedMotion } from './ui-util.js';
-import { SQUID, SPLAT_ICON, DEATH_ICON, GLYPHS, SUB_ICONS, richText, keycap, specialIcon, weaponIcon } from './ui-icons.js';
-import { WEAPONS, SPECIALS, TEAM_NAMES, SUB, PLAYER, MATCH } from '../config.js';
+import { GLYPHS, richText, keycap, specialIcon, weaponIcon, GRENADE_ICON, BALL_ICON, SPRINT_ICON, OUT_ICON, WHISTLE_ICON } from './ui-icons.js';
+import { WEAPONS, SPECIALS, TEAM_NAMES, SUB, PLAYER, MATCH, ROUNDS } from '../config.js';
 import { on, G } from '../core/ctx.js';
 import { BossHud } from './hud-boss.js';
 import { installBossAudio } from '../audio/bossAudio.js';
@@ -36,15 +36,17 @@ const BUMP = { duration: 320, easing: 'cubic-bezier(.34,1.8,.64,1)' };
 const TWIN_KICK = [{ transform: 'scale(1.55)', strokeWidth: '2.6px' }, { transform: 'scale(1)', strokeWidth: '1.8px' }];
 const TWIN_KICK_T = { duration: 130, easing: 'cubic-bezier(.2,.8,.3,1)' };
 const TAU = Math.PI * 2;
-const STREAKS = { 2: 'DOUBLE SPLAT!', 3: 'TRIPLE SPLAT!', 4: 'QUAD SPLAT!' };
+const STREAKS = { 2: 'DOUBLE!', 3: 'TRIPLE!', 4: 'QUAD!' };
 const kindOf = (w) => (WEAPONS[w] && WEAPONS[w].kind) || w || 'shooter';
 
 // ------------------------------------------------------------------ HUD-only art
 const K = '#15121c';
 const SPAWN_ICON = `<svg viewBox="0 0 64 64" aria-hidden="true"><ellipse cx="32" cy="48" rx="24" ry="9" fill="none" stroke="${K}" stroke-width="8"/><ellipse cx="32" cy="48" rx="24" ry="9" fill="none" stroke="currentColor" stroke-width="4"/><path d="M32 6 L32 36 M20 25 L32 38 L44 25" fill="none" stroke="${K}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/><path d="M32 6 L32 36 M20 25 L32 38 L44 25" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 const DROP_ICON = `<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M32 5 C32 5 51 28 51 41 C51 52 42.5 59 32 59 C21.5 59 13 52 13 41 C13 28 32 5 32 5 Z" fill="currentColor" stroke="${K}" stroke-width="4"/><path d="M24 37 Q24 30 29 26" stroke="#fff" stroke-opacity=".7" stroke-width="4" fill="none" stroke-linecap="round"/></svg>`;
-// squid-head badge silhouette (roster)
-const BADGE_PATH = 'M32 2.5 C35.5 2.5 43 9 47.5 14.5 C50 14 55 15.5 57 18.5 C58.6 21 57.4 23.6 55.2 24.8 A24.5 24.5 0 1 1 8.8 24.8 C6.6 23.6 5.4 21 7 18.5 C9 15.5 14 14 16.5 14.5 C21 9 28.5 2.5 32 2.5 Z';
+// jersey-crest badge silhouette (roster player pips)
+const BADGE_PATH = 'M12 5 L52 5 Q58 5 58 11 L58 38 Q58 50 32 60 Q6 50 6 38 L6 11 Q6 5 12 5 Z';
+// paintball hopper: a rounded pod on a feed neck (fill level is a clipped rising block of balls)
+const HOPPER_BODY = 'M14 30 C14 14 22 6 36 6 C50 6 58 14 58 30 C58 44 50 52 40 53 L40 60 L32 60 L32 53 C22 52 14 44 14 30 Z';
 function arcPath(r0, r1, halfDeg, tip) {
   const a = (halfDeg * Math.PI) / 180;
   const P = (r, t) => `${(Math.sin(t) * r).toFixed(2)} ${(-Math.cos(t) * r).toFixed(2)}`;
@@ -71,7 +73,9 @@ export class HUD {
     this._turfAcc = 0; this._turfT = 0; this._turfTotal = 0; this._turfShown = 0;
     this._kills = { times: [], streak: 0, first: false, lastKiller: null, dealt: new Map() };
     this._bloom = 0; this._kick = 0; this._hitN = 0; this._hitT = -9;
-    this._tank = { level: 1, slosh: 0, sloshV: 0, wobble: 0, bubbles: [], prevInk: 1, prevYaw: null, prevVx: 0, prevVz: 0, empty: 0, t: 0 };
+    this._hop = { level: 1, shown: -1 };
+    this._rounds = [];      // BREAKOUT: this match's rounds as the HUD saw them ({ winner, reason, alive })
+    this._elim = false;
     this._map = { cx: 0.5, cy: 0.5, hover: -1, open: false, pressed: -1, pressT: 0 };
     this._build();
     this._fxLoop = this._fxLoop.bind(this);
@@ -108,8 +112,16 @@ export class HUD {
     }));
     this.squads = [squad('a'), squad('b')];
     this.timerTxt = h('span', { class: 'iw-timer__txt' }, '3:00');
-    this.timer = h('div', { class: 'iw-timer' }, h('span', { class: 'iw-timer__blob' }), h('span', { class: 'iw-timer__drip' }), this.timerTxt);
-    this.top = h('div', { class: 'iw-hud__top' }, this.squads[0], this.timer, this.squads[1]);
+    this.roundLbl = h('span', { class: 'iw-timer__round' }, 'ROUND 1');
+    this.timer = h('div', { class: 'iw-timer' }, h('span', { class: 'iw-timer__blob' }), h('span', { class: 'iw-timer__drip' }), this.roundLbl, this.timerTxt);
+    // BREAKOUT scoreboard: round wins (big number + pips to ROUNDS.toWin) either side of the round clock
+    const wins = (side) => h('div', { class: `bk-wins bk-wins--${side}` },
+      h('b', { class: 'bk-wins__n' }, '0'),
+      h('span', { class: 'bk-wins__pips' }, Array.from({ length: ROUNDS.toWin || 4 }, () => h('i'))),
+      h('span', { class: 'bk-wins__alive' }, h('b', null, '4'), h('small', null, 'LEFT')));
+    this.wins = [wins('a'), wins('b')];
+    this.mpEl = h('div', { class: 'bk-mp' }, 'MATCH POINT');
+    this.top = h('div', { class: 'iw-hud__top' }, this.squads[0], this.wins[0], this.timer, this.wins[1], this.squads[1], this.mpEl);
 
     // ---- special gauge (liquid orb) + turf total
     const sid = `iwsp${this.id}`;
@@ -145,14 +157,42 @@ export class HUD {
     // ---- crosshair cluster
     this.ret = h('div', { class: 'iw-ret' });
     this.hitEl = h('div', { class: 'iw-hit' }, h('i'), h('i'), h('i'), h('i'));
-    this.killEl = h('div', { class: 'iw-kill' }, h('span', { class: 'iw-kill__ring' }), h('span', { class: 'iw-kill__splat', html: SPLAT_ICON }), h('i'), h('i'), h('i'), h('i'));
+    this.killEl = h('div', { class: 'iw-kill' }, h('span', { class: 'iw-kill__ring' }), h('span', { class: 'iw-kill__out bk-sport' }, 'OUT'), h('i'), h('i'), h('i'), h('i'));
     this.shield = h('div', { class: 'iw-shield', html: '<svg viewBox="-50 -50 100 100" aria-hidden="true"><circle r="36" pathLength="100"/></svg>' });
-    this.subChip = h('div', { class: 'iw-subaim' }, h('i', { html: SUB_ICONS.bomb }), h('span', { class: 'iw-subaim__bar' }, h('i')), h('b', null, `${Math.round(SUB.bomb.inkCost)}%`));
-    this.tankCanvas = h('canvas', { class: 'iw-tank__cv' });
-    this.tankCtx = this.tankCanvas.getContext('2d');
-    this.tank = h('div', { class: 'iw-tank' }, this.tankCanvas, h('div', { class: 'iw-tank__low' }, 'LOW INK'));
+    this.subChip = h('div', { class: 'iw-subaim' }, h('i', { html: GRENADE_ICON }), h('b', null, '×2'));
+    // hopper mini-meter beside the reticle + reload / low / empty status under it
+    this.magFill = h('i', { class: 'bk-mag__fill' });
+    this.tank = h('div', { class: 'bk-mag' }, h('span', { class: 'bk-mag__tube' }, this.magFill), h('i', { class: 'bk-mag__cap' }));
+    this.rlTxt = h('span', { class: 'bk-rl__txt' });
+    this.rlBar = h('i', { class: 'bk-rl__bar' });
+    this.rlEl = h('div', { class: 'bk-rl' }, this.rlTxt, h('span', { class: 'bk-rl__track' }, this.rlBar));
     this.tpops = h('div', { class: 'iw-tpops' });
-    this.xh = h('div', { class: 'iw-xh' }, this.shield, this.ret, this.hitEl, this.killEl, this.tank, this.subChip, this.tpops);
+    this.xh = h('div', { class: 'iw-xh' }, this.shield, this.ret, this.hitEl, this.killEl, this.tank, this.rlEl, this.subChip, this.tpops);
+    // hopper panel (bottom right): ball count, hopper pod filling, reload bar, grenades, sprint
+    const hid = `bkhp${this.id}`;
+    const balls = [];
+    for (let r = 0; r < 6; r++) for (let c = 0; c < 6; c++) balls.push(`<circle cx="${(14 + c * 9 + (r % 2) * 4.5).toFixed(1)}" cy="${(56 - r * 8.2).toFixed(1)}" r="4.3"/>`);
+    this.hopArt = h('div', { class: 'bk-hop__art', html: `<svg viewBox="0 0 72 64" aria-hidden="true">
+        <defs><clipPath id="${hid}"><path d="${HOPPER_BODY}"/></clipPath></defs>
+        <path class="bk-hop__bg" d="${HOPPER_BODY}"/>
+        <g clip-path="url(#${hid})"><g class="bk-hop__lvl"><rect class="bk-hop__paint" x="0" y="0" width="72" height="70"/><g class="bk-hop__balls">${balls.join('')}</g></g>
+          <ellipse cx="27" cy="16" rx="8" ry="4.5" transform="rotate(-25 27 16)" fill="#fff" opacity=".28"/></g>
+        <path class="bk-hop__rim" d="${HOPPER_BODY}"/>
+        <rect class="bk-hop__lid" x="24" y="2.5" width="24" height="7" rx="3"/></svg>` });
+    this.hopLvl = this.hopArt.querySelector('.bk-hop__lvl');
+    this.hopN = h('b', { class: 'bk-hop__n' }, '0');
+    this.hopMax = h('small', { class: 'bk-hop__max' }, '/ 0');
+    this.hopBar = h('i');
+    this.hopState = h('span', { class: 'bk-hop__state' });
+    this.nadePips = Array.from({ length: Math.max(1, SUB.bomb.count || 2) }, () => h('i', { class: 'bk-nade', html: GRENADE_ICON }));
+    this.sprintEl = h('span', { class: 'bk-sprint' }, h('i', { html: SPRINT_ICON }), 'SPRINT');
+    this.hop = h('div', { class: 'bk-hop' },
+      this.hopArt,
+      h('div', { class: 'bk-hop__main' },
+        h('div', { class: 'bk-hop__count' }, h('i', { class: 'bk-hop__ball', html: BALL_ICON }), this.hopN, this.hopMax),
+        h('div', { class: 'bk-hop__bar' }, this.hopBar),
+        h('div', { class: 'bk-hop__row' }, h('span', { class: 'bk-hop__nades' }, this.nadePips), this.sprintEl, this.hopState)));
+    this.specEl = h('div', { class: 'bk-spec' }, h('small', null, 'SPECTATING'), h('span', { class: 'bk-spec__w' }), h('b', { class: 'bk-spec__name' }), h('span', { class: 'bk-spec__left' }));
     this.ddLayer = h('div', { class: 'iw-dds' });
 
     // ---- minimap + super-jump beacons
@@ -207,8 +247,8 @@ export class HUD {
     this.kcards = h('div', { class: 'iw-kcards' });
     this.callouts = h('div', { class: 'iw-callouts' });
 
-    el.append(this.vig, this.canvas, this.downLayer, this.markerLayer, this.ddLayer, this.top, this.sp, this.turfEl, this.feedEl, this.xh,
-      this.kcards, this.callouts, this.promptEl, this.mapDim, this.map, this.fpsEl, this.countLayer, this.bannerLayer, this.splatLayer);
+    el.append(this.vig, this.canvas, this.downLayer, this.markerLayer, this.ddLayer, this.top, this.sp, this.turfEl, this.feedEl, this.xh, this.hop,
+      this.kcards, this.callouts, this.promptEl, this.mapDim, this.map, this.fpsEl, this.specEl, this.countLayer, this.bannerLayer, this.splatLayer);
     this.root.appendChild(el);
 
     // judge + splatted + lineup live outside the hideable HUD so they survive setVisible(false)
@@ -247,12 +287,16 @@ export class HUD {
     const me = this._local();
     const spect = !!(me && me.alive === false);
     if (spect !== L.spect) { L.spect = spect; this.el.classList.toggle('is-spectating', spect); }
-    this._updTimer(f.time);
+    const elim = !!f.round;
+    if (elim !== L.elim) { L.elim = elim; this._elim = elim; this.el.classList.toggle('is-elim', elim); this.overLayer.classList.toggle('is-elim', elim); }
+    this._updTimer(f.round ? f.round.time : f.time);
+    this._updRound(f.round);
     if (f.teams) this._updSquads(this.boss.on ? this.boss.squadTeams(f.teams) : f.teams);
     this._updCrosshair(f, dt);
-    this._updTank(f, dt);
+    this._updHopper(f, dt);
+    this._updSpectate(me, f.round);
     this._updSpecial(f, dt);
-    this._updTurf(dt);
+    if (!elim) this._updTurf(dt);
     this._updHp(f.hp);
     this._updMap(f.map, dt);
     this._updMarkers(f.markers);
@@ -327,7 +371,7 @@ export class HUD {
   feed({ text = '', color = '#ffffff', kind = 'info' } = {}) {
     // your own splats get the big kill card (below the crosshair) — don't repeat them as a feed pill
     if (kind === 'kill' && this._live() && !this.lab) return;
-    const icon = kind === 'kill' ? SPLAT_ICON : kind === 'death' ? DEATH_ICON : kind === 'ally' ? SQUID : GLYPHS.drop;
+    const icon = kind === 'kill' || kind === 'death' || kind === 'ally' ? OUT_ICON : GLYPHS.flag;
     const el = h('div', { class: `iw-feed__item iw-feed__item--${kind}` },
       h('span', { class: 'iw-feed__icon', html: icon }),
       h('span', { class: 'iw-feed__text', html: richText(text) }));
@@ -350,8 +394,9 @@ export class HUD {
     this._addFx('smear', (dt) => this._tickSmears(dt));
   }
 
-  showSplatted({ by = null, byColor = '#2f5bff', respawn = 5 } = {}) {
+  showSplatted({ by = null, byColor = '#2f5bff', respawn = 5, out = false } = {}) {
     this.hideSplatted(true);
+    if (out || (respawn <= 0 && this._elim)) { this._showOut({ by, byColor }); return; }
     const C = 2 * Math.PI * 44;
     const num = h('b', { class: 'iw-spl__num' }, String(Math.ceil(respawn)));
     const ring = h('div', { class: 'iw-spl__ring', html: `<svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="44" class="bg"/><circle cx="50" cy="50" r="44" class="fg" style="stroke-dasharray:${C.toFixed(1)};stroke-dashoffset:${C.toFixed(1)};animation-duration:${Math.max(0.1, respawn)}s"/></svg>` }, num, h('small', null, 'RESPAWN'));
@@ -364,11 +409,11 @@ export class HUD {
         h('div', { class: 'iw-spl__splat', html: splatSVG({ seed: 64, cls: 'iw-fby', r: 62, arms: 11, drops: 5, viewBox: 240 }) }),
         kw,
         h('div', { class: 'iw-spl__text' },
-          h('div', { class: 'iw-spl__by' }, by ? 'SPLATTED BY' : 'SPLATTED!'),
+          h('div', { class: 'iw-spl__by' }, by ? 'MARKED BY' : 'MARKED!'),
           by ? h('div', { class: 'iw-spl__name iw-display' }, String(by)) : null,
           killer && killer.weaponId ? h('div', { class: 'iw-spl__wn' }, (WEAPONS[killer.weaponId] || {}).name || '') : null),
         ring),
-      h('div', { class: 'iw-spl__hint', html: richText('Hold [TAB] to plan a Super Jump') }));
+      G.match && G.match.superJumpOk && !G.match.superJumpOk() ? null : h('div', { class: 'iw-spl__hint', html: richText('Hold [TAB] to plan a Super Jump') }));
     colorVars(el, 'by', toHex(byColor, '#2f5bff'));
     this.splatLayer.appendChild(el);
     const st = { el, tint, end: this._fxTime + Math.max(0, respawn), num, last: Math.ceil(respawn) };
@@ -385,6 +430,30 @@ export class HUD {
       }
       return st.t > -0.5;
     });
+  }
+
+  // elimination: one life per round — "OUT!" with who marked you (no respawn countdown), then it docks away while the
+  // camera moves on to a teammate (the SPECTATING bar takes over)
+  _showOut({ by, byColor }) {
+    const tint = h('div', { class: 'iw-spl__tint' });
+    this.el.prepend(tint);
+    const killer = this._kills.lastKiller;
+    const wid = killer && killer.weaponId;
+    const el = h('div', { class: 'iw-spl bk-out' },
+      h('div', { class: 'bk-out__card' },
+        h('div', { class: 'bk-out__stamp bk-sport' }, 'OUT!'),
+        h('div', { class: 'bk-out__by' },
+          wid ? h('span', { class: 'bk-out__w', html: weaponIcon(kindOf(wid)) }) : h('span', { class: 'bk-out__w', html: OUT_ICON }),
+          h('span', { class: 'bk-out__txt' },
+            h('small', null, by ? 'MARKED BY' : 'ELIMINATED'),
+            h('b', null, by ? String(by) : 'OUT OF BOUNDS'),
+            wid ? h('em', null, (WEAPONS[wid] || {}).name || '') : null)),
+        h('div', { class: 'bk-out__note' }, 'Out for the round — back in next round')));
+    colorVars(el, 'by', toHex(byColor, '#2f5bff'));
+    this.splatLayer.appendChild(el);
+    const st = { el, tint, out: true };
+    this._splatted = st;
+    setTimeout(() => { if (this._splatted === st) el.classList.add('is-docked'); }, 3400);
   }
 
   hideSplatted(instant = false) {
@@ -481,6 +550,94 @@ export class HUD {
     });
   }
 
+  /**
+   * BREAKOUT full-time card (elimination results): final round score, WIN/LOSE, a strip of every round (who took it and
+   * how) and the per-player table (eliminations, damage, outs, rounds survived). Resolves after ~7 s (or a key / click
+   * once it has landed), then fades out under the menus' results screen.
+   *   data: { colors, names, myTeam, roundWins, rounds: [{ winner, reason, alive? }], players: [{ name, team, weapon,
+   *           elims, damage, deaths, survived, isSelf }], win, mapName }
+   */
+  finalScore(data = {}) {
+    return new Promise((resolve) => {
+      this.overLayer.querySelectorAll('.bk-fs').forEach((e) => e.remove());
+      const my = data.myTeam === 1 ? 1 : 0, th = 1 - my;
+      const cols = (data.colors || ['#ff8a14', '#2f5bff']).map((c, i) => toHex(c, i ? '#2f5bff' : '#ff8a14'));
+      const names = data.names || TEAM_NAMES;
+      const nm = (t) => String(names[t] || TEAM_NAMES[t] || '').toUpperCase();
+      const w = data.roundWins || [0, 0];
+      const win = data.win != null ? !!data.win : w[my] > w[th];
+      const draw = w[my] === w[th] && data.win == null;
+      const rounds = (data.rounds || []).map((r, i) => ({ ...(this._rounds[i] || {}), ...(r || {}) }));
+      const players = data.players || [];
+      // MVP: most eliminations, then damage
+      let mvp = null;
+      for (const p of players) if (!mvp || (p.elims || 0) > (mvp.elims || 0) || ((p.elims || 0) === (mvp.elims || 0) && (p.damage || 0) > (mvp.damage || 0))) mvp = p;
+      if (mvp && !(mvp.elims || mvp.damage)) mvp = null;
+      const numA = h('b', { class: 'bk-fs__num' }, '0'), numB = h('b', { class: 'bk-fs__num' }, '0');
+      const chip = (r, i) => {
+        const t = r.winner === my ? 'my' : r.winner === th ? 'th' : 'draw';
+        const how = r.reason === 'wipe' ? 'WIPE' : 'TIME';
+        const left = r.alive && r.winner >= 0 ? `${r.alive[r.winner]} LEFT` : r.winner < 0 ? 'DRAW' : '';
+        return h('div', { class: `bk-rc is-${t}`, style: { '--i': i } },
+          h('small', null, `R${i + 1}`),
+          h('i', { html: r.reason === 'wipe' ? OUT_ICON : WHISTLE_ICON }),
+          h('b', null, how),
+          left ? h('em', null, left) : null);
+      };
+      const table = (t) => {
+        const rows = players.filter((p) => p.team === t).sort((a, b) => (b.elims || 0) - (a.elims || 0) || (b.damage || 0) - (a.damage || 0));
+        return h('div', { class: `bk-ft bk-ft--${t === my ? 'my' : 'th'}` },
+          h('div', { class: 'bk-ft__head' },
+            h('span', { class: 'bk-ft__team' }, h('i'), nm(t), w[t] > w[1 - t] ? h('em', null, 'WINNERS') : null),
+            h('span', null, 'ELIMS'), h('span', null, 'DMG'), h('span', null, 'OUTS'), h('span', null, 'SURV')),
+          rows.map((p, i) => h('div', { class: 'bk-ft__row' + (p.isSelf ? ' is-self' : '') + (p === mvp ? ' is-mvp' : ''), style: { '--i': i } },
+            h('span', { class: 'bk-ft__name' }, h('i', { html: weaponIcon(kindOf(p.weapon)) }), h('b', null, p.name), p.isSelf ? h('em', null, 'YOU') : null, p === mvp ? h('strong', null, 'MVP') : null),
+            h('span', { class: 'bk-ft__n' }, String(p.elims ?? p.splats ?? 0)),
+            h('span', { class: 'bk-ft__n' }, fmtInt(p.damage || 0)),
+            h('span', { class: 'bk-ft__n' }, String(p.deaths || 0)),
+            h('span', { class: 'bk-ft__n' }, String(p.survived || 0)))));
+      };
+      const el = h('div', { class: 'bk-fs' + (draw ? ' is-draw' : win ? ' is-win' : ' is-lose') },
+        h('div', { class: 'bk-fs__bg' }),
+        h('div', { class: 'bk-fs__card' },
+          h('div', { class: 'bk-fs__kicker' }, `FULL TIME${data.mapName ? ' · ' + String(data.mapName).toUpperCase() : ''} · ELIMINATION`),
+          h('div', { class: 'bk-fs__board' },
+            h('div', { class: 'bk-fs__side is-my' }, h('span', null, nm(my)), numA),
+            h('i', { class: 'bk-fs__dash' }, '—'),
+            h('div', { class: 'bk-fs__side is-th' }, numB, h('span', null, nm(th)))),
+          h('div', { class: 'bk-fs__verdict bk-sport' }, draw ? 'DRAW' : win ? 'VICTORY' : 'DEFEAT'),
+          h('div', { class: 'bk-fs__rounds' }, rounds.map(chip)),
+          h('div', { class: 'bk-fs__tables' }, table(my), table(th)),
+          h('div', { class: 'bk-fs__foot' }, 'Press any key to continue')));
+      colorVars(el, 'my', cols[my]); colorVars(el, 'th', cols[th]);
+      this.overLayer.appendChild(el);
+      this._snd('ui_confirm', { volume: 0.6 });
+      const t0 = this._fxTime;
+      let shownA = -1, shownB = -1, done = false, ready = false;
+      const finish = () => {
+        if (done) return; done = true;
+        removeEventListener('keydown', onKey, true); el.removeEventListener('pointerdown', onKey);
+        resolve({ winner: draw ? -1 : win ? my : th });
+        el.classList.add('is-out');
+        setTimeout(() => el.remove(), 700);
+      };
+      const onKey = () => { if (ready) finish(); };
+      addEventListener('keydown', onKey, true); el.addEventListener('pointerdown', onKey);
+      this._addFx('finalscore', () => {
+        if (done || !el.isConnected) return false;
+        const t = this._fxTime - t0;
+        const k = easeOutCubic(clamp((t - 0.35) / 0.8));
+        const a = Math.round(w[my] * k), b = Math.round(w[th] * k);
+        if (a !== shownA) { shownA = a; numA.textContent = String(a); }
+        if (b !== shownB) { shownB = b; numB.textContent = String(b); }
+        if (t > 1.2 && !el.classList.contains('is-landed')) { el.classList.add('is-landed'); this._snd(win ? 'special_ready' : 'ui_error', { volume: 0.55 }); }
+        if (t > 2) ready = true;
+        if (t > 7.5) { finish(); return false; }
+        return true;
+      });
+    });
+  }
+
   dispose() {
     removeEventListener('resize', this._onResize);
     cancelAnimationFrame(this._rafId);
@@ -499,7 +656,7 @@ export class HUD {
 
   _bindBus() {
     this._unsubs = [
-      on('turf', ({ actor, area }) => { if (area > 0 && actor && actor === this._local() && this._live()) { this._turfAcc += area * (MATCH.pointsPerM2 || 1); this._turfTotal += area * (MATCH.pointsPerM2 || 1); } }),
+      on('turf', ({ actor, area }) => { if (area > 0 && actor && actor === this._local() && this._live() && !G.match?.elim) { this._turfAcc += area * (MATCH.pointsPerM2 || 1); this._turfTotal += area * (MATCH.pointsPerM2 || 1); } }),
       on('hit', ({ attacker, victim, damage }) => {
         if (!this._live() || !attacker || attacker !== this._local()) return;
         this._lastHitDmg = damage || 0;
@@ -511,13 +668,22 @@ export class HUD {
       }),
       on('splatted', (e) => this._onSplatted(e)),
       on('respawn', ({ actor }) => { if (actor && actor === this._local()) { this._clearDamageDirs(); this._restart(this.shield, 'is-on'); } }),
-      on('recoil', ({ amount }) => { if (this._live()) { this._bloom = Math.min(1, this._bloom + 0.18 + (amount || 0) * 6); this._tank.wobble = Math.min(1, this._tank.wobble + 0.25); } }),
+      on('recoil', ({ amount }) => { if (this._live()) this._bloom = Math.min(1, this._bloom + 0.18 + (amount || 0) * 6); }),
       on('weapon:fire', ({ actor, hand }) => {
         if (!actor || actor !== this._local() || !this._live()) return;
-        this._kick = 1; this._tank.wobble = Math.min(1, this._tank.wobble + 0.06);
+        this._kick = 1;
         if (this._L.kind === 'dualies' && this._twin) { const el = this._twin[hand ? 1 : 0]; if (el && el.animate) el.animate(TWIN_KICK, TWIN_KICK_T); }
       }),
-      on('lowink', ({ actor }) => { if (actor === this._local() && this._live()) { this._tank.empty = 0.45; this._restart(this.tank, 'is-empty'); } }),
+      on('weapon:dry', ({ actor }) => { if (actor === this._local() && this._live()) { this._restart(this.tank, 'is-dry'); this._restart(this.rlEl, 'is-dry'); this._restart(this.hop, 'is-dry'); } }),
+      on('reload:start', ({ actor }) => { if (actor === this._local() && this._live()) this._restart(this.hop, 'is-reload'); }),
+      on('reload:end', ({ actor }) => { if (actor === this._local() && this._live()) { this._restart(this.hop, 'is-loaded'); this._restart(this.tank, 'is-loaded'); } }),
+      on('grenade:empty', ({ actor }) => { if (actor === this._local() && this._live()) { this._restart(this.subChip, 'is-short'); this._restart(this.hop, 'is-nonade'); } }),
+      // ---- BREAKOUT rounds (docs/PAINTBALL.md): banners, countdown, round log, eliminations
+      on('round:pre', (e) => this._onRoundPre(e)),
+      on('round:count', (e) => this._onRoundCount(e)),
+      on('round:start', (e) => this._onRoundStart(e)),
+      on('round:end', (e) => this._onRoundEnd(e)),
+      on('eliminated', (e) => this._onEliminated(e)),
       on('special:ready', ({ actor }) => { if (actor === this._local() && this._live()) this._restart(this.sp, 'is-flare'); }),
       on('superjump', ({ actor, phase, to }) => { if (actor === this._local() && phase === 'charge' && this._live()) this._snd('ui_confirm', { volume: 0.6 }); void to; }),
       on('match:state', ({ state, match }) => {
@@ -525,6 +691,7 @@ export class HUD {
         if (state === 'intro') this._startMatchHud(match);
         if (state === 'playing') this.el.classList.add('is-live');
         if (state === 'finish' || state === 'judge') { this.el.classList.remove('is-live'); this._clearDamageDirs(); }
+        if (state === 'finish' && match.elim) this._matchOverBanner(match);
       }),
     ];
   }
@@ -538,7 +705,155 @@ export class HUD {
     this._L.turfTxt = null;
     this.turfNum.textContent = '0';
     this.boss.setMode(!!match && match.mode === 'boss', match && match.boss);
+    this._rounds = [];
+    this._elim = !!(match && match.elim);
+    this.el.classList.toggle('is-elim', this._elim); this.overLayer.classList.toggle('is-elim', this._elim);
+    this._L.elim = this._elim; this._L.rkey = null;
+    this.feedEl.innerHTML = '';
+    this.bannerLayer.innerHTML = '';
+    this.overLayer.querySelectorAll('.bk-fs').forEach((e) => e.remove());
     this._lineup(match);
+  }
+
+  // ================================================================ BREAKOUT: rounds, banners, eliminations
+  _myT(match) { const l = (match && match.local) || this._local(); return l && l.team === 1 ? 1 : 0; }
+  _teamName(t) { const n = (G.game && G.game.palette && G.game.palette.names) || TEAM_NAMES; return String(n[t] || TEAM_NAMES[t] || '').toUpperCase(); }
+  _roundLive(match) { return !!(match && !match.attract && match === G.match && (this._live() || this.lab)); }
+
+  /** Round-flow card (pre-round / round result / match over). tone: neutral | hot | win | lose | draw */
+  _roundCard({ kind = 'pre', title = '', sub = '', score = null, tag = null, tone = 'neutral', hold = false, ms = 3400 }) {
+    this.bannerLayer.querySelectorAll('.bk-bn').forEach((b) => { b.classList.add('is-out'); setTimeout(() => b.remove(), 320); });
+    this.bannerLayer.querySelectorAll('.iw-bn[data-g="center"]').forEach((b) => b.remove());
+    const scoreEl = score ? h('div', { class: 'bk-bn__score' },
+      h('b', { class: 'bk-bn__sa' }, String(score[0])), h('i', null, '—'), h('b', { class: 'bk-bn__sb' }, String(score[1]))) : null;
+    const count = kind === 'pre' ? h('div', { class: 'bk-bn__count' }) : null;
+    const el = h('div', { class: `bk-bn bk-bn--${kind} is-${tone}` },
+      h('div', { class: 'bk-bn__band' }, h('i'), h('i')),
+      tag ? h('div', { class: 'bk-bn__tag' }, tag) : null,
+      h('div', { class: 'bk-bn__title bk-sport' }, title),
+      scoreEl,
+      sub ? h('div', { class: 'bk-bn__sub' }, sub) : null,
+      count);
+    this.bannerLayer.appendChild(el);
+    el._count = count;
+    if (!hold) setTimeout(() => { el.classList.add('is-out'); setTimeout(() => el.remove(), 380); }, ms);
+    else setTimeout(() => { if (el.isConnected) { el.classList.add('is-out'); setTimeout(() => el.remove(), 380); } }, 9000);   // failsafe
+    return el;
+  }
+
+  _onRoundPre({ round, match }) {
+    if (!this._roundLive(match)) return;
+    this.hideSplatted(true);
+    this._clearDamageDirs();
+    const my = this._myT(match), w = match.roundWins || [0, 0], tw = ROUNDS.toWin || 4;
+    const mpMe = w[my] === tw - 1, mpThem = w[1 - my] === tw - 1;
+    const tag = mpMe && mpThem ? 'DECIDER' : mpMe ? 'MATCH POINT' : mpThem ? `MATCH POINT · ${this._teamName(1 - my)}` : null;
+    this._preCard = this._roundCard({ kind: 'pre', title: `ROUND ${round}`, score: round > 1 ? [w[my], w[1 - my]] : null,
+      sub: round > 1 ? null : `FIRST TO ${tw} ROUNDS · ONE LIFE EACH`, tag, tone: mpMe || mpThem ? 'hot' : 'neutral', hold: true });
+  }
+
+  _onRoundCount({ n }) {
+    if (!this._live()) return;
+    const c = this._preCard && this._preCard.isConnected ? this._preCard._count : null;
+    if (!c) { this.countdown(n); return; }
+    c.textContent = String(n);
+    this._restart(c, 'is-pop');
+  }
+
+  _onRoundStart({ match }) {
+    if (!this._roundLive(match)) return;
+    if (this._preCard) { const p = this._preCard; this._preCard = null; p.classList.add('is-out'); setTimeout(() => p.remove(), 320); }
+    this.banner('go', 'BREAK!');
+  }
+
+  _onRoundEnd({ round, winner, reason, roundWins, match }) {
+    if (!this._roundLive(match)) return;
+    const my = this._myT(match), w = roundWins || match.roundWins || [0, 0], tw = ROUNDS.toWin || 4;
+    const alive = [match.aliveCount ? match.aliveCount(0) : 0, match.aliveCount ? match.aliveCount(1) : 0];
+    this._rounds[round - 1] = { winner, reason, alive };
+    const won = winner === my, draw = winner < 0;
+    let sub;
+    if (reason === 'wipe') sub = draw ? 'BOTH TEAMS ELIMINATED' : won ? 'ENEMY TEAM ELIMINATED' : 'TEAM ELIMINATED';
+    else if (alive[my] !== alive[1 - my]) sub = `TIME · ${alive[my]} v ${alive[1 - my]} LEFT`;
+    else sub = draw ? 'TIME · DEAD EVEN' : `TIME · ${won ? 'MORE' : 'LESS'} HP LEFT`;
+    const over = w[0] >= tw || w[1] >= tw;
+    const mp = !over && (w[my] === tw - 1 || w[1 - my] === tw - 1);
+    const tag = over ? (w[my] >= tw ? 'MATCH WON' : 'MATCH LOST') : mp ? 'MATCH POINT' : null;
+    this._roundCard({ kind: 'end', title: draw ? 'DRAW' : won ? 'ROUND WON' : 'ROUND LOST', sub, score: [w[my], w[1 - my]], tag, tone: draw ? 'draw' : won ? 'win' : 'lose', ms: 3300 });
+    this._preCard = null;
+  }
+
+  _matchOverBanner(match) {
+    const my = this._myT(match), w = match.roundWins || [0, 0];
+    this._roundCard({ kind: 'over', title: 'MATCH OVER', score: [w[my], w[1 - my]], tone: w[my] > w[1 - my] ? 'win' : w[my] < w[1 - my] ? 'lose' : 'draw', ms: 2600 });
+  }
+
+  _onEliminated({ victim, attacker, cause }) {
+    if (!victim || !this._live() || !G.match || !G.match.elim) return;
+    const me = this._local();
+    const col = (t) => toHex(G.teamHex?.[t], t === this._myTeam() ? (this._L.ca || '#ff8a14') : (this._L.cb || '#2f5bff'));
+    const by = attacker && attacker !== victim ? attacker : null;
+    const mine = !!(by && by === me), mineOut = victim === me;
+    const el = h('div', { class: 'bk-kf' + (mine ? ' is-mine' : '') + (mineOut ? ' is-me' : '') + (victim.team === this._myTeam() ? ' is-ally-out' : '') },
+      by ? h('span', { class: 'bk-kf__a' }, by === me ? 'YOU' : by.name) : null,
+      h('span', { class: 'bk-kf__w', html: by ? weaponIcon(kindOf(by.weaponId)) : OUT_ICON }),
+      h('span', { class: 'bk-kf__v' }, victim === me ? 'YOU' : victim.name),
+      h('em', { class: 'bk-kf__out' }, by ? 'OUT' : cause === 'water' ? 'OUT OF BOUNDS' : 'OUT'));
+    colorVars(el, 'a', by ? col(by.team) : '#ffffff');
+    colorVars(el, 'v', col(victim.team));
+    this.feedEl.prepend(el);
+    const items = [...this.feedEl.children].filter((c) => !c._out);
+    for (let i = 5; i < items.length; i++) this._expireFeed(items[i], true);
+    el._t = setTimeout(() => this._expireFeed(el), 5200);
+  }
+
+  _updRound(r) {
+    if (!r) return;
+    const L = this._L, tw = r.toWin || ROUNDS.toWin || 4;
+    const key = `${r.n}|${r.wins[0]}|${r.wins[1]}|${r.alive[0]}|${r.alive[1]}|${r.phase}`;
+    if (key === L.rkey) return;
+    const prev = L.rstate;
+    L.rkey = key; L.rstate = { wins: [...r.wins], alive: [...r.alive] };
+    this.roundLbl.textContent = `ROUND ${Math.max(1, r.n)}`;
+    for (let s = 0; s < 2; s++) {
+      const box = this.wins[s];
+      const n = r.wins[s] | 0;
+      box.firstChild.textContent = String(n);
+      const pips = box.children[1].children;
+      for (let i = 0; i < pips.length; i++) pips[i].classList.toggle('is-on', i < n);
+      box.classList.toggle('is-mp', n === tw - 1);
+      box.lastChild.firstChild.textContent = String(r.alive[s] | 0);
+      box.classList.toggle('is-down', (r.alive[s] | 0) === 0);
+      if (prev && prev.wins[s] !== n && n > prev.wins[s]) this._restart(box, 'is-bump');
+      if (prev && prev.alive[s] > r.alive[s]) this._restart(box.lastChild, 'is-drop');
+    }
+    const mp = r.phase !== 'post' && (r.wins[0] === tw - 1 || r.wins[1] === tw - 1);
+    this.mpEl.classList.toggle('is-on', mp);
+    this.mpEl.textContent = r.wins[0] === tw - 1 && r.wins[1] === tw - 1 ? 'DECIDER' : 'MATCH POINT';
+    this.timer.classList.toggle('is-pre', r.phase === 'pre');
+    this.timer.classList.toggle('is-post', r.phase === 'post');
+  }
+
+  _updSpectate(me, r) {
+    const L = this._L;
+    let tgt = null;
+    if (r && me && me.alive === false && G.match && G.match.state === 'playing') {
+      const s = G.rig && G.rig.spectate;
+      const a = s && s.actor;
+      if (a && a !== me && a.team === me.team && a.alive) tgt = a;
+    }
+    const key = tgt ? `${tgt.name}|${tgt.weaponId}|${r.alive[0]}` : '';
+    if (key === L.spec) return;
+    const was = !!L.spec;
+    L.spec = key;
+    this.specEl.classList.toggle('is-on', !!tgt);
+    if (!tgt) return;
+    this.specEl.querySelector('.bk-spec__name').textContent = tgt.name;
+    this.specEl.querySelector('.bk-spec__w').innerHTML = weaponIcon(kindOf(tgt.weaponId));
+    this.specEl.querySelector('.bk-spec__left').textContent = `${r.alive[0]} LEFT`;
+    colorVars(this.specEl, 'c', toHex(G.teamHex?.[tgt.team], this._L.ca || '#ff8a14'));
+    if (was) this._restart(this.specEl, 'is-switch');
+    if (this._splatted && this._splatted.out) this._splatted.el.classList.add('is-docked');
   }
 
   _onSplatted({ victim, attacker }) {
@@ -566,12 +881,12 @@ export class HUD {
       // callouts, most important first
       let call = null, sub = null;
       const enemies = this._actors().filter((a) => a.team !== me.team);
-      if (enemies.length >= 4 && enemies.every((a) => !a.alive)) { call = 'WIPEOUT!'; sub = 'The whole team is splatted'; }
+      if (enemies.length >= 4 && enemies.every((a) => !a.alive)) { call = 'WIPEOUT!'; sub = 'Their whole team is out'; }
       else if (multi >= 2) call = STREAKS[Math.min(4, multi)];
-      else if (!K.first) { call = 'FIRST SPLAT!'; }
+      else if (!K.first) { call = 'FIRST ELIM!'; }
       else if (K.lastKiller && victim === K.lastKiller) { call = 'REVENGE!'; K.lastKiller = null; }
       else if (vStreak >= 3) { call = 'SHUTDOWN!'; sub = `Ended ${victim.name}'s streak`; }
-      else if (K.streak >= 3 && K.streak % 2 === 1) { call = `SPLAT STREAK ×${K.streak}`; }
+      else if (K.streak >= 3 && K.streak % 2 === 1) { call = `STREAK ×${K.streak}`; }
       K.first = true;
       if (call) this._callout(call, sub, multi >= 3 || call === 'WIPEOUT!');
       return;
@@ -590,8 +905,8 @@ export class HUD {
       h('span', { class: 'iw-kcard__splat', html: splatSVG({ seed: 30 + ((Math.random() * 40) | 0), cls: 'iw-fself', r: 56, arms: 9, drops: 4 }) }),
       h('span', { class: 'iw-kcard__w', html: weaponIcon(kindOf(victim.weaponId)) }),
       h('span', { class: 'iw-kcard__txt' },
-        h('small', null, kind === 'assist' ? 'ASSIST' : 'SPLATTED'),
-        h('b', null, victim.name || 'Squidkid')));
+        h('small', null, kind === 'assist' ? 'ASSIST' : 'ELIMINATED'),
+        h('b', null, victim.name || 'Player')));
     colorVars(card, 'v', col);
     this.kcards.prepend(card);
     const cards = [...this.kcards.children].filter((c) => !c._out);
@@ -707,7 +1022,7 @@ export class HUD {
   // ---------------------------------------------------------------- ally-down pings
   _allyDown(victim, attacker) {
     if (!victim.pos) return;
-    const el = h('div', { class: 'iw-down' }, h('i', { html: DEATH_ICON }), h('span', null, victim.name));
+    const el = h('div', { class: 'iw-down' }, h('i', { html: OUT_ICON }), h('span', null, victim.name));
     colorVars(el, 'c', toHex(G.teamHex?.[victim.team], this._L.ca || '#ff8a14'));
     this.downLayer.appendChild(el);
     this._downs.push({ el, x: victim.pos.x, y: victim.pos.y + 1.2, z: victim.pos.z, t: 0 });
@@ -751,7 +1066,7 @@ export class HUD {
     }
     const fin = time <= 10.001;
     if (fin !== L.fin) { L.fin = fin; this.timer.classList.toggle('is-final', fin); }
-    const last = time <= 60.001 && !fin;
+    const last = time <= 60.001 && !fin && !this._elim;
     if (last !== L.lastMin) { L.lastMin = last; this.timer.classList.toggle('is-last', last); }
   }
 
@@ -785,8 +1100,11 @@ export class HUD {
         el.classList.toggle('is-dead', !p.alive);
         el.classList.toggle('is-ready', !!p.specialReady && !!p.alive);
         el.classList.toggle('is-self', !!p.isSelf);
-        el.querySelector('.iw-sq__n').textContent = p.alive ? '' : String(Math.max(0, Math.ceil(p.respawn || 0)) || '');
-        if (wasAlive && !p.alive) {
+        el.querySelector('.iw-sq__n').textContent = p.alive ? '' : this._elim ? 'OUT' : String(Math.max(0, Math.ceil(p.respawn || 0)) || '');
+        el.classList.toggle('is-out', !p.alive && this._elim);
+        if (wasAlive && !p.alive && this._elim) {
+          el.animate([{ transform: 'scale(1.35) rotate(-10deg)' }, { transform: 'scale(.9) rotate(3deg)', offset: 0.5 }, { transform: 'scale(1)' }], { duration: 420, easing: 'cubic-bezier(.34,1.6,.64,1)' });
+        } else if (wasAlive && !p.alive) {
           el.animate([{ transform: 'scale(1.4) rotate(-14deg)' }, { transform: 'scale(.92) rotate(4deg)', offset: 0.5 }, { transform: 'scale(1)' }], { duration: 420, easing: 'cubic-bezier(.34,1.6,.64,1)' });
           const ring = el.querySelector('.iw-sq__ring circle');
           ring.style.animationDuration = `${Math.max(0.2, p.respawn || PLAYER.respawnTime)}s`;
@@ -907,121 +1225,69 @@ export class HUD {
     const aim = !!(a && a.alive && a.weaponRunner && a.weaponRunner.aimingSub) || !!f.subAim;
     if (aim !== L.aim) { L.aim = aim; this.subChip.classList.toggle('is-on', aim); if (aim) this._snd('ui_toggle', { volume: 0.35 }); }
     if (aim) {
-      const ok = (f.ink ?? 1) >= (f.subCost ?? 0.7) - 1e-3;
+      const n = f.grenades ?? (a && a.grenades) ?? 0;
+      const ok = n > 0;
       if (ok !== L.aimOk) { L.aimOk = ok; this.subChip.classList.toggle('is-short', !ok); }
-      const fr = clamp((f.ink ?? 1) / Math.max(0.01, f.subCost ?? 0.7));
-      if (L.aimFr == null || Math.abs(fr - L.aimFr) > 0.01) { L.aimFr = fr; this.subChip.style.setProperty('--f', fr.toFixed(3)); }
+      const txt = `×${n}`;
+      if (txt !== L.aimTxt) { L.aimTxt = txt; this.subChip.lastChild.textContent = txt; }
     }
   }
 
-  // ---------------------------------------------------------------- ink tank (canvas, sloshing liquid)
-  _updTank(f, dt) {
-    const L = this._L, T = this._tank;
-    const ink = clamp(f.ink == null ? 1 : +f.ink);
-    const sub = clamp(+f.subCost || 0);
-    const low = !!f.inkLow;
-    const nosub = sub > 0 && ink < sub;
-    if (low !== L.low) { L.low = low; this.tank.classList.toggle('is-low', low); }
-    if (nosub !== L.nosub) { L.nosub = nosub; this.tank.classList.toggle('is-nosub', nosub); }
-    // fade when full + idle
-    L.fullT = ink >= 0.995 && !low && !L.aim ? (L.fullT || 0) + dt : 0;
+  // ---------------------------------------------------------------- hopper (paintball ammo): panel + reticle meter
+  _updHopper(f, dt) {
+    const L = this._L, T = this._hop;
+    const max = Math.max(1, f.ammoMax || 100);
+    const ammo = Math.max(0, Math.round(f.ammo ?? (f.ink ?? 1) * max));
+    const frac = clamp(ammo / max);
+    const reloading = !!f.reloading, rf = clamp(+f.reloadFrac || 0);
+    const empty = ammo <= 0 && !reloading, low = !empty && !reloading && frac < 0.25;
+    // the pod visibly refills while the reload runs
+    const target = reloading ? lerp(frac, 1, rf) : frac;
+    T.level += (target - T.level) * (1 - Math.exp(-dt * 18));
+    if (Math.abs(T.level - target) < 0.002) T.level = target;
+    if (Math.abs(T.level - T.shown) > 0.002) {
+      T.shown = T.level;
+      this.hopLvl.setAttribute('transform', `translate(0 ${(3 + (1 - T.level) * 57).toFixed(2)})`);
+      this.magFill.style.transform = `scaleY(${T.level.toFixed(3)})`;
+    }
+    const txt = String(ammo);
+    if (txt !== L.ammoTxt) {
+      const dropped = L.ammoTxt != null && ammo < +L.ammoTxt;
+      L.ammoTxt = txt; this.hopN.textContent = txt;
+      if (!dropped) this.hopN.animate([{ scale: '1.25' }, { scale: '1' }], { duration: 220, easing: 'cubic-bezier(.34,1.8,.64,1)' });
+    }
+    const mtxt = `/ ${max}`;
+    if (mtxt !== L.ammoMaxTxt) { L.ammoMaxTxt = mtxt; this.hopMax.textContent = mtxt; }
+    const bar = reloading ? rf : frac;
+    if (L.hopBar == null || Math.abs(bar - L.hopBar) > 0.003) { L.hopBar = bar; this.hopBar.style.transform = `scaleX(${bar.toFixed(3)})`; }
+    const st = reloading ? 'rl' : empty ? 'empty' : low ? 'low' : 'ok';
+    if (st !== L.hopSt) {
+      L.hopSt = st;
+      for (const el of [this.hop, this.tank, this.rlEl]) {
+        el.classList.toggle('is-reloading', st === 'rl'); el.classList.toggle('is-empty', st === 'empty'); el.classList.toggle('is-low', st === 'low');
+      }
+      this.hopState.textContent = st === 'rl' ? 'RELOADING' : st === 'empty' ? 'EMPTY' : st === 'low' ? 'LOW' : '';
+      const pad = G.input && G.input.lastDevice === 'pad';
+      const key = pad ? '{X}' : '[R]';
+      this.rlTxt.innerHTML = st === 'rl' ? 'RELOADING' : st === 'empty' ? richText(`EMPTY — ${key} RELOAD`) : st === 'low' ? richText(`${key} — RELOAD`) : '';
+      this.rlEl.classList.toggle('is-on', st !== 'ok');
+    }
+    if (reloading && (L.rlF == null || Math.abs(rf - L.rlF) > 0.004)) { L.rlF = rf; this.rlBar.style.transform = `scaleX(${rf.toFixed(3)})`; }
+    // reticle meter fades when the hopper is full and idle
+    L.fullT = frac >= 0.999 && !reloading && !L.aim ? (L.fullT || 0) + dt : 0;
     const idle = L.fullT > 1.4;
     if (idle !== L.idle) { L.idle = idle; this.tank.classList.toggle('is-idle', idle); }
-    // slosh drive: camera turn rate + lateral acceleration of the local player
-    T.t += dt;
-    let drive = 0;
-    const a = this._local();
-    const yaw = G.rig ? G.rig.yaw : null;
-    if (yaw != null && T.prevYaw != null && dt > 0) { let dy = yaw - T.prevYaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); drive += clamp(dy / dt, -8, 8) * 0.55; }
-    T.prevYaw = yaw;
-    if (a && a.vel && dt > 0) {
-      const ax = (a.vel.x - T.prevVx) / dt, az = (a.vel.z - T.prevVz) / dt;
-      T.prevVx = a.vel.x; T.prevVz = a.vel.z;
-      const cam = G.camera;
-      if (cam) { const e = cam.matrixWorld.elements; const rx = e[0], rz = e[2]; drive += clamp((ax * rx + az * rz) * 0.05, -3, 3); }
+    // grenades + sprint
+    const gMax = f.grenadesMax ?? this.nadePips.length, g = Math.max(0, f.grenades ?? gMax);
+    const gk = `${g}|${gMax}`;
+    if (gk !== L.nades) {
+      const prevG = L.nadesN;
+      L.nades = gk; L.nadesN = g;
+      this.nadePips.forEach((p, i) => { p.style.display = i < gMax ? '' : 'none'; p.classList.toggle('is-on', i < g); });
+      if (prevG != null && g < prevG && this.nadePips[g]) this._restart(this.nadePips[g], 'is-used');
     }
-    const kS = 90, cS = 7.5;
-    T.sloshV += (-kS * T.slosh - cS * T.sloshV - drive * 6) * dt;
-    T.slosh = clamp(T.slosh + T.sloshV * dt, -0.6, 0.6);
-    T.wobble = Math.max(0, T.wobble - dt * 1.8);
-    T.empty = Math.max(0, T.empty - dt);
-    // bubbles while refilling
-    const rising = ink > T.prevInk + 1e-4;
-    if (rising && T.bubbles.length < 14 && Math.random() < dt * (ink - T.prevInk > dt * 0.2 ? 40 : 12)) T.bubbles.push({ x: 0.2 + Math.random() * 0.6, y: 0, r: 0.6 + Math.random() * 1.4, v: 0.5 + Math.random() * 0.7 });
-    T.prevInk = ink;
-    T.level += (ink - T.level) * (1 - Math.exp(-dt * 14));
-    if (idle && !T.bubbles.length && Math.abs(T.sloshV) < 0.01) return;
-    this._drawTank(dt, sub, low, nosub);
-  }
-
-  _drawTank(dt, sub, low, nosub) {
-    const T = this._tank, c = this.tankCtx, cv = this.tankCanvas;
-    const dpr = Math.min(2, devicePixelRatio || 1);
-    const cw = cv.clientWidth || 18, chh = cv.clientHeight || 74;
-    const W = Math.round(cw * dpr), H = Math.round(chh * dpr);
-    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
-    const L = this._L;
-    if (!L.tankCol) { const s = L.ca || '#ff8a14'; L.tankCol = [shade(s, 0.42), s, shade(s, -0.3), shade(s, -0.55)]; }
-    const [cLight, cMid, cDark, cDeep] = L.tankCol;
-    c.clearRect(0, 0, W, H);
-    const pad = 3 * dpr, bw = W - pad * 2, bh = H - pad * 2, rr = bw / 2;
-    const T2 = this._tankCache || (this._tankCache = {});
-    if (T2.W !== W || T2.H !== H || T2.col !== cMid) {
-      T2.W = W; T2.H = H; T2.col = cMid;
-      T2.body = new Path2D(); T2.body.roundRect(pad, pad, bw, bh, rr);
-      T2.g = c.createLinearGradient(pad, 0, pad + bw, 0);
-      T2.g.addColorStop(0, cDark); T2.g.addColorStop(0.45, cMid); T2.g.addColorStop(1, cLight);
-    }
-    const body = T2.body;
-    // glass back
-    c.fillStyle = 'rgba(14,11,22,.62)';
-    c.fill(body);
-    c.save();
-    c.clip(body);
-    // liquid with a sloshing wavy surface
-    const lvl = pad + bh * (1 - T.level);
-    const amp = (1.2 + T.wobble * 3 + Math.abs(T.sloshV) * 2.2) * dpr;
-    const tilt = T.slosh * bw * 0.9;
-    c.beginPath();
-    c.moveTo(pad - 2, H + 2);
-    const N = 10;
-    for (let i = 0; i <= N; i++) {
-      const u = i / N, x = pad + u * bw;
-      const y = lvl + (u - 0.5) * tilt + Math.sin(u * 6.5 + T.t * 7) * amp * 0.5 + Math.sin(u * 11 - T.t * 9.5) * amp * 0.25;
-      c.lineTo(x, y);
-    }
-    c.lineTo(pad + bw + 2, H + 2);
-    c.closePath();
-    c.fillStyle = T2.g;
-    c.fill();
-    // depth shading toward the bottom
-    const g2 = c.createLinearGradient(0, lvl, 0, H);
-    g2.addColorStop(0, 'rgba(255,255,255,.18)'); g2.addColorStop(0.15, 'rgba(255,255,255,0)'); g2.addColorStop(1, cDeep + '66');
-    c.fillStyle = g2;
-    c.fill();
-    // bubbles
-    c.fillStyle = 'rgba(255,255,255,.6)';
-    for (let i = T.bubbles.length - 1; i >= 0; i--) {
-      const b = T.bubbles[i];
-      b.y += b.v * dt;
-      const by = H - pad - b.y * bh;
-      if (by < lvl + 2) { T.bubbles.splice(i, 1); continue; }
-      c.beginPath(); c.arc(pad + b.x * bw + Math.sin(b.y * 20) * dpr, by, b.r * dpr, 0, TAU); c.fill();
-    }
-    c.restore();
-    // sub-weapon cost line
-    if (sub > 0) {
-      const sy = pad + bh * (1 - sub);
-      c.fillStyle = nosub ? '#ff4d5e' : '#fff';
-      c.fillRect(pad - 1 * dpr, sy - 1.2 * dpr, bw + 2 * dpr, 2.4 * dpr);
-      c.fillStyle = 'rgba(0,0,0,.55)';
-      c.fillRect(pad - 1 * dpr, sy + 1.2 * dpr, bw + 2 * dpr, 1 * dpr);
-    }
-    // gloss + rim
-    c.fillStyle = 'rgba(255,255,255,.5)';
-    c.beginPath(); c.roundRect(pad + bw * 0.2, pad + bh * 0.07, bw * 0.16, bh * 0.4, bw * 0.08); c.fill();
-    c.lineWidth = 3.4 * dpr; c.strokeStyle = 'rgba(12,9,20,.8)'; c.stroke(body);
-    c.lineWidth = 1.8 * dpr; c.strokeStyle = low ? (Math.sin(T.t * 14) > 0 ? '#ff3d5e' : '#ffffff') : '#ffffff'; c.stroke(body);
+    const spr = !!f.sprinting;
+    if (spr !== L.sprint) { L.sprint = spr; this.sprintEl.classList.toggle('is-on', spr); this.hop.classList.toggle('is-sprint', spr); }
   }
 
   // ---------------------------------------------------------------- special gauge

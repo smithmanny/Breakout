@@ -36,7 +36,7 @@ export class PlayerController {
     const a = this.a, rig = this.rig, inp = this.input, s = G.settings;
     const it = a.intent;
     if (!this.enabled) {
-      it.move.set(0, 0, 0); it.fire = it.jump = it.squid = it.sub = it.special = false;
+      it.move.set(0, 0, 0); it.fire = it.jump = it.squid = it.sprint = it.sub = it.special = it.reload = false;
       this.assist.has = false;
       return;
     }
@@ -93,7 +93,11 @@ export class PlayerController {
     it.move.set(sy * mz - cy * mx, 0, cy * mz + sy * mx);
 
     it.jump = inp.down('Space') || inp.padButton(0);
-    it.squid = inp.down('ShiftLeft') || inp.down('ShiftRight') || inp.padValue(6) > 0.3;
+    // Shift / LT: sprint (hold). `squid` mirrors it for older readers of the intent.
+    it.sprint = inp.down('ShiftLeft') || inp.down('ShiftRight') || inp.padValue(6) > 0.3;
+    it.squid = it.sprint;
+    // R / pad X (button 2): reload
+    it.reload = inp.down('KeyR') || inp.padButton(2);
     it.fire = inp.mouse.left || inp.padValue(7) > 0.3;
     it.sub = inp.mouse.right || inp.down('KeyE') || inp.padButton(5);
     it.special = inp.down('KeyF') || inp.down('KeyQ') || inp.padButton(3) || inp.padButton(11);

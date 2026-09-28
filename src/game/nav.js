@@ -2,6 +2,7 @@
 // connected by walk / jump-up / drop-down edges. A* with a binary heap.
 import * as THREE from 'three';
 import { PLAYER } from '../config.js';
+import { Hit } from './physics.js';
 
 const _p = new THREE.Vector3(), _d = new THREE.Vector3();
 
@@ -171,6 +172,34 @@ export class NavGraph {
     const out = [];
     for (let k = b; k !== -1; k = from[k]) { out.push(k); if (out.length > 4000) break; }
     return out.reverse();
+  }
+
+  // Cover spots for the bots (computed once per level, lazily): every walkable node outside the spawns that stands
+  // right next to something solid at body height. Per spot an 8-bit mask of the compass octants (octant k is the
+  // heading atan2(dx, dz) ≈ k·45°) in which a ray at chest height (1.0 m) hits solid geometry within 1.5 m, plus `tall`
+  // (the same at head height, 1.55 m: full cover, not just a low bunker to shoot over). coverIdx[node] → spot or -1.
+  coverSpots() {
+    if (this._cover) return this._cover;
+    const P = this.physics, out = [], hit = new Hit(), o = new THREE.Vector3(), d = new THREE.Vector3();
+    this.coverIdx = new Int32Array(this.nodes.length).fill(-1);
+    for (const id of this.validIds) {
+      const n = this.nodes[id];
+      if (n.zone >= 0) continue;
+      let mask = 0, tall = 0;
+      for (let k = 0; k < 8; k++) {
+        const a = (k / 8) * Math.PI * 2;
+        d.set(Math.sin(a), 0, Math.cos(a));
+        if (P.raycast(o.set(n.x, n.y + 1.0, n.z), d, 1.5, hit, true).hit && Math.abs(hit.normal.y) < 0.6) {
+          mask |= 1 << k;
+          if (P.raycast(o.set(n.x, n.y + 1.55, n.z), d, 1.5, hit, true).hit) tall |= 1 << k;
+        }
+      }
+      if (!mask) continue;
+      this.coverIdx[id] = out.length;
+      out.push({ id, x: n.x, y: n.y, z: n.z, mask, tall });
+    }
+    this._cover = out;
+    return out;
   }
 
   edgeType(a, b) {

@@ -1,4 +1,4 @@
-// INKWAVE — procedural music engine + shared Web Audio DSP core.
+// BREAKOUT (ex-INKWAVE) — procedural music engine + shared Web Audio DSP core.
 //
 // Everything here is synthesized: no audio files. The DSP helpers (Voice builder `V`, envelopes, noise buffers,
 // impulse responses, instrument voices) are exported so src/audio/audio.js can build its SFX with the same parts.
@@ -808,9 +808,16 @@ const BOSS_C_LEAD =
   'D6/2 C6/2 A5/2 F5/2 A5/4 D6/4 | Eb6/3 D6/3 Bb5/2 G5/4 Bb5/4 | A5/2 F5/2 D5/2 F5/2 A5/2 D6/2 F6/4 | E6/4 C#6/4 Bb5/4 G5/4 | ' +
   'D6/2 C6/2 A5/2 F5/2 A5/4 D6/4 | Eb6/3 G6/3 F6/2 Eb6/4 D6/4 | C6/2 A5/2 F5/2 A5/2 D6/4 C#6/4 | E6/6 D6/2 C#6/8';
 
+// BREAKOUT match themes (sports rock)
+const BREAKOUT_RIFF = 'E3/1 E3/1 E3/1 E3/1 G3/2 E3/2 A3/2 E3/1 E3/1 B3/2 A3/2 | E3/1 E3/1 E3/1 E3/1 G3/2 E3/2 D4/2 C4/2 B3/2 G3/2';
+const BREAKOUT_RIFF2 = 'E3/1 E3/1 G3/1 E3/1 E3/1 A3/1 E3/1 E3/1 B3/2 A3/2 G3/2 A3/2 | E3/1 E3/1 G3/1 E3/1 E3/1 A3/1 E3/1 E3/1 D4/2 C4/2 B3/2 D4/2';
+const BREAKOUT_HOOK =
+  'G5/3 G5/3 G5/2 A5/4 G5/4 | F#5/3 F#5/3 F#5/2 A5/4 D5/4 | E5/2 G5/2 B5/4 A5/2 G5/2 F#5/2 G5/2 | E5/12 r/4 | ' +
+  'G5/3 G5/3 G5/2 C6/4 B5/4 | A5/3 A5/3 A5/2 D6/4 C6/4 | B5/2 A5/2 G5/2 E5/2 G5/4 A5/4 | B5/8 F#5/4 D#5/4';
+
 export const SONGS = {
   title: {
-    name: 'Splash Attitude', bpm: 128, swing: 0.05, key: 'D minor', pump: 0.22,
+    name: 'Break Out', bpm: 128, swing: 0.05, key: 'D minor', pump: 0.22,
     inst: { bass: 'punk', chords: 'guitar', lead: 'saw', arp: 'pluck' }, riffBass: true,
     sections: {
       intro: {
@@ -843,7 +850,7 @@ export const SONGS = {
   },
 
   menu: {
-    name: 'Harbor Lounge', bpm: 105, swing: 0.16, key: 'F major', pump: 0,
+    name: 'Staging Area', bpm: 105, swing: 0.16, key: 'F major', pump: 0,
     inst: { bass: 'funk', chords: 'keys', lead: 'soft', arp: 'pluck' }, keysLo: 57, bassLo: 31,
     mix: { kick: 0.5, snare: 0.3, hats: 0.14, bass: 0.38, chords: 0.32, pad: 0.07, lead: 0.26, arp: 0.08 },
     sections: {
@@ -864,71 +871,77 @@ export const SONGS = {
     order: ['intro', 'A', 'B', 'A'], loopFrom: 1,
   },
 
+  // BREAKOUT match music: a driving sports-rock / electro anthem (palm-muted power-chord riff, four-on-the-floor
+  // chorus with claps, a stomp-clap arena breakdown). 'battle_final' shares the tempo + key so the swap at one minute
+  // lands cleanly.
   battle: {
-    name: 'Turf Riot', bpm: 150, swing: 0, key: 'E minor', pump: 0.28,
-    inst: { bass: 'punk', chords: 'guitar', lead: 'pulse', lead2: 'saw', arp: 'pluck' },
+    name: 'Field Rush', bpm: 158, swing: 0, key: 'E minor', pump: 0.2,
+    inst: { bass: 'punk', chords: 'guitar', lead: 'saw', lead2: 'square', arp: 'pluck' }, riffBass: true, bassGate: 0.7,
+    mix: { hats: 0.2, chords: 0.33, lead: 0.24, lead2: 0.12, snare: 0.55, kick: 0.64 },
     sections: {
       intro: {
-        bars: 2, chords: ['E5', 'C5 D5'], riser: 1,
-        drums: { k: ['X...............', 'X.......X.......'], s: ['................', 'x.x.x.x.xxxxXXXX'], x: ['X...............', '................'] },
-        bass: ['R---------------', 'R-------R-------'],
-        stabs: ['X---------------', 'X-------X-------'],
+        bars: 2, chords: ['E5'], riser: 1,
+        drums: {
+          k: ['X...X...X...X...', 'X...X...X...X.X.'], t: ['................', '........x.x.xxxx'],
+          s: ['....X.......X...', 'x.x.x.x.xxxxXXXX'], x: ['X...............', '................'],
+        },
+        stabs: ['X-----m-m-m-m-m-', 'X-----m-m-m-XxXx'],
+        bass: ['R-----R-R-R-R-R-', 'R-----R-R-R-R-R-'],
       },
       A: {
-        bars: 8, crash: true, chords: ['Em7', 'Cmaj7', 'Am7', 'B7'], lead: BATTLE_A_LEAD,
-        drums: { k: 'X..x..x.X.....x.', s: '....X.....g.X..g', h: 'x.c.x.c.x.c.x.oc' },
-        fills: { s: '....X.....g.X.xx' },
-        bass: ['R.RO.RR.5.RO.R7.', 'R.RO.RR.5.RO.5On'],
-        stabs: 'X-.x..x-.x..x-.x',
-        arp: { rate: 1, pattern: 'up', oct: 1, lo: 64 },
+        bars: 8, crash: true, chords: ['E5'], riff: BREAKOUT_RIFF,
+        drums: { k: 'X.x...x.X.x...x.', s: '....X.......X...', c: '....x.......x...', h: 'xcxcxcxcxcxcxcxc' },
+        fills: { s: '....X.....x.X.xx', t: '..........x.x.xx' },
       },
       B: {
-        bars: 8, crash: true, chords: ['C', 'D', 'Bm', 'Em', 'C', 'D', 'B7sus4', 'B7'], lead: BATTLE_B_LEAD, pad: true,
-        drums: { k: 'X...x...X...x...', s: '....X.......X...', c: '....x.......x...', h: 'x.o.x.o.x.o.x.o.' },
-        fills: { s: '....X.......X.xx', k: 'X...x...X...x.x.' },
-        bass: 'R.R.O.R.R.R.O.Rn',
-        stabs: 'X-x-x-x-X-x-x-x-',
-        arp: { rate: 2, pattern: 'updown', oct: 2, lo: 64 },
+        bars: 8, crash: true, chords: ['C5', 'D5', 'E5', 'E5', 'C5', 'D5', 'E5', 'B5'], lead: BREAKOUT_HOOK, harmony: true,
+        drums: { k: 'X...X...X...X...', s: '....X.......X...', c: '....x.......x...', h: 'x.o.x.o.x.o.x.o.' },
+        fills: { s: '....X.......XxXx', k: 'X...X...X...X.X.' },
+        bass: 'R.R.R.R.R.R.R.Rn',
+        stabs: 'X-m-m-m-X-m-m-m-',
+      },
+      stomp: {
+        bars: 4, chords: ['E5', 'E5', 'C5', 'D5'], riff: BREAKOUT_RIFF,
+        drums: { k: 'X.X.....X.X.....', c: '....X.......X...', s: '....x.......x...', h: 'x...x...x...x...' },
+        fills: { s: '....X...xxxxXXXX' },
       },
       break: {
-        bars: 4, chords: ['Am7', 'Bm7', 'Cmaj7', 'D'], pad: true, riser: 1,
-        drums: { k: 'X.........x.....', s: '........X.......', h: 'x.c.x.c.x.c.x.c.' },
+        bars: 4, chords: ['Am', 'C', 'D', 'B5'], riser: 1,
+        drums: { k: 'X.......X.......', s: '........X.......', h: 'x.x.x.x.x.x.x.x.' },
         fills: { s: 'x.x.x.x.xxxxXXXX', k: 'X...X...X...X...' },
-        bass: 'R-----R-5-----O-',
-        arp: { rate: 1, pattern: 'updown', oct: 2, lo: 60 },
+        bass: 'R-------R---5---',
+        stabs: 'X-------x-------',
+        lead: 'E5/8 D5/4 C5/4 | E5/8 G5/8 | F#5/8 A5/8 | B5/12 r/4',
       },
     },
-    order: ['intro', 'A', 'B', 'A', 'break', 'B'], loopFrom: 1,
+    order: ['intro', 'A', 'B', 'stomp', 'A', 'break', 'B'], loopFrom: 1,
   },
 
   battle_final: {
-    name: 'Final Splash', bpm: 150, swing: 0, key: 'E minor', pump: 0.32,
-    inst: { bass: 'punk', chords: 'guitar', lead: 'pulse', lead2: 'saw', arp: 'pluck' },
-    mix: { hats: 0.17, lead2: 0.16 },
+    name: 'Last Ball Standing', bpm: 158, swing: 0, key: 'E minor', pump: 0.26,
+    inst: { bass: 'punk', chords: 'guitar', lead: 'saw', lead2: 'saw', arp: 'pluck' }, riffBass: true, bassGate: 0.7,
+    mix: { hats: 0.2, chords: 0.34, lead: 0.26, lead2: 0.15, snare: 0.55, kick: 0.66 },
     sections: {
       lift: {
         bars: 1, chords: ['B5'], riser: 1,
-        drums: { k: 'X...X...X...X...', s: 'x.x.x.x.xxxxXXXX' },
+        drums: { k: 'X...X...X...X...', s: 'x.x.x.x.xxxxXXXX', t: '........x.x.xxxx' },
         bass: 'R-----R-----R-R-',
         stabs: 'X-----X-----X-X-',
       },
       F1: {
-        bars: 8, crash: true, chords: ['C', 'D', 'Bm', 'Em', 'C', 'D', 'B7sus4', 'B7'], lead: BATTLE_B_LEAD, harmony: true,
-        drums: { k: 'X...x...X...x...', s: '....X.......X...', c: '....x.......x...', h: 'xcxcxcxcxcxcxcxc' },
-        fills: { s: '....X.....x.X.xx' },
-        bass: 'RrOrRrOrRrOrRrOn',
-        stabs: 'X-x-x-x-X-x-x-xx',
-        arp: { rate: 1, pattern: 'up', oct: 2, lo: 64 },
+        bars: 8, crash: true, chords: ['C5', 'D5', 'E5', 'E5', 'C5', 'D5', 'E5', 'B5'], lead: BREAKOUT_HOOK, harmony: true,
+        drums: { k: 'X...X...X...X...', s: '....X.......X...', c: '....x.......x...', h: 'xcxoxcxoxcxoxcxo' },
+        fills: { s: '....X.....x.XxXx' },
+        bass: 'RrRrRrRrRrRrRrRn',
+        stabs: 'X-m-m-m-X-m-m-mm',
       },
       F2: {
-        bars: 8, crash: true, chords: ['Em7', 'Cmaj7', 'Am7', 'B7'], lead: BATTLE_A_LEAD, harmony: true,
-        drums: { k: 'X..x..x.X..x..x.', s: '....X.......X...', c: '....x.......x...', h: 'xcxcxcxoxcxcxcxo' },
-        bass: 'R.ROR.RO5.5OR.On',
-        stabs: 'X-.x..x-.x..x-.x',
-        arp: { rate: 1, pattern: 'updown', oct: 2, lo: 64 },
+        bars: 8, crash: true, chords: ['E5'], riff: BREAKOUT_RIFF2,
+        drums: { k: 'X.X.X.X.X.X.X.X.', s: '....X.......X...', c: '....x.......x...', h: 'xcxcxcxcxcxcxcxc' },
+        fills: { s: '....X...xxxxXXXX', t: '........x.x.xxxx' },
       },
       build: {
-        bars: 4, chords: ['C', 'D', 'Em', 'B7'], riser: 4, lead: 'G5/8 E5/8 | A5/8 F#5/8 | B5/8 G5/8 | D#6/4 B5/4 F#5/4 A5/4',
+        bars: 4, chords: ['C5', 'D5', 'E5', 'B5'], riser: 4, lead: 'G5/8 E5/8 | A5/8 F#5/8 | B5/8 G5/8 | D#6/4 B5/4 F#5/4 A5/4',
         drums: {
           k: 'X...X...X...X...', h: 'xcxcxcxcxcxcxcxc',
           s: ['....X.......X...', 'x...x...x...x...', 'x.x.x.x.x.x.x.x.', 'xxxxxxxxXXXXXXXX'],
@@ -941,7 +954,7 @@ export const SONGS = {
   },
 
   results_win: {
-    name: 'Fresh Victory', bpm: 124, swing: 0, key: 'G major', pump: 0.18,
+    name: 'Match Point', bpm: 124, swing: 0, key: 'G major', pump: 0.18,
     inst: { bass: 'funk', chords: 'pluck', lead: 'bell', arp: 'pluck' }, keysLo: 59, bassLo: 31,
     mix: { lead: 0.22, chords: 0.2, arp: 0.08, hats: 0.16 },
     sections: {

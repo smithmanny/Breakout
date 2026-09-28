@@ -3,7 +3,12 @@
 //
 // usage: node tools/net-test.mjs [--clients 2] [--secs 24] [--map tidewater] [--time day] [--full] [--shots dir]
 //   needs the game on :8490 (npm start) and the relay on :8787 (cd server && npx wrangler dev --port 8787)
-//   --full   play the whole (60 s) match through the results and back to the lobby
+//   --full   play the whole match through the results and back to the lobby
+//   --rounds 2:20   elimination (the regular mode): test-only round rules on every client — first to 2 round wins,
+//            20 s rounds (default 2:18; 'real' keeps config ROUNDS). Every 6 s (and at the end) the round number,
+//            phase, round wins and every squidkid's alive state are compared across clients; --full also checks
+//            that the final result (winner, round wins, per-round log) is the host's on every screen
+//   --w 320 --h 180   window size (software GL on Linux is slow: keep it tiny)
 //   --mode boss   Boss Battle: everyone one squad vs HULLBREAKER; adds the boss checks (same path / clock / HP /
 //            moves on every screen, guest hits reaching the host, boss damage landing on each owner's squidkid,
 //            the boss carrying on after a host drop-out, one result for everyone)
@@ -28,24 +33,33 @@ const DROP = opt('drop', 'kill');   // kill: the browser dies (socket closes) ·
 const BASE = opt('url', 'http://localhost:8490/');
 const NETQ = opt('net', '');   // e.g. "netlag=40&netjitter=30&netspike=0.01" — simulated connection on every client
 const Q = opt('quality', N > 2 ? 'low' : 'high');   // several full game instances share one machine
-const W = N > 2 ? 640 : 960, H = N > 2 ? 360 : 540;
+const W = +opt('w', N > 2 ? 640 : 960), H = +opt('h', N > 2 ? 360 : 540);
+const ROUNDS_OPT = opt('rounds', '2:18');
+const MAC = process.platform === 'darwin';
 
 const say = (...a) => console.log('[net-test]', ...a);
 // never hang a CI shell: hard stop well past the longest possible run
 // (kills its browsers first: an exit that leaves headless Chrome running orphans GPU/renderer processes that keep
 // spinning their WebGL loops and starve every later run)
-const watchdog = setTimeout(() => {
-  console.log('[net-test] WATCHDOG — stuck, giving up');
-  for (const b of browsers) { try { b.process()?.kill('SIGKILL'); } catch { /* gone */ } }
-  process.exit(2);
-}, (SECS + (args.includes('--full') ? 260 : 150)) * 1000);
-watchdog.unref?.();
+// (re-armed once everyone has booted: on a busy Linux box with software GL the boot alone can take minutes)
+let watchdog = null;
+const armWatchdog = (secs) => {
+  clearTimeout(watchdog);
+  watchdog = setTimeout(() => {
+    console.log('[net-test] WATCHDOG — stuck, giving up');
+    for (const b of browsers) { try { b.process()?.kill('SIGKILL'); } catch { /* gone */ } }
+    process.exit(2);
+  }, secs * 1000);
+  watchdog.unref?.();
+};
+armWatchdog((SECS + (args.includes('--full') ? 260 : 150)) * (process.platform === 'darwin' ? 1 : 8));
 const browsers = [], pages = [], logs = [];
 async function open(i) {
   const b = await puppeteer.launch({
-    executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    executablePath: process.env.CHROME_PATH || (MAC ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '/opt/pw-browsers/chromium'),
     headless: 'new',
-    args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required', `--window-size=${W},${H}`,
+    protocolTimeout: 1200000,   // (a slow boot waits longer than the 180 s CDP default)
+    args: [...(MAC ? ['--use-angle=metal'] : ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']), '--enable-gpu', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required', `--window-size=${W},${H}`,
       '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'],
     defaultViewport: { width: W, height: H, deviceScaleFactor: 1 },
   });
@@ -53,8 +67,8 @@ async function open(i) {
   await p.evaluateOnNewDocument((q) => { try { localStorage.setItem('inkwave.settings', JSON.stringify({ ...(JSON.parse(localStorage.getItem('inkwave.settings')) || {}), quality: q })); } catch { /* */ } }, Q);
   p.on('console', (m) => { const t = m.type(); if (t === 'error' || t === 'warn' || t === 'warning' || process.env.ALLLOGS) logs.push(`c${i} [${t}] ${m.text()}`); });
   p.on('pageerror', (e) => logs.push(`c${i} [pageerror] ${e.message}\n${(e.stack || '').split('\n').slice(0, 4).join('\n')}`));
-  await p.goto(`${BASE}?skipTitle&autopilot${NETQ ? '&' + NETQ : ''}`, { waitUntil: 'load', timeout: 180000 });
-  await p.waitForFunction('window.__inkwave && window.__G && __G.net && __G.mode === "menu"', { timeout: 180000, polling: 200 });
+  await p.goto(`${BASE}?skipTitle&autopilot${NETQ ? '&' + NETQ : ''}`, { waitUntil: 'load', timeout: 180000 * (MAC ? 1 : 3) });
+  await p.waitForFunction('window.__inkwave && window.__G && __G.net && __G.mode === "menu"', { timeout: 180000 * (MAC ? 1 : 3), polling: 200 });
   await p.evaluate(() => {   // session diary (printed when something goes wrong)
     const L = (window.__netlog = []), t0 = performance.now(), T = () => ((performance.now() - t0) / 1000).toFixed(1);
     for (const k of ['state', 'error', 'leave', 'host', 'match']) __G.net.on(k, (e) => L.push(`${T()} ${k} ${JSON.stringify(e, (kk, v) => (kk === 'lobby' || kk === 'style' ? undefined : v))}`));
@@ -66,8 +80,9 @@ const until = (i, js, ms = 60000) => pages[i].waitForFunction(js, { timeout: ms,
 
 try {
   const t0 = Date.now();
-  if (N > 2) { for (let i = 0; i < N; i++) await open(i); } else await Promise.all(Array.from({ length: N }, (_, i) => open(i)));
+  if (N > 2 || !MAC) { for (let i = 0; i < N; i++) await open(i); } else await Promise.all(Array.from({ length: N }, (_, i) => open(i)));
   say(`${N} clients booted in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  armWatchdog((SECS + (FULL ? 260 : 150)) * (MAC ? 1 : 8));
 
   // ---- room: create, join, ready, start
   const code = await ev(0, async () => __G.net.create('Host'));
@@ -83,9 +98,15 @@ try {
   say('lobby', lobbies[0]);
   if (new Set(lobbies).size !== 1) say('!! lobby views differ', lobbies);
   await ev(0, (d) => { __G.net.lobby.duration = d; }, FULL ? (MODE === 'boss' ? 75 : 40) : 600);   // test-only lengths (the UI offers 90 s / 3 min)
+  // elimination: shorter test-only round rules, identical on every client (config ROUNDS is a shared mutable object)
+  if (MODE !== 'boss' && ROUNDS_OPT !== 'real') {
+    const [toWin, roundTime] = ROUNDS_OPT.split(':').map(Number);
+    await Promise.all(pages.map((_, i) => ev(i, async (w, t) => { const c = await import('/src/config.js'); c.ROUNDS.toWin = w; c.ROUNDS.roundTime = t; }, toWin || 2, roundTime || 18)));
+    say(`elimination test rules: first to ${toWin || 2}, ${roundTime || 18} s rounds`);
+  }
   const tStart = Date.now();
   await ev(0, () => __G.net.start());
-  await Promise.all(pages.map((_, i) => until(i, '__G.net.state === "match" && __inkwave.match && __inkwave.match.state === "playing"', 60000)));
+  await Promise.all(pages.map((_, i) => until(i, '__G.net.state === "match" && __inkwave.match && __inkwave.match.state === "playing"', 60000 * (MAC ? 1 : 5))));
   say(`all playing ${((Date.now() - tStart) / 1000).toFixed(1)} s after start`);
 
   // ---- record every rendered frame on every client
@@ -110,11 +131,44 @@ try {
     };
     requestAnimationFrame(snap);
   })));
+  // elimination: the round as each client sees it (host-authoritative: followers apply the host's round state)
+  const roundView = (i) => pages[i] ? ev(i, () => {
+    const m = __inkwave.match;
+    if (!m || !m.elim) return null;
+    return { host: __G.net.isHost, state: m.state, r: m.round, p: m.roundPhase, w: [...m.roundWins], n: m.rounds.length, t: +m.roundTime.toFixed(1),
+      alive: m.actors.map((a) => [a.nid, a.alive ? 1 : 0]).sort((x, y) => x[0] - y[0]).map((x) => x[1]).join(''),
+      vis: m.actors.filter((a) => a.remote).map((a) => [a.nid, a.alive, a.character.root.visible]) };
+  }) : Promise.resolve(null);
+  const roundLog = [];
+  let roundMismatch = 0, roundChecks = 0;
+  const checkRounds = async (tag) => {
+    const rv = (await Promise.all(pages.map((_, i) => roundView(i)))).filter(Boolean);
+    if (rv.length < 2) return;
+    roundChecks++;
+    const h = rv.find((v) => v.host) || rv[0];
+    const line = rv.map((v) => `${v.host ? 'H' : 'f'} r${v.r}/${v.p} ${v.w.join('-')} alive ${v.alive}`).join('  |  ');
+    // (a follower trails the host by its playback delay: a transition or a splat can be in flight — a real mismatch
+    // persists, so the check is repeated a moment later before it counts)
+    const same = (v) => v.r === h.r && v.p === h.p && v.w.join() === h.w.join() && v.alive === h.alive && v.state === h.state;
+    let ok = rv.every(same);
+    if (!ok) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const rv2 = (await Promise.all(pages.map((_, i) => roundView(i)))).filter(Boolean);
+      const h2 = rv2.find((v) => v.host) || rv2[0];
+      ok = rv2.every((v) => v.r === h2.r && v.p === h2.p && v.w.join() === h2.w.join() && v.alive === h2.alive && v.state === h2.state);
+      if (!ok) { roundMismatch++; say(`!! round views differ (${tag}):`, rv2.map((v) => JSON.stringify({ ...v, vis: undefined })).join('  ')); }
+    }
+    // an eliminated squidkid is never drawn; a standing one outside the pre-round hand-over always is
+    for (const v of rv) for (const [nid, alive, vis] of v.vis) if (!alive && vis) { roundMismatch++; say(`!! nid ${nid} is out but drawn (${tag})`); }
+    roundLog.push(`${tag}: ${line}${ok ? '' : '  !!'}`);
+    say(`   rounds ${line}${ok ? '  (agree)' : ''}`);
+  };
   const tagRes = (i) => pages[i] ? ev(i, () => JSON.stringify({ state: __inkwave.match?.state, t: +(__inkwave.match?.time ?? 0).toFixed(1), fps: __inkwave.fps, host: __G.net.isHost, actors: __G.actors.length, teams: [0, 1].map((t) => __G.actors.filter((a) => a.team === t).length), bots: __G.actors.filter((a) => a.isBot).length })) : Promise.resolve('(gone)');
   let leftRec = null, leftAt = 0, leftIdx = -1;
   for (let s = 0; s < SECS; s += 6) {
     await new Promise((r) => setTimeout(r, Math.min(6, SECS - s) * 1000));
     say(`t+${Math.min(SECS, s + 6)}s`, (await Promise.all(pages.map((_, i) => tagRes(i)))).join('  '));
+    if (MODE !== 'boss') await checkRounds(`t+${Math.min(SECS, s + 6)}s`);
     if (LEAVE && !leftRec && s + 6 >= SECS / 2) {
       leftIdx = LEAVE === 'host' ? 0 : N - 1;
       leftRec = await ev(leftIdx, () => { const r = window.__rec; window.__rec = null; return r; });
@@ -167,6 +221,9 @@ try {
     }
     say(`c${live[0]} vs c${live[i]}:`, diffs.length ? diffs.join(', ') : 'rosters + K/D agree');
   }
+
+  if (MODE !== 'boss') say(`--- rounds: ${roundChecks} checks, ${roundMismatch ? roundMismatch + ' MISMATCHES' : 'host and followers agree on round, phase, round wins and alive states'}`);
+  if (roundMismatch) process.exitCode = 1;
 
   if (MODE === 'boss') {
     say('--- boss');
@@ -334,15 +391,28 @@ try {
   // ---- full flow: results, then everyone back in the lobby
   if (FULL) {
     say('--- waiting for the end of the match');
-    await Promise.all(live.map((i) => until(i, '__inkwave.match && __inkwave.match.state === "results"', 120000)));
-    const res = await Promise.all(live.map((i) => ev(i, () => JSON.stringify(__inkwave.match.result && { w: __inkwave.match.result.winner, c: __inkwave.match.result.coverage.map((v) => +(v * 100).toFixed(1)), boss: __inkwave.match.result.boss && { win: __inkwave.match.result.boss.win, time: __inkwave.match.result.boss.time, hp: __inkwave.match.result.boss.hp }, dmg: __inkwave.match.actors.map((a) => Math.round(a.stats.bossDmg || 0)).join('/') }))));
+    if (MODE !== 'boss') {
+      // follow the rounds to the end, checking agreement at every change of round / phase seen on the host
+      let last = '';
+      const tEnd = Date.now() + 400000 * (MAC ? 1 : 2);
+      while (Date.now() < tEnd) {
+        const hv = await roundView(live[0]);
+        if (!hv || hv.state !== 'playing') break;
+        const key = `${hv.r}/${hv.p}`;
+        if (key !== last) { last = key; await new Promise((r) => setTimeout(r, 1200)); await checkRounds(`round ${key}`); }
+        await new Promise((r) => setTimeout(r, 700));
+      }
+    }
+    await Promise.all(live.map((i) => until(i, '__inkwave.match && __inkwave.match.state === "results"', 120000 * (MAC ? 1 : 3))));
+    const res = await Promise.all(live.map((i) => ev(i, () => { const R = __inkwave.match.result; return JSON.stringify(R && { mode: R.mode, w: R.winner, rw: R.roundWins, rounds: R.rounds && R.rounds.map((r) => `${r.winner}:${r.reason}`).join(','), c: R.coverage.map((v) => +(v * 100).toFixed(1)), boss: R.boss && { win: R.boss.win, time: R.boss.time, hp: R.boss.hp }, dmg: __inkwave.match.actors.map((a) => Math.round(R.boss ? a.stats.bossDmg || 0 : a.stats.damage || 0)).join('/'), kd: __inkwave.match.actors.map((a) => a.stats.splats + ':' + a.stats.deaths).join(' ') }); })));
     say('results', res.join('  '), new Set(res).size === 1 ? '(agree)' : '!! DIFFER');
-    await Promise.all(live.map((i) => until(i, '__G.net.state === "lobby" && __G.mode === "menu"', 40000)));
+    if (new Set(res).size !== 1) process.exitCode = 1;
+    await Promise.all(live.map((i) => until(i, '__G.net.state === "lobby" && __G.mode === "menu"', 40000 * (MAC ? 1 : 3))));
     say('everyone back in the lobby:', (await Promise.all(live.map((i) => ev(i, () => __G.net.lobby.players.length)))).join(','));
   }
   if (LEAVE) for (let i = 0; i < N; i++) if (pages[i]) say(`c${i} session diary:\n   ` + (await ev(i, () => window.__netlog.join('\n   '))));
 } catch (e) {
-  say('FAIL', e.message);
+  say('FAIL', e.message, (e.stack || '').split('\n').slice(1, 4).join(' | '));
   for (let i = 0; i < N; i++) if (pages[i]) try { say(`c${i} session diary:\n   ` + (await ev(i, () => window.__netlog.join('\n   ')))); } catch { /* gone */ }
   process.exitCode = 1;
 } finally {

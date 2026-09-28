@@ -22,6 +22,8 @@
 // API: splat(center, radius, team, { seed, stretch: Vector3, stretchAmt, kind, instant, cosmetic }) → m² claimed
 //      speck(center, radius, team, seed)  — cosmetic micro-splat (landing droplets), GPU only
 //      ripple(pos, amp, wavelength, speed, life) · setView(camPos) · flush(dt) · sample/sampleWorld/coverage/regionStats
+// BREAKOUT: 'shot' is a paintball splat — a compact core (≈ 0.74 of the footprint) with a crisp star of thin rays all
+// round (smeared forward along the travel), beads, satellites and two short drips on walls; the CPU edge is unchanged.
 // kind: 'shot' 'line' 'blast' 'bomb' 'trail' 'drop' 'roll' 'speck' (inferred from radius/stretch when omitted;
 //       'roll' needs `stretch` = the roll direction and paints a straight-edged band segment instead of a blob)
 import * as THREE from 'three';
@@ -84,7 +86,7 @@ float sdRay(vec2 p, vec2 a, vec2 b, float ra, float rb) {
 }
 // per kind: rays, satellite droplets, spatter dots, drips
 vec4 kindShape(float k) {
-  if (k < 0.5) return vec4(5.0, 7.0, 8.0, 3.0);     // shot
+  if (k < 0.5) return vec4(10.0, 6.0, 10.0, 2.0);   // shot: paintball star-burst (many thin rays, two short drips)
   if (k < 1.5) return vec4(3.0, 4.0, 5.0, 2.0);     // charger line
   if (k < 2.5) return vec4(7.0, 9.0, 10.0, 4.0);    // blast
   if (k < 3.5) return vec4(10.0, 12.0, 14.0, 5.0);  // bomb / slam / splat-out
@@ -112,6 +114,7 @@ void main() {
   }
   float tn = vGrow.x;
   vec4 ks = kindShape(kind);
+  bool star = kind < 0.5;   // paintball splat: a compact core with a crisp star of thin rays all the way round
   float sd = 1e3;
   if (vGrow.z < 0.5) {
     // ---- body: floods out from ~40 % with a strong ease-out; its final edge is the CPU gameplay edge
@@ -127,7 +130,7 @@ void main() {
     } else if (kind > 6.5) {
       sd = length(p) - r * grow * (1.0 + 0.12 * sin(3.0 * atan(p.y, p.x) + seed * 20.0));
     } else {
-      sd = length(p) - r * grow * wob(atan(p.y, p.x), seed);
+      sd = length(p) - r * grow * (star ? 0.74 : 1.0) * wob(atan(p.y, p.x), seed);
     }
     float dirAng = sa > 0.0 ? atan(dir.y, dir.x) : 0.0;
     float spread = mix(6.2831, 2.5, clamp(sa * 1.2, 0.0, 1.0));
@@ -139,15 +142,15 @@ void main() {
       float fk = float(k);
       if (fk >= ks.x) break;
       float h1 = hsh(seed * 7.31 + fk * 1.93), h2 = hsh(seed * 3.17 + fk * 5.71), h3 = hsh(seed * 11.3 + fk * 2.39);
-      float a = sa > 0.0 ? dirAng + (h1 - 0.5) * spread : (fk + 0.35 + 0.6 * h1) / ks.x * 6.2831 + seed * 6.2831;
+      float a = sa > 0.0 && !star ? dirAng + (h1 - 0.5) * spread : (fk + 0.35 + 0.6 * h1) / ks.x * 6.2831 + seed * 6.2831;
       vec2 u = vec2(cos(a), sin(a));
-      float edge = r * grow * wob(a, seed);
-      float len = r * (0.07 + (big ? 0.5 : 0.4) * h2 * h2 * h2) * tsp;
-      float wB = r * (0.055 + 0.06 * h3);
+      float edge = r * grow * (star ? 0.74 : 1.0) * wob(a, seed);
+      float len = r * (star ? 0.16 + 0.62 * h2 * h2 : 0.07 + (big ? 0.5 : 0.4) * h2 * h2 * h2) * tsp;
+      float wB = r * (star ? 0.036 + 0.034 * h3 : 0.055 + 0.06 * h3);
       float tipR = max(r * (0.012 + 0.012 * h3), tx * 0.45);
       vec2 tip = u * (edge + len) + vec2(-u.y, u.x) * len * 0.18 * (h1 - 0.5);
       float ray = min(sdRay(p, u * edge * 0.72, tip, wB, tipR), length(p - tip) - tipR * (1.6 + 1.4 * h2));
-      sd = smin(sd, ray, r * 0.06);
+      sd = smin(sd, ray, r * (star ? 0.035 : 0.06));
     }
     // ---- satellite droplets flung off the crown: they land a beat after the body (the farthest last), streaked
     // along their flight line; on walls gravity drags the spray down a little
@@ -194,7 +197,7 @@ void main() {
       float x = (h1 * 2.0 - 1.0) * r * 0.72;
       float c = sqrt(max(1.0 - (x / r) * (x / r), 0.0));
       float yTop = -c * r * 0.7;
-      float len = c * r * 0.25 + r * (0.3 + 2.3 * h2 * h2) * fall * dT;
+      float len = (c * r * 0.25 + r * (0.3 + 2.3 * h2 * h2) * fall * dT) * (star ? 0.42 : 1.0);
       float w = r * (0.042 + 0.04 * h3) * (0.75 + 0.35 * fall);
       vec2 q = p0 - vec2(x, yTop);
       float ty = clamp(-q.y / max(len, 1e-4), 0.0, 1.0);
