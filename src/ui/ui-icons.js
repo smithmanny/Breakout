@@ -294,10 +294,10 @@ export function richText(str) {
 /** Crosshair reticle (100 box): ring, centre dot and four ticks — the O of the wordmark sits inside it. */
 const RETICLE = `<svg class="iw-logo__reticle" viewBox="0 0 100 100" aria-hidden="true">
     <g fill="none" stroke-linecap="round">
-      <circle cx="50" cy="50" r="33" stroke="${K}" stroke-width="12"/>
-      <path d="M50 2 L50 20 M50 80 L50 98 M2 50 L20 50 M80 50 L98 50" stroke="${K}" stroke-width="12"/>
-      <circle cx="50" cy="50" r="33" stroke="var(--b-light, #8fb0ff)" stroke-width="5"/>
-      <path d="M50 2 L50 20 M50 80 L50 98 M2 50 L20 50 M80 50 L98 50" stroke="var(--b-light, #8fb0ff)" stroke-width="5"/>
+      <circle cx="50" cy="50" r="40" stroke="${K}" stroke-width="10"/>
+      <path d="M50 0 L50 18 M50 82 L50 100 M0 50 L18 50 M82 50 L100 50" stroke="${K}" stroke-width="10"/>
+      <circle cx="50" cy="50" r="40" stroke="var(--b-light, #8fb0ff)" stroke-width="4.5"/>
+      <path d="M50 0 L50 18 M50 82 L50 100 M0 50 L18 50 M82 50 L100 50" stroke="var(--b-light, #8fb0ff)" stroke-width="4.5"/>
     </g>
   </svg>`;
 /** Big display wordmark: sporty italic block letters over a paint splat with drips; the O is framed by a crosshair

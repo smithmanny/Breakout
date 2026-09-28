@@ -1147,7 +1147,7 @@ export class Menus {
       c.classList.toggle('is-dusk', t === 'dusk');
       c.classList.toggle('is-sel', c._mid === st.mapId);
     };
-    const listEl = h('div', { class: 'iw-ss__list' }, tickets);
+    const listEl = h('div', { class: 'iw-ss__list' + (tickets.length > 3 ? ' is-many' : '') }, tickets);
 
     // ---- match options (bot skill + length)
     const dOpts = Object.values(diffs).map((d) => [d.id, h('span', { class: 'iw-diffopt' }, h('span', { class: 'iw-pips' }, Array.from({ length: 3 }, (_, k) => h('i', { class: k < (DIFF_INFO[d.id]?.pips || 2) ? 'on' : '' }))), d.name)]);
@@ -1173,8 +1173,7 @@ export class Menus {
       h('div', { class: 'iw-setrow__label' }, h('i', { html: GLYPHS.flag }), 'FORMAT'),
       h('div', { class: 'iw-setup__fmt' },
         h('span', { class: 'iw-chip' }, h('i', { html: GLYPHS.crown }), `FIRST TO ${ROUNDS.toWin}`),
-        h('span', { class: 'iw-chip' }, h('i', { html: GLYPHS.clock }), `${ROUNDS.roundTime}S ROUNDS`),
-        h('span', { class: 'iw-chip' }, h('i', { html: GLYPHS.users }), 'ONE LIFE')));
+        h('span', { class: 'iw-chip' }, h('i', { html: GLYPHS.clock }), `${ROUNDS.roundTime}S ROUNDS`)));
     const matchPanel = this._panel('iw-ss__match iw-in iw-in--up', diffRow, dText, lenRow || fmtRow);
 
     // ---- your weapon + your look + START
@@ -1265,12 +1264,12 @@ export class Menus {
 
     const el = h('div', { class: 'iw-screen iw-setup iw-ss' + (boss ? ' is-boss' : '') },
       bg, h('div', { class: 'iw-ss__scrim' }),
-      boss ? this._header('BOSS BATTLE', { sub: `Pick a stage and the time of day · your squad of 8 vs ${BOSS_NAME}` })
+      boss ? this._header('BOSS BATTLE', { sub: `Pick a field and the time of day · your squad of 8 vs ${BOSS_NAME}` })
         : this._header('ELIMINATION', { sub: `Pick a field and the time of day · 4 v 4 against bots · first to ${ROUNDS.toWin} rounds` }),
       h('div', { class: 'iw-ss__left' }, h('div', { class: 'iw-seclabel iw-in' }, h('i', { html: GLYPHS.map }), 'FIELDS'), listEl, matchPanel),
       hero,
       h('div', { class: 'iw-ss__foot' }, weaponChip, lookChip, start),
-      this._prompts([[['↑', '↓'], 'DPad', 'Stage'], [['←', '→'], null, 'Day · Dusk'], ['Enter', 'A', 'Select'], ['Esc', 'B', 'Back']]));
+      this._prompts([[['↑', '↓'], 'DPad', 'Field'], [['←', '→'], null, 'Day · Dusk'], ['Enter', 'A', 'Select'], ['Esc', 'B', 'Back']]));
     el.querySelector('.iw-prompts').children[1].querySelector('.iw-padg').innerHTML = padGlyph('LB') + padGlyph('RB');
 
     // explicit focus graph (rows with ←/→ adjust would otherwise trap the pad in a column)
@@ -1651,9 +1650,9 @@ export class Menus {
     const seen = new Set(Array.isArray(s0.seenWeapons) ? s0.seenWeapons : ['shooter', 'roller', 'charger', 'blaster']);
     const markSeen = (id) => { if (seen.has(id)) return; seen.add(id); this._setSetting('seenWeapons', [...seen]); };
 
-    // ---- weapon cards (grid scales 4 → 9+: 4 columns up to 8, then 5)
+    // ---- weapon cards (grid scales 4 → 9+: one row up to 5, then 4 columns up to 8, then 5)
     const n = order.length;
-    const cols = n <= 4 ? Math.max(1, n) : n <= 8 ? 4 : 5;
+    const cols = n <= 5 ? Math.max(1, n) : n <= 8 ? 4 : 5;
     const compact = n > cols;
     const cards = order.map((id, i) => {
       const w = Ws[id];
@@ -1706,10 +1705,9 @@ export class Menus {
     });
     const subIcon = h('span', { class: 'iw-kit__icon' }), subName = h('b'), subText = h('span');
     const subChip = h('div', { class: 'iw-kit' }, subIcon, h('div', null, h('small', null, 'GRENADES'), subName, subText));
-    // hopper / reload / hits-to-OUT facts line
-    const hopperEl = h('b'), reloadEl = h('b'), hitsEl = h('b');
+    // reload / hits-to-OUT facts line (the hopper size is the Hopper bar's number)
+    const reloadEl = h('b'), hitsEl = h('b');
     const specs = h('div', { class: 'iw-wd__specs' },
-      h('span', { class: 'iw-wd__spec' }, h('i', { html: GLYPHS.drop }), h('small', null, 'HOPPER'), hopperEl, h('em', null, 'balls')),
       h('span', { class: 'iw-wd__spec' }, h('i', { html: GLYPHS.reset }), h('small', null, 'RELOAD'), reloadEl),
       h('span', { class: 'iw-wd__spec' }, h('i', { html: GLYPHS.target }), h('small', null, 'HITS TO OUT'), hitsEl));
     const spIcon = h('span', { class: 'iw-kit__icon is-sp' });
@@ -1753,7 +1751,6 @@ export class Menus {
       subName.textContent = `${sub.name} ×${nG}`;
       subText.textContent = `${nG} per round, refilled every round. Hold to aim, release to throw.`;
       reloadEl.textContent = w.reloadTime ? `${(+w.reloadTime).toFixed(1)}s` : '—';
-      hopperEl.textContent = w.hopper ? `${Math.round(w.hopper)}` : '—';
       const hit = w.damageMax || w.directDamage || w.damage || 0;
       hitsEl.textContent = hit ? (Math.ceil(100 / hit) <= 1 ? '1 (full charge)' : `${Math.ceil(100 / hit)}`) : '—';
       const sp = specials[w.special] || Object.values(specials)[0];
@@ -1777,7 +1774,7 @@ export class Menus {
     this._bind(lookChip, { id: 'look', accept: () => { this._sfx('ui_click'); this._go('locker'); } });
     this._portraitInto(lookAv, { kind: 'head', size: 128 });
 
-    const grid = h('div', { class: 'iw-wgrid' + (compact ? ' is-compact' : ''), style: { '--cols': cols } }, cards);
+    const grid = h('div', { class: 'iw-wgrid' + (compact ? ' is-compact' : '') + (!compact && cols >= 5 ? ' is-row5' : ''), style: { '--cols': cols } }, cards);
     const el = h('div', { class: 'iw-screen iw-loadout' },
       h('div', { class: 'iw-scrim-left' }),
       this._header('LOADOUT', { sub: `${n} markers · every one comes with Paint Grenades and a special` }),
@@ -2253,7 +2250,7 @@ export class Menus {
       h('span', { class: 'iw-hubcard__text' },
         h('span', { class: 'iw-hubcard__kicker iw-tape' }, h('i', { html: GLYPHS.crown }), 'YOU HOST'),
         h('span', { class: 'iw-hubcard__title' }, 'CREATE A ROOM'),
-        h('span', { class: 'iw-hubcard__sub' }, 'Pick the stage, share the code, start when everyone’s ready.'),
+        h('span', { class: 'iw-hubcard__sub' }, 'Pick the field, share the code, start when everyone’s ready.'),
         createStatus),
       h('span', { class: 'iw-hubcard__go' }, h('b', null, 'GO!'), this._hint('Enter', 'A')),
       h('span', { class: 'iw-hubcard__drips', html: dripsSVG([[46, 1.1], [120, 1.7], [168, 0.8], [300, 1.3], [352, 0.9]], 'iw-fhv') }));
@@ -2690,7 +2687,7 @@ export class Menus {
       r._id = id;
       return r;
     };
-    const rStage = srow('stage', GLYPHS.map, 'STAGE', stage);
+    const rStage = srow('stage', GLYPHS.map, 'FIELD', stage);
     // stage rules sticker (config onlineOnly / noBots — Cargo Terminal), slapped across the ticket's top edge
     const stRules = h('span', { class: 'iw-lstage__rules' }, h('i', { html: GLYPHS.users }), h('b'));
     rStage.querySelector('.iw-lset__label').appendChild(stRules);
@@ -2810,7 +2807,7 @@ export class Menus {
       restartAnim(rMode, 'is-hit');
       render(false);
       hostSet(map !== (was && was.id) ? { mode: next, duration: dur, map } : { mode: next, duration: dur });
-      if (map !== (was && was.id)) { const n = maps.find((m) => m.id === map); this.toast(`${was ? was.name : 'That stage'} has no Boss Battle — switched to ${n ? n.name : 'another stage'}`, { icon: GLYPHS.map }); }
+      if (map !== (was && was.id)) { const n = maps.find((m) => m.id === map); this.toast(`${was ? was.name : 'That field'} has no Boss Battle — switched to ${n ? n.name : 'another field'}`, { icon: GLYPHS.map }); }
     };
     let shownMap = null, shownTime = null;
     const renderStage = (dir = 0) => {
@@ -3039,7 +3036,7 @@ export class Menus {
 
     // humans-only stage (config noBots): the bots switch is locked off
     const botsLocked = () => mapNoBots(lob.map);
-    const lockedBots = () => { this._sfx('ui_error', 0.15); restartAnim(rBots, 'is-shake'); this.toast('No bots on this stage — it’s humans only', { icon: GLYPHS.bot }); };
+    const lockedBots = () => { this._sfx('ui_error', 0.15); restartAnim(rBots, 'is-shake'); this.toast('No bots on this field — it’s humans only', { icon: GLYPHS.bot }); };
 
     // ---- render from the lobby state
     const renderPlates = () => {
@@ -3157,7 +3154,7 @@ export class Menus {
       lenSeg.refresh(lob.duration);
       rDiff.classList.toggle('is-off', lob.bots === false);
       const humans = players().length;
-      botsNote.textContent = botsLocked() ? 'No bots on this stage' : lob.bots !== false ? (humans < 8 ? `${8 - humans} bot${8 - humans === 1 ? '' : 's'} join ${bossMode() ? 'the squad' : 'in'}` : 'Room is full') : 'Empty spots stay empty';
+      botsNote.textContent = botsLocked() ? 'No bots on this field' : lob.bots !== false ? (humans < 8 ? `${8 - humans} bot${8 - humans === 1 ? '' : 's'} join ${bossMode() ? 'the squad' : 'in'}` : 'Room is full') : 'Empty spots stay empty';
       rBots.classList.toggle('is-locked', botsLocked());
       if (bossMode()) { const P1 = TEAM_PALETTES[palIdx()]; if (P1) palName.textContent = `${P1.names[0]} squad · ${P1.names[1]} boss`; }
       const host = players().find((p) => p.host);
@@ -3175,7 +3172,7 @@ export class Menus {
         }
         if (!isHost() && (prev.map !== lob.map || prev.time !== lob.time)) {
           const m = maps.find((x) => x.id === lob.map);
-          this.toast(`${host ? host.name : 'The host'} picked ${m ? m.name : 'a stage'}${lob.time === 'dusk' ? ' at dusk' : ''}`, { icon: GLYPHS.map });
+          this.toast(`${host ? host.name : 'The host'} picked ${m ? m.name : 'a field'}${lob.time === 'dusk' ? ' at dusk' : ''}`, { icon: GLYPHS.map });
         }
       }
     };
@@ -3638,7 +3635,7 @@ export class Menus {
     const elim = !boss && (d.mode === 'elim' || Array.isArray(d.roundWins));
     const rw = elim ? (Array.isArray(d.roundWins) ? d.roundWins : [d.win ? ROUNDS.toWin : 0, d.win ? 0 : ROUNDS.toWin]).map((v) => Math.max(0, v | 0)) : null;
     const colors = (d.colors || [TEAM_PALETTES[0].a, TEAM_PALETTES[0].b]).map((c) => toHex(c));
-    const [pa, pb] = elim ? (rw[0] + rw[1] > 0 ? pct(rw[0], rw[1]) : [50, 50]) : pct(...(d.percents || [50, 50]));
+    const [pa, pb] = elim ? (rw[0] + rw[1] > 0 ? [100 * rw[0] / (rw[0] + rw[1]), 100 * rw[1] / (rw[0] + rw[1])] : [50, 50]) : pct(...(d.percents || [50, 50]));
     const names = d.teamNames || TEAM_NAMES;
     const win = !!d.win;
     const raw = d.players || [];

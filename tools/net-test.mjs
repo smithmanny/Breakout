@@ -41,17 +41,24 @@ const say = (...a) => console.log('[net-test]', ...a);
 // never hang a CI shell: hard stop well past the longest possible run
 // (kills its browsers first: an exit that leaves headless Chrome running orphans GPU/renderer processes that keep
 // spinning their WebGL loops and starve every later run)
-const watchdog = setTimeout(() => {
-  console.log('[net-test] WATCHDOG — stuck, giving up');
-  for (const b of browsers) { try { b.process()?.kill('SIGKILL'); } catch { /* gone */ } }
-  process.exit(2);
-}, (SECS + (args.includes('--full') ? 260 : 150)) * 1000 * (process.platform === 'darwin' ? 1 : 3));
-watchdog.unref?.();
+// (re-armed once everyone has booted: on a busy Linux box with software GL the boot alone can take minutes)
+let watchdog = null;
+const armWatchdog = (secs) => {
+  clearTimeout(watchdog);
+  watchdog = setTimeout(() => {
+    console.log('[net-test] WATCHDOG — stuck, giving up');
+    for (const b of browsers) { try { b.process()?.kill('SIGKILL'); } catch { /* gone */ } }
+    process.exit(2);
+  }, secs * 1000);
+  watchdog.unref?.();
+};
+armWatchdog((SECS + (args.includes('--full') ? 260 : 150)) * (process.platform === 'darwin' ? 1 : 8));
 const browsers = [], pages = [], logs = [];
 async function open(i) {
   const b = await puppeteer.launch({
     executablePath: process.env.CHROME_PATH || (MAC ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '/opt/pw-browsers/chromium'),
     headless: 'new',
+    protocolTimeout: 1200000,   // (a slow boot waits longer than the 180 s CDP default)
     args: [...(MAC ? ['--use-angle=metal'] : ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']), '--enable-gpu', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required', `--window-size=${W},${H}`,
       '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'],
     defaultViewport: { width: W, height: H, deviceScaleFactor: 1 },
@@ -75,6 +82,7 @@ try {
   const t0 = Date.now();
   if (N > 2 || !MAC) { for (let i = 0; i < N; i++) await open(i); } else await Promise.all(Array.from({ length: N }, (_, i) => open(i)));
   say(`${N} clients booted in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  armWatchdog((SECS + (FULL ? 260 : 150)) * (MAC ? 1 : 8));
 
   // ---- room: create, join, ready, start
   const code = await ev(0, async () => __G.net.create('Host'));

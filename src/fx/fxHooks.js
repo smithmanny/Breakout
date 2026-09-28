@@ -327,14 +327,12 @@ class FxHooks {
         } else s.full = false;
         // splatling: glow + ink slung off the barrels while spinning up, one crisp "full" cue, a steady sling while
         // streaming (burstFrac = stream left)
-        if (wk === 'splatling' && form === 'kid' && (wr.charging || wr.streaming)) {
+        // (BREAKOUT: the auto marker is a paintball ramp — no ink slung off the barrels; a spin-up glow cue only)
+        if (wk === 'splatling' && form === 'kid' && wr.charging) {
           a.character?.getMuzzle?.(_v);
           if (Number.isFinite(_v.x)) {
             const aim = a.aimDir || _dir.set(Math.sin(a.yaw), 0, Math.cos(a.yaw));
-            if (wr.charging) {
-              fx.spinUp?.(_v, aim, col, wr.charge, false);
-              if (wr.charge >= 0.999 && !s.spinFull) { s.spinFull = true; fx.spinFull?.(_v, aim, col); this._bump('spinFull'); }
-            } else fx.spinUp?.(_v, aim, col, 0.35 + 0.65 * (wr.burstFrac || 0), true);
+            if (wr.charge >= 0.999 && !s.spinFull) { s.spinFull = true; fx.spinFull?.(_v, aim, col); this._bump('spinFull'); }
           }
         } else if (!wr.charging) s.spinFull = false;
         // dualies: skid spray + body fling through the roll, a squelch when it plants

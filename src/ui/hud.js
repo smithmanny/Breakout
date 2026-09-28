@@ -814,7 +814,7 @@ export class HUD {
     if (key === L.rkey) return;
     const prev = L.rstate;
     L.rkey = key; L.rstate = { wins: [...r.wins], alive: [...r.alive] };
-    this.roundLbl.textContent = `ROUND ${r.n}`;
+    this.roundLbl.textContent = `ROUND ${Math.max(1, r.n)}`;
     for (let s = 0; s < 2; s++) {
       const box = this.wins[s];
       const n = r.wins[s] | 0;

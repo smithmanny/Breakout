@@ -87,7 +87,7 @@ function drawDecals(g) {
   at('poster2', (w, h) => poster(g, w, h, 2, rnd));
   at('stencil', (w, h) => { g.fillStyle = PW; g.font = titan(110); g.textBaseline = 'middle'; g.fillText('LOADING DOCK', 18, h / 2 + 6); stencilBreaks(g, w, h, rnd); });
   at('tag0', (w, h) => tag(g, w, h, 'Rook', PB, rnd));
-  at('tag1', (w, h) => tag(g, w, h, 'squidz', PA, rnd));
+  at('tag1', (w, h) => tag(g, w, h, 'hopprz', PA, rnd));
   at('arrow', (w, h) => { g.fillStyle = PW; g.font = titan(96); g.textBaseline = 'middle'; g.fillText('DOCK 2', 20, h / 2 + 4); g.beginPath(); g.moveTo(380, 50); g.lineTo(470, h / 2); g.lineTo(380, h - 50); g.lineTo(380, h / 2 + 18); g.lineTo(330, h / 2 + 18); g.lineTo(330, h / 2 - 18); g.lineTo(380, h / 2 - 18); g.closePath(); g.fill(); stencilBreaks(g, w, h, rnd); });
   at('nopark', (w, h) => { g.fillStyle = mixP(0.9, 0, 0.9); g.font = titan(88); g.textBaseline = 'middle'; g.fillText('NO PARKING', 16, h / 2 + 4); stencilBreaks(g, w, h, rnd); });
   at('throwup', (w, h) => throwup(g, w, h, rnd));
@@ -110,12 +110,12 @@ function tag(g, w, h, word, paint, rnd) {
   g.restore();
 }
 function throwup(g, w, h, rnd) {
-  // a quick two-letter bubble throw-up "IW": white fill, black outline, team B shadow
+  // a quick two-letter bubble throw-up "BO": white fill, black outline, team B shadow
   g.save(); g.translate(w * 0.1, h * 0.78); g.rotate(-0.06);
   g.font = titan(250); g.lineJoin = 'round';
-  g.fillStyle = PB; g.fillText('IW', 18, 16);
-  g.strokeStyle = PK; g.lineWidth = 22; g.strokeText('IW', 0, 0);
-  g.fillStyle = PW; g.fillText('IW', 0, 0);
+  g.fillStyle = PB; g.fillText('BO', 18, 16);
+  g.strokeStyle = PK; g.lineWidth = 22; g.strokeText('BO', 0, 0);
+  g.fillStyle = PW; g.fillText('BO', 0, 0);
   g.restore();
   g.fillStyle = PK; for (let i = 0; i < 3; i++) { const x = w * (0.2 + i * 0.22); g.fillRect(x, h * 0.8, 8, 30 + rnd() * 50); }
 }
@@ -127,32 +127,33 @@ function poster(g, w, h, kind, rnd) {
   if (kind === 0) {
     g.fillStyle = PK; g.fillRect(14, 14, w - 28, h - 28);
     g.fillStyle = PA; splat(g, w * 0.5, h * 0.4, w * 0.24, mulberry(9), { arms: 10 });
-    g.fillStyle = PW; g.font = titan(46); g.textAlign = 'center'; g.fillText('TURF', w / 2, h * 0.76); g.fillText('RIOT', w / 2, h * 0.88);
+    g.fillStyle = PW; g.font = titan(46); g.textAlign = 'center'; g.fillText('SPEED', w / 2, h * 0.76); g.fillText('BALL', w / 2, h * 0.88);
     g.font = rubik(18); g.fillText('FRI · 9PM · DOCK 2', w / 2, h * 0.95);
   } else if (kind === 1) {
     g.fillStyle = PB; g.fillRect(14, 14, w - 28, h * 0.62);
-    squidGlyph(g, w / 2, h * 0.36, w * 0.36, PW);
+    maskGlyph(g, w / 2, h * 0.36, w * 0.36, PW);
     g.fillStyle = PK; g.font = titan(40); g.textAlign = 'center'; g.fillText('SKATE', w / 2, h * 0.76); g.fillText('SESH', w / 2, h * 0.87);
-    g.fillStyle = PB; g.font = rubik(18); g.fillText('INK & SKATE · BACK LOT', w / 2, h * 0.95);
+    g.fillStyle = PB; g.font = rubik(18); g.fillText('PAINT & SKATE · BACK LOT', w / 2, h * 0.95);
   } else {
     g.fillStyle = mixP(1, 0, 0.35); g.fillRect(14, 14, w - 28, h - 28);
     g.fillStyle = PK; g.font = titan(54); g.textAlign = 'center';
-    for (let i = 0; i < 5; i++) g.fillText('INK', w / 2 + (i % 2 ? 18 : -18), 80 + i * 66);
+    for (let i = 0; i < 5; i++) g.fillText('POP', w / 2 + (i % 2 ? 18 : -18), 80 + i * 66);
     g.fillStyle = PW; g.font = rubik(20); g.fillText('WAVE RECORDS', w / 2, h - 26);
   }
   g.textAlign = 'left';
 }
-// original squid mark (used by the poster and the neon sign's shape language)
-function squidGlyph(g, cx, cy, s, paint) {
+// a paintball mask mark (the skate-shop poster): dome, goggle band, vented jaw
+function maskGlyph(g, cx, cy, s, paint) {
   g.save(); g.translate(cx, cy); g.scale(s, s); g.fillStyle = paint;
-  g.beginPath(); g.moveTo(0, -0.62); g.quadraticCurveTo(0.3, -0.42, 0.52, -0.2); g.lineTo(0.3, -0.15); g.quadraticCurveTo(0.34, 0.02, 0.26, 0.16);
-  g.lineTo(-0.26, 0.16); g.quadraticCurveTo(-0.34, 0.02, -0.3, -0.15); g.lineTo(-0.52, -0.2); g.quadraticCurveTo(-0.3, -0.42, 0, -0.62); g.fill();
-  for (let i = 0; i < 4; i++) { const x = -0.2 + i * 0.133; g.beginPath(); g.moveTo(x - 0.05, 0.12); g.quadraticCurveTo(x + 0.06, 0.34, x - 0.02, 0.56); g.lineTo(x + 0.05, 0.56); g.quadraticCurveTo(x + 0.12, 0.32, x + 0.05, 0.12); g.fill(); }
-  g.fillStyle = PK; g.beginPath(); g.arc(-0.1, -0.1, 0.06, 0, 7); g.arc(0.1, -0.1, 0.06, 0, 7); g.fill();
+  g.beginPath(); g.moveTo(0, -0.62); g.bezierCurveTo(0.34, -0.62, 0.46, -0.36, 0.46, -0.14); g.lineTo(0.56, -0.12); g.lineTo(0.56, 0.1); g.lineTo(0.46, 0.12);
+  g.bezierCurveTo(0.42, 0.4, 0.22, 0.58, 0, 0.62); g.bezierCurveTo(-0.22, 0.58, -0.42, 0.4, -0.46, 0.12); g.lineTo(-0.56, 0.1); g.lineTo(-0.56, -0.12); g.lineTo(-0.46, -0.14);
+  g.bezierCurveTo(-0.46, -0.36, -0.34, -0.62, 0, -0.62); g.fill();
+  g.fillStyle = PK; g.beginPath(); g.roundRect(-0.4, -0.16, 0.8, 0.26, 0.13); g.fill();
+  for (let i = -1; i <= 1; i++) g.fillRect(i * 0.12 - 0.025, 0.24, 0.05, 0.2 - Math.abs(i) * 0.04);
   g.restore();
 }
 
-// The shutter piece: "INKWAVE" wildstyle-lite over a team-B cloud, black 3-D block, team-A fill fading to a pale top,
+// The shutter piece: "BREAKOUT" wildstyle-lite over a team-B cloud, black 3-D block, team-A fill fading to a pale top,
 // team-B split band, white shines, drips, sparkles, and a signature.
 function drawGraffiti(g, W, H, rnd) {
   // cloud backdrop
@@ -165,10 +166,15 @@ function drawGraffiti(g, W, H, rnd) {
   g.fillStyle = mixP(0, 0.5, 0.6);
   for (let i = 0; i < 26; i++) { g.beginPath(); g.arc(W * (0.05 + rnd() * 0.9), H * (0.25 + rnd() * 0.5), 8 + rnd() * 26, 0, 7); g.fill(); }
   // letters
-  const word = 'INKWAVE', size = H * 0.5;
+  const word = 'BREAKOUT';
+  let size = H * 0.5;
   g.font = titan(size); g.lineJoin = 'round'; g.textBaseline = 'alphabetic';
-  const adv = [...word].map((ch) => g.measureText(ch).width * 0.86);
-  const total = adv.reduce((a, b) => a + b, 0);
+  let adv = [...word].map((ch) => g.measureText(ch).width * 0.86);
+  let total = adv.reduce((a, b) => a + b, 0);
+  if (total > W * 0.84) {   // a longer word than the piece was drawn for: shrink to fit the shutter
+    size *= (W * 0.84) / total; g.font = titan(size);
+    adv = [...word].map((ch) => g.measureText(ch).width * 0.86); total = adv.reduce((a, b) => a + b, 0);
+  }
   let x = (W - total) / 2 - W * 0.02;
   const L = [...word].map((ch, i) => { const o = { ch, x, y: H * (0.7 + 0.05 * Math.sin(i * 1.3 + 0.4)), r: (rnd() - 0.5) * 0.18 + (i % 2 ? 0.05 : -0.05), s: 0.92 + rnd() * 0.16 }; x += adv[i]; return o; });
   const each = (fn) => L.forEach((l) => { g.save(); g.translate(l.x + adv[0] * 0.4, l.y); g.rotate(l.r); g.scale(l.s, l.s); g.transform(1, 0, -0.18, 1, 0, 0); g.translate(-adv[0] * 0.4, 0); fn(l); g.restore(); });
@@ -210,7 +216,7 @@ function drawGraffiti(g, W, H, rnd) {
   g.strokeStyle = PA; g.lineWidth = 12; g.stroke();
   g.fillStyle = PK; g.beginPath(); g.moveTo(W * 0.9, H * 0.02); g.lineTo(W * 0.975, H * 0.08); g.lineTo(W * 0.9, H * 0.12); g.fill();
   // signature
-  g.save(); g.translate(W * 0.72, H * 0.96); g.rotate(-0.08); g.font = rubik(54, 900); g.fillStyle = PW; g.fillText('iNK·crew 26', 0, 0); g.restore();
+  g.save(); g.translate(W * 0.72, H * 0.96); g.rotate(-0.08); g.font = rubik(54, 900); g.fillStyle = PW; g.fillText('brk·crew 26', 0, 0); g.restore();
 }
 
 // ------------------------------------------------------------------------------------------------ ground mask
@@ -348,6 +354,7 @@ const GL = {
   T: { w: 0.6, s: [{ p: [[0, 1], [0.6, 1]] }, { p: [[0.3, 1], [0.3, 0]] }] },
   E: { w: 0.54, s: [{ p: [[0.54, 1], [0.03, 1], [0.03, 0], [0.54, 0]] }, { p: [[0.03, 0.5], [0.42, 0.5]] }] },
   '&': { w: 0.66, s: [{ smooth: true, p: [[0.66, 0.02], [0.4, 0.3], [0.14, 0.62], [0.12, 0.84], [0.26, 0.99], [0.44, 0.92], [0.46, 0.74], [0.3, 0.58], [0.06, 0.4], [0.04, 0.16], [0.2, 0.01], [0.42, 0.04], [0.6, 0.3]] }] },
+  P: { w: 0.56, s: [{ p: [[0.04, 0], [0.04, 1]] }, { smooth: true, p: [[0.04, 1], [0.32, 1], [0.5, 0.91], [0.54, 0.75], [0.48, 0.58], [0.3, 0.5], [0.04, 0.5]] }] },
   ' ': { w: 0.3, s: [] },
 };
 function smoothPts(p, n = 6) {
@@ -390,15 +397,17 @@ export function neonText(str, height, gap = 0.16) {
   return { strokes, width: x - gap * height };
 }
 // The squid sign: mantle + fins (one closed tube), two eye loops, four wavy tentacles. Unit ≈ 1 m tall, centred on x.
-export function neonSquid(size = 1) {
+/** Neon paintball mask (the blade sign over the dock): outline, goggle lens band, three jaw vents. */
+export function neonMask(size = 1) {
   const S = (p) => p.map(([x, y]) => [x * size, y * size]);
-  // mantle: pointed crown, two swept fins, body tapering into the tentacle root (one closed tube)
-  const half = [[0, 1.08], [0.1, 0.99], [0.2, 0.88], [0.36, 0.8], [0.47, 0.72], [0.36, 0.66], [0.24, 0.62], [0.23, 0.5], [0.2, 0.38], [0.14, 0.33]];
-  const mantle = smoothPts([...half, ...half.slice().reverse().map(([x, y]) => [-x, y])], 5);
-  const eye = (cx) => { const p = []; for (let i = 0; i <= 14; i++) { const a = (i / 14) * Math.PI * 2; p.push([cx + Math.cos(a) * 0.05, 0.5 + Math.sin(a) * 0.068]); } return p; };
-  // tentacles: parallel waves (same phase, so they never cross), the outer pair longer and curling out
-  const tent = (x0, len, curl) => smoothPts([[x0, 0.31], [x0 + 0.03, 0.31 - len * 0.33], [x0 - 0.02, 0.31 - len * 0.66], [x0 + 0.02 + curl, 0.31 - len]], 5);
-  const strokes = [mantle, eye(-0.085), eye(0.085), tent(-0.105, 0.27, -0.06), tent(-0.035, 0.22, 0), tent(0.035, 0.22, 0), tent(0.105, 0.27, 0.06)].map((p, i) => ({ pts: S(p), letter: i }));
+  const half = [[0, 1.06], [0.18, 1.02], [0.3, 0.92], [0.35, 0.78], [0.36, 0.72], [0.45, 0.7], [0.47, 0.6], [0.45, 0.5], [0.36, 0.48], [0.32, 0.32], [0.22, 0.16], [0.1, 0.08], [0, 0.06]];
+  const outline = smoothPts([...half, ...half.slice(0, -1).reverse().map(([x, y]) => [-x, y])], 5);
+  const lens = []; const r = 0.085, cy = 0.63, hx = 0.2;
+  for (let i = 0; i <= 12; i++) { const a = -Math.PI / 2 + (i / 12) * Math.PI; lens.push([hx + Math.cos(a) * r, cy + Math.sin(a) * r]); }
+  for (let i = 0; i <= 12; i++) { const a = Math.PI / 2 + (i / 12) * Math.PI; lens.push([-hx + Math.cos(a) * r, cy + Math.sin(a) * r]); }
+  lens.push(lens[0]);
+  const vent = (x, len) => [[x, 0.38], [x, 0.38 - len]];
+  const strokes = [outline, lens, vent(-0.1, 0.12), vent(0, 0.16), vent(0.1, 0.12)].map((p, i) => ({ pts: S(p), letter: i }));
   return { strokes, width: 0.94 * size };
 }
 // Soft halo for a stroke set (grey in R): blurred thick lines + a tighter inner glow. Returns { texture, rect: [x0, y0, x1, y1] metres }.

@@ -1,4 +1,4 @@
-// INKWAVE online lobby set: the back alley behind an ink-and-skate shop, blue hour, just after rain.
+// BREAKOUT online lobby set: the back alley behind a paint-and-skate shop, blue hour, just after rain.
 //
 //   const set = new LobbySet(renderer, { quality: 'high' | 'medium' | 'low', texlib });  scene.add(set.root);
 //   set.spots[i] { pos, yaw }  — 0..3 your team on the wet asphalt (0 = you, front and centre), 4..7 the rivals on the
@@ -26,7 +26,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { SetBuilder, mat4, PAINT, fireEscape, drainPipe, windowUnit, acUnit, shutter, dumpster, vending, woodCrate, milkCrate, speakerStack, cone, bike, trashBag, catenary, decalQuad } from './lobbySet-geo.js';
 import { makeUniforms, surfaceMaterial, groundMaterial, litMaterial, neonMaterial, haloMaterial, glowMaterial, emitMaterial, skyMaterial, skylineMaterial, steamMaterial, hazeMaterial, SLOT } from './lobbySet-mats.js';
-import { createDecalAtlas, createLitAtlas, createGroundMask, createSkyline, neonText, neonSquid, neonHalo, DECAL, LIT, GROUND_RECT, loadSetFonts } from './lobbySet-tex.js';
+import { createDecalAtlas, createLitAtlas, createGroundMask, createSkyline, neonText, neonMask, neonHalo, DECAL, LIT, GROUND_RECT, loadSetFonts } from './lobbySet-tex.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 // update() temporaries (it never allocates)
@@ -372,9 +372,12 @@ export class LobbySet {
   _neon(B) {
     const A = ALLEY;
     this.halos = [];
-    // INK & SKATE on the shop wall (x = xR, facing -x); text reads -z → +z from inside the alley
-    const txt = neonText('INK & SKATE', 0.42, 0.18);
-    const buzzIdx = 8;   // the second K ... "SKATE": S=6, K=7, A=8 → the A buzzes
+    // PAINT & SKATE on the shop wall (x = xR, facing -x); text reads -z → +z from inside the alley. Sized to the run
+    // of wall the old four-letter-shorter sign used, so it clears the door.
+    const fitW = neonText('INK & SKATE', 0.42, 0.18).width;
+    let txt = neonText('PAINT & SKATE', 0.42, 0.18);
+    if (txt.width > fitW) txt = neonText('PAINT & SKATE', 0.42 * (fitW / txt.width), 0.18);
+    const buzzIdx = 10;   // "PAINT & SKATE": S=8, K=9, A=10 → the A buzzes
     const sA = { z0: -4.05, y0: 3.05 };
     const wallPt = (u, v, off) => V(A.xR - off, sA.y0 + v, sA.z0 + u);
     // raceway (the painted box the tubes mount to) + tube standoffs
@@ -386,8 +389,8 @@ export class LobbySet {
     }
     const hA = neonHalo(txt.strokes, 0.45);
     this.halos.push(this._halo(hA, (u, v) => wallPt(u, v, 0.03), 0, 1.0));
-    // squid blade sign: a double-faced sign box projecting from the right wall over the dock, tubes on the +z face
-    const sq = neonSquid(0.95), zc = -7.05, yb = 4.5, xc = A.xR - 0.62;
+    // mask blade sign: a double-faced sign box projecting from the right wall over the dock, tubes on the +z face
+    const sq = neonMask(0.95), zc = -7.05, yb = 4.5, xc = A.xR - 0.62;
     B.box('surface', xc - 0.5, yb - 0.08, zc - 0.07, xc + 0.5, yb + 1.08, zc + 0.02, { color: '#08090b', surf: S(SLOT.metalpanel, 0.3, 1.2, 0.1) });
     B.box('surface', xc + 0.5, yb + 0.9, zc - 0.03, A.xR, yb + 0.95, zc - 0.01, PAINT.steelBlack);
     B.box('surface', xc + 0.5, yb + 0.05, zc - 0.03, A.xR, yb + 0.1, zc - 0.01, PAINT.steelBlack);

@@ -300,7 +300,7 @@ const EFFECTS = {
     // a stream of balls: CO2 puff at the muzzle, glossy ball + motion streak in flight, star splat on the floor / wall
     for (let k = 0; k < 8; k++) later(k * 0.12, () => {
       const wall = k % 2 === 1;
-      const p = V(c.x + 5, 1.2, c.z + 3), to = wall ? V(WALL.x + (Math.random() - 0.5) * 2, 0.8 + Math.random() * 1.4, WALL.z) : V(c.x - 2 + Math.random() * 2, 0, c.z - 1 + Math.random() * 2);
+      const p = V(17, 1.3, 3.5), to = wall ? V(WALL.x + (Math.random() - 0.5) * 2, 0.8 + Math.random() * 1.4, WALL.z) : V(12 + Math.random() * 2.5, 0, -1.8 + Math.random() * 2);
       const v = to.clone().sub(p).normalize().multiplyScalar(38);
       fx.muzzle(p, v.clone().normalize(), col);
       const start = p.clone();

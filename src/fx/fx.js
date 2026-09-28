@@ -1,4 +1,12 @@
-// INKWAVE — ink particle FX. Pooled, allocation-free per frame, 7 draw calls total.
+// BREAKOUT (formerly INKWAVE) — paint particle FX. Pooled, allocation-free per frame, 8 draw calls total.
+//
+// Paintball recipes: ballSplat(pos, normal, color, dir, { size, count, flecks, radius }) — a ball breaking on a surface
+// (crisp star-splat pop, low drops, bouncing shell fragments) · ballHit(pos, back, color, damage) — a ball breaking on a
+// body (bright star splat burst + spray + shell bits) · streak(pos, tail, color, width, alpha) — immediate-mode motion
+// streak behind a ball in flight (call after fx.update each frame) · muzzle() = a CO2 vapour puff (no flash) ·
+// splatted() = the elimination splat burst · ghost() = the "OUT" hands-up silhouette · explosion() = paint grenade burst.
+// Squid-era recipes (wake / dive / emerge / climb / bubbles / sizzle …) are kept for old callers; wake() is a no-op
+// unless fx.swimFx is set.
 //
 // const fx = new FX(scene, { quality: 'high' });      // quality: QUALITY key | QUALITY preset | particles multiplier
 // fx.setCollider((from, to) => ({ point, normal }) | null)
@@ -28,9 +36,10 @@
 // Ambient: a GPU dust-mote field around the camera (no CPU cost) — fx.motes.visible to toggle.
 //
 // Pools: glossy droplets (sphere impostors stretched along velocity, 2 tris; matte mode for dust grains), soft puffs
-// (billboards, alpha: mist / storm cloud / feather / squid ghost / dust), glows (billboards, additive HDR → bloom above the
+// (billboards, alpha: mist / storm cloud / feather / "OUT" silhouette / dust / paintball star splat), glows (billboards, additive HDR → bloom above the
 // engine's 2.4 threshold: soft glow / star glint / bubble / halo ring), rings (normal-aligned decal quads: ink shockwave,
-// ripple, splash disc, bomb danger ring, super-jump target, dust ring, splat blot, thin shockwave), shells (displaced ink
+// ripple, splash disc, bomb danger ring, super-jump target, dust ring, splat blot, thin shockwave, star splat), streaks
+// (paintball motion smears, immediate), shells (displaced ink
 // spheres), beams (geysers + immediate light pillars), motes. Peak geometry ≈ 2 tris per sprite/droplet + 320/shell +
 // 336/beam — a heavy moment (bomb + slam + 8 players fighting) stays ≈ 10–16k triangles.
 import * as THREE from 'three';
@@ -1424,7 +1433,7 @@ export class FX {
     if (this._probeDown(pos, R + 1.5, _v2, _v3)) {
       this._ringRaw(_v2, _v3, col, R * 0.95, 0.42, R_STAR, 1, 1);
       this._colB.copy(col).lerp(_white, 0.6);
-      this._ringRaw(_v2, _v3, this._colB, R * 1.1, 0.26, R_THIN, 0.55, 1);
+      this._ringRaw(_v2, _v3, this._colB, R * 1.1, 0.26, R_THIN, 0.35, 1);
       this._ripple(_v2, 0.009 + 0.002 * R, 0.22 + 0.03 * R, 2.1 + 0.4 * R, 0.9, _v3, null);
     }
     this._colB.copy(col).lerp(_white, 0.5);
@@ -1997,65 +2006,35 @@ export class FX {
     this._sprite(this.glows, pos.x, pos.y, pos.z, 0, 0, 0, this._colB, 0.34, 0.12, 0.16, 1, 0, 0, G_SOFT + 3, 0);
     this._colB.copy(col).lerp(_white, 0.35);
     this._ringRaw(_v4.copy(pos).addScaledVector(_v3, -0.08), _v3, this._colB, 0.46, 0.2, R_THIN, 0.85, 0.8);
-    basis(_v3, _v1, _v2);
-    const n = Math.max(6, Math.round(16 * this.q));
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * TAU + rand() * 0.3, c = Math.cos(a), sn = Math.sin(a);
-      const rx = _v1.x * c + _v2.x * sn, ry = _v1.y * c + _v2.y * sn, rz = _v1.z * c + _v2.z * sn;
-      const tx = -_v1.x * sn + _v2.x * c, ty = -_v1.y * sn + _v2.y * c, tz = -_v1.z * sn + _v2.z * c;
-      const sp = 3.2 + rand() * 1.6;
-      this._spawnDrop(pos.x - _v3.x * 0.1 + rx * 0.07, pos.y - _v3.y * 0.1 + ry * 0.07, pos.z - _v3.z * 0.1 + rz * 0.07,
-        (rx * 0.8 + tx * 0.6) * sp, (ry * 0.8 + ty * 0.6) * sp + 0.8, (rz * 0.8 + tz * 0.6) * sp, col, 0.016 + rand() * 0.014, 0.8, 1, 1.5, 0);
-    }
+    // (BREAKOUT: no ink slung off the barrels — a paintball ramp just whirs up: glow + air ring)
   }
 
   // ---- dualies dodge roll
-  // Push-off (once, at the start): ink slapped back against the roll and out to the sides, a low crown sheet at the
-  // feet, a ripple through the ink. The runner paints the trail stripe under the roll; this is only what flies.
+  // Pistols dive roll (BREAKOUT): no ink — a scuff of dust and grit kicked up as you throw yourself down, a skid of
+  // dust along the roll and a small puff where you plant. (color only tints the dust a touch.)
   dodgeSplash(pos, dir, color) {
     const col = this._color(color, this._col);
-    _v2.set(pos.x, pos.y + 0.03, pos.z);
+    _sc.copy(DUST).lerp(col, 0.06);
+    _v2.set(pos.x, pos.y + 0.02, pos.z);
+    this._dustRing(_v2, _sc, 6, 1.8);
     _v3.set(-dir.x * 0.8, 0.9, -dir.z * 0.8).normalize();
-    const n = Math.max(4, Math.round(14 * this.q));
-    for (let i = 0; i < n; i++) {
-      coneDir(_v3, 1.05, _v1);
-      const sp = 2.4 + rand() * 2.8;
-      this._spawnDrop(_v2.x, _v2.y + 0.05, _v2.z, _v1.x * sp, _v1.y * sp, _v1.z * sp, col, 0.02 + rand() * 0.026, 1.0, 1, 1.4, rand() < 0.25 ? F_PAINT : 0);
-    }
-    this._shell(_v2, col, 0.12, 0.5, 0.06, 0.2, 0.95, 0, 0, 0.2, UP, 1);
-    this._ripple(_v2, 0.008, 0.15, 1.6, 0.8, UP, col);
+    this._grains(_v2, _v3, 6, 2.6);
   }
-  // Mid-roll (every frame, k = roll progress 0..1): a low skid spray fanned off the leading edge along the roll and
-  // ink flung off the tumbling body — both fading as the roll slows.
+  // Mid-roll (every frame, k = roll progress 0..1): dust dragged along the ground behind the tumbling body.
   dodgeSkid(pos, dir, color, k = 0) {
-    const col = this._color(color, this._col);
     const f = 1 - clamp(k, 0, 1);
-    const rx = dir.z, rz = -dir.x;
-    let n = Math.floor((10 + 46 * f) * this._dt * Math.max(0.5, this.q) + rand());
+    let n = Math.floor(14 * f * this._dt * Math.max(0.5, this.q) + rand());
     while (n-- > 0) {
-      const side = (rand() - 0.5) * 2, sp = (3 + rand() * 3) * (0.5 + 0.5 * f);
-      this._spawnDrop(pos.x + dir.x * 0.3 + rx * side * 0.25, pos.y + 0.05, pos.z + dir.z * 0.3 + rz * side * 0.25,
-        dir.x * sp + rx * side * 1.6, 0.5 + rand() * 1.1, dir.z * sp + rz * side * 1.6, col, 0.011 + rand() * 0.014, 0.55, 1, 1.7, F_QUIET);
+      const side = (rand() - 0.5) * 0.5;
+      this._sprite(this.puffs, pos.x - dir.x * 0.2 + dir.z * side, pos.y + 0.08, pos.z - dir.z * 0.2 - dir.x * side, dir.x * 0.8, 0.25 + rand() * 0.2, dir.z * 0.8,
+        DUST, 0.12 + rand() * 0.05, 0.4 + rand() * 0.15, 0.45 + rand() * 0.2, 0.36 * f, 3.2, 0.15, P_DUST, 0.04, 1.2);
     }
-    n = Math.floor(22 * f * this._dt * Math.max(0.5, this.q) + rand());
-    while (n-- > 0) {
-      randSphere(_v1); _v1.y = Math.abs(_v1.y) * 0.8 + 0.3;
-      const sp = 1.5 + rand() * 2;
-      this._spawnDrop(pos.x + _v1.x * 0.25, pos.y + 0.35 + _v1.y * 0.2, pos.z + _v1.z * 0.25, _v1.x * sp + dir.x * 2.2, _v1.y * sp, _v1.z * sp + dir.z * 2.2, col, 0.015 + rand() * 0.018, 0.9, 1, 1.3, 0);
-    }
+    if (rand() < f * 0.5) this._grains(_v2.set(pos.x, pos.y, pos.z), _v3.set(dir.x * 0.6, 0.8, dir.z * 0.6).normalize(), 1, 2);
   }
-  // Roll ends, the kid plants into the turret stance: a squelch — ink carried on by the momentum and a ripple.
+  // Roll ends, you plant into the firing stance: a small dust puff.
   dodgePlant(pos, dir, color) {
-    const col = this._color(color, this._col);
-    _v3.set(dir.x * 0.7, 1, dir.z * 0.7).normalize();
-    const n = Math.max(3, Math.round(9 * this.q));
-    for (let i = 0; i < n; i++) {
-      coneDir(_v3, 0.75, _v1);
-      const sp = 1.8 + rand() * 2;
-      this._spawnDrop(pos.x, pos.y + 0.04, pos.z, _v1.x * sp, _v1.y * sp, _v1.z * sp, col, 0.016 + rand() * 0.02, 0.8, 1, 1.3, 0);
-    }
-    _v2.set(pos.x, pos.y + 0.01, pos.z);
-    this._ripple(_v2, 0.0065, 0.13, 1.3, 0.7, UP, col);
+    void color;
+    this._sprite(this.puffs, pos.x + dir.x * 0.1, pos.y + 0.08, pos.z + dir.z * 0.1, dir.x * 0.5, 0.3, dir.z * 0.5, DUST, 0.12, 0.45, 0.5, 0.4, 3.2, 0.15, P_DUST, 0.04, 1.2);
   }
 
   // ---- slosher

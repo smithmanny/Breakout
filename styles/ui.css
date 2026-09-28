@@ -249,9 +249,9 @@
 .iw-logo__l:nth-child(even) { --r: 1.5deg; --y: -.015em; }
 .iw-logo__l.is-hi { color: var(--a-light); }
 /* crosshair around the O: slow spin, snaps tight every few seconds like a scope finding its mark */
-.iw-logo__reticle { position: absolute; z-index: 0; left: 50%; top: 52%; width: 1.02em; height: 1.02em; translate: -50% -50%; overflow: visible;
+.iw-logo__reticle { position: absolute; z-index: 2; left: 50%; top: 50%; width: 1.14em; height: 1.14em; translate: -50% -50%; overflow: visible;
   filter: drop-shadow(0 .03em 0 rgba(0, 0, 0, .35)); animation: iw-reticle 4.2s var(--spring, cubic-bezier(.34, 1.56, .64, 1)) infinite; }
-@keyframes iw-reticle { 0%, 55% { rotate: 0deg; scale: 1.18; opacity: .9; } 70% { rotate: 45deg; scale: .96; opacity: 1; } 100% { rotate: 45deg; scale: 1.18; opacity: .9; } }
+@keyframes iw-reticle { 0%, 55% { rotate: 0deg; scale: 1.12; } 70% { rotate: 90deg; scale: .98; } 100% { rotate: 90deg; scale: 1.12; } }
 @keyframes iw-letter { 0%, 100% { translate: 0 0; } 50% { translate: 0 -.03em; } }
 .iw-logo__sub { margin-top: .04em; font: italic 900 .26em / 1 'Rubik', sans-serif; }
 .iw-logo__sub span { display: inline-block; padding: .26em .9em .28em; border-radius: .18em; background: var(--b); color: var(--b-ink);
@@ -2675,7 +2675,13 @@ circle.iw-ico-cut { fill: var(--cut, #fff); }
 .iw-res__rounds i.is-draw { background: rgba(255, 255, 255, .35); }
 .iw-pmatch__score { flex: none; margin-left: .5em; padding: .12em .5em; border-radius: .4em; background: var(--k); color: #fff; font: 400 1em / 1 'Titan One', sans-serif; font-variant-numeric: tabular-nums; }
 .iw-lob__fixedlen { pointer-events: none; }
-.iw-lob__fixedlen .iw-seg__opt { width: 100%; font-weight: 900; letter-spacing: .06em; }
+.iw-lob__fixedlen .iw-seg__opt, .iw-lob__fixedlen .iw-seg__opt.is-sel { width: 100%; color: #fff; font-weight: 900; letter-spacing: .06em; white-space: nowrap; }
 .iw-news__fb.is-art { background: #150f26; }
 .iw-news__fb.is-art svg { width: 100%; height: 100%; }
 .iw-news__list .iw-key { font-size: .82em; }
+/* five markers fit on one row: slightly smaller names instead of ellipsis */
+.iw-wgrid.is-row5 .iw-wcard__name { font-size: calc(var(--u) * 1.08); letter-spacing: -.01em; }
+/* four+ offline fields: shorter tickets so the list never runs under the match panel */
+.iw-ss__list.is-many { gap: calc(var(--u) * .75); }
+.iw-ss__list.is-many .iw-ticket { height: calc(var(--u) * 5.9); }
+.iw-setup__fmt { flex-wrap: nowrap; }
