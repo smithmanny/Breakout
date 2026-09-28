@@ -398,6 +398,7 @@ export class BotBrain {
     const noC = Math.min(G.time - I.t[a.team], this.roundT);
     let g = this.pers + 0.3 * adv + (tl < 32 ? 0.45 : 0) + (tl < 16 ? 0.6 : 0) + clamp((noC - 5) / 9, 0, 0.9) - (a.hp < 45 ? 0.3 : 0);
     if (m.elim && theirs === 1 && adv > 0) g += 0.3;        // last one standing: go get them
+    if (m.elim && mine + theirs <= 3) g += 0.35;           // endgame: nobody wins a round by hiding
     this.aggr = g;
     // threat point: our target's last known spot, else the freshest team intel, else a search point on their side
     if (this.target && this.seeT < 6) { this.threat.copy(this.lastSeen); this.threatKnown = true; this.threatAge = this.seeT; }
