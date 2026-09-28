@@ -127,6 +127,13 @@ export class BotBrain {
         travelling = true;
         // contact while crossing open ground: dive for the nearest cover instead of running the whole route
         if (vis && this.repickCd <= 0 && gd > 6 && tdist < range * 1.1 && this.aggr < 1.15) { this.repickCd = 2.5; this._pickCover({ maxTravel: 7 }); }
+        // a sniper with someone in its sights plants where it stands instead of crawling on while charging
+        else if (vis && w.kind === 'charger' && tdist < w.rangeMax && (this.mode !== 'breakout' || this.roundT > 6)) { this.goal = -1; this.goalSpot = null; this._arrive(); travelling = false; }
+        // no real progress for a long while (blocked, pinned in a corner): pick somewhere else
+        if (travelling) {
+          if (Math.hypot(a.pos.x - this.lastPos.x, a.pos.z - this.lastPos.z) > 1.5) { this.lastPos.copy(a.pos); this.moveT = 0; }
+          else if ((this.moveT = (this.moveT || 0) + dt) > 6) { this.moveT = 0; if (!this._pickCover({ maxTravel: 14, minTravel: 2 })) this._arrive(); }
+        }
       }
     }
     if (this.mode === 'hold') move = this._hold(dt, vis, tdist, range);
@@ -178,7 +185,7 @@ export class BotBrain {
         if (!this._nearWater(a, 3.2)) { move.set(-nz * side, 0, nx * side); it.jump = true; this.dodgeCd = 1.6 + Math.random() * 1.8; }
       }
       // specials: the slam right on top of them
-      if (vis && a.specialReady() && w.special === 'slam' && tdist < 4.3 && this.specialCd <= 0) { it.special = true; this.specialCd = 2; }
+      if (vis && a.specialReady() && w.special === 'slam' && tdist < 5.5 && this.specialCd <= 0) { it.special = true; this.specialCd = 2; }
     } else if (this.threatKnown || this.mode === 'hold') {
       // no one in sight: watch where they're expected to come from
       const dx = this.threat.x - a.pos.x, dz = this.threat.z - a.pos.z;
@@ -193,7 +200,7 @@ export class BotBrain {
 
     // ---------------- reload: when dry, or proactively when low with nobody in sight
     if (!fire && a.reloading <= 0 && !this.lob && !wr.charging && !wr.streaming && a.ammo < a.ammoMax - 1e-6) {
-      const frac = a.ammo / a.ammoMax, lowAt = w.kind === 'charger' ? 0.5 : w.kind === 'blaster' ? 0.45 : 0.35;
+      const frac = a.ammo / a.ammoMax, lowAt = w.kind === 'charger' ? 0.6 : w.kind === 'blaster' ? 0.55 : 0.45;
       if (a.ammo < (w.ammoPerShot ?? 1) || (frac < lowAt && this.seeT > 1.0) || (frac < 0.8 && this.seeT > 5 && this.mode === 'hold')) it.reload = true;
     }
 
@@ -414,19 +421,21 @@ export class BotBrain {
     }
     // grenades: at someone hiding behind cover at medium range (or only showing their head over it)
     const tgt = this.target;
-    if (!this.lob && this.bombCd <= 0 && a.grenades > 0 && tgt && tgt.alive && !a.sprinting) {
-      const P = this.visible ? tgt.pos : this.lastSeen;
+    if (!this.lob && this.bombCd <= 0 && a.grenades > 0 && !a.sprinting && ((tgt && tgt.alive) || (this.threatKnown && this.threatAge < 5))) {
+      const live = tgt && tgt.alive;
+      const P = live ? (this.visible ? tgt.pos : this.lastSeen) : this.threat;
       const d = Math.hypot(P.x - a.pos.x, P.z - a.pos.z);
-      const hidden = !this.visible && this.seeT > 0.4 && this.seeT < 5;
-      if (d > 4.5 && d < 11 && (hidden || (this.visible && this.headOnly)) && Math.random() < 0.2 + 0.35 * (this.diff.fireDiscipline ?? 0.8)) {
+      const hidden = live ? !this.visible && this.seeT > 0.3 && this.seeT < 6 : true;
+      const slow = live && this.visible && Math.hypot(tgt.vel.x, tgt.vel.z) < 1.5;
+      if (d > 4 && d < 11.5 && (hidden || (this.visible && (this.headOnly || slow))) && Math.random() < 0.3 + 0.4 * (this.diff.fireDiscipline ?? 0.8)) {
         this._startLob('sub', P, d, SUB.bomb.throwSpeed, hidden);
         this.bombCd = 5 + Math.random() * 5;
       }
     }
     // storm beacon special: onto whoever we know about in reach
-    if (!this.lob && a.specialReady() && a.weapon.special === 'storm' && this.specialCd <= 0 && this.threatKnown && this.threatAge < 4) {
+    if (!this.lob && a.specialReady() && a.weapon.special === 'storm' && this.specialCd <= 0 && this.threatKnown && this.threatAge < 5) {
       const d = Math.hypot(this.threat.x - a.pos.x, this.threat.z - a.pos.z);
-      if (d > 5 && d < 13) { this._startLob('special', this.threat, d, SPECIALS.storm.throwSpeed || 16, false); this.specialCd = 3; }
+      if (d > 4 && d < 15) { this._startLob('special', this.threat, d, SPECIALS.storm.throwSpeed || 16, false); this.specialCd = 3; }
     }
   }
 

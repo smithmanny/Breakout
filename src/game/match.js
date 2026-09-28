@@ -236,7 +236,10 @@ export class Match {
         if (this.roundTime <= MATCH.finalCountdown && c !== this.lastCount && c > 0) { this.lastCount = c; emit('match:count', { n: c }); }
         if (!auth) break;
         const s = this._sides || [true, true];
-        const w0 = s[0] && this.aliveCount(0) === 0, w1 = s[1] && this.aliveCount(1) === 0;
+        // online grace: a follower's round-reset respawn reaches the host ~one round-trip late, so right after going
+        // live a lagging team can look empty. Damage only opens at live, so no real wipe can happen this fast.
+        const grace = G.netm && this.phaseT < 1.5;
+        const w0 = !grace && s[0] && this.aliveCount(0) === 0, w1 = !grace && s[1] && this.aliveCount(1) === 0;
         if (w0 || w1) this._roundEnd(w0 && w1 ? -1 : w0 ? 1 : 0, 'wipe');
         else if (this.roundTime <= 0) this._roundEnd(this._timeWinner(), 'time');
         break;
