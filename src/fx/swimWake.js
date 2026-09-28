@@ -14,12 +14,25 @@ export class SwimWake {
       actor: null, pts: [], k: 0, speedK: 0, fwd: new THREE.Vector3(0, 0, 1), head: new THREE.Vector3(), last: null, swimming: false,
     }));
     this._cand = [];
+    this.enabled = false;   // BREAKOUT: swimming is retired (set true to bring the ink wakes back)
   }
 
   reset() { for (const s of this.slots) { s.actor = null; s.pts.length = 0; s.k = 0; s.last = null; s.swimming = false; } }
 
   update(dt, U, camPos) {
     if (!U || !U.uWake) return;
+    // BREAKOUT: nobody swims — no wakes are ever collected; the uniforms are parked empty once and left alone
+    if (!this.enabled) {
+      if (!this._parked) {
+        this._parked = true;
+        this.reset();
+        const W = U.uWake.value, B = U.uWakeB.value, H = U.uSwimH.value;
+        for (let i = 0; i < W.length; i++) W[i].set(0, 0, 0, BREAK);
+        for (let i = 0; i < SLOTS; i++) { B[i].set(0, -999, 0, 0); H[i].set(0, -999, 0, 0); }
+      }
+      return;
+    }
+    this._parked = false;
     const now = G.time;
     const m = G.match;
     // who is in the ink near the camera

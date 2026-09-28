@@ -3,15 +3,14 @@
 // state. Every event has a state-polling fallback that switches itself off the first time the real event is seen, so
 // the effects work whether or not a given event is emitted yet. The recipes themselves live in fx.js.
 //
-// Systems: footsteps (own ink / enemy ink / dry dust), landings, jump-off, kid⇄squid pops, dive/emerge splashes, swim
-// bubbles, wall-climb drips + ledge pops, enemy-ink sizzle, damage drips, hit splashes, splat ghosts + sea splashes,
-// shot mist trails, blaster / charger / roller-flick muzzle extras, charger charge glow + full-charge sparkle + laser dot
-// + beam trail/impact, roller spray, bomb trails / bounces / danger zones / beep pulses, Tidal Slam launch / charge /
-// fall streaks / shockwaves, Ink Tempest start / puddles / flashes, super-jump charge / launch / trail / landing marker /
-// landing splash, spawn-pad pulses, special-ready sparkles, dry-fire wisps, shots plopping into the sea; ambient sea
-// spray on the deck edges and drifting gull feathers (+ the GPU dust motes inside fx.js).
-// Ink stays ink: flying droplets that land leave a speck in the paint atlas (fx.onSpeck → paint.speck) and every
-// splash / footstep / dive ripples the ink surface itself (fx.onRipple → paint.ripple) instead of drawing decals.
+// Systems (BREAKOUT paintball): footsteps, landings, jump-off, paint drips off hit players, body splats for non-ball
+// hits (sniper / grenades), the "OUT" silhouette on eliminations + sea splashes, paintball motion streaks, blaster /
+// charger muzzle extras, charger charge glow + laser dot + beam trail/impact, bomb (paint grenade) trails / bounces /
+// danger zones / beep pulses, specials, super jump (Boss Battle), spawn-pad pulses, dry-fire wisps, balls plopping into
+// the sea; ambient sea spray and gull feathers (+ the GPU dust motes inside fx.js). Squid form, swimming, wall climb and
+// enemy-ink effects are retired. Ball impacts on surfaces / bodies are drawn by weapons.js (fx.ballSplat / fx.ballHit).
+// Paint stays paint: flying droplets that land leave a speck in the paint atlas (fx.onSpeck → paint.speck) and
+// splashes ripple the wet paint surface itself (fx.onRipple → paint.ripple) instead of drawing decals.
 import * as THREE from 'three';
 import { on } from '../core/ctx.js';
 import { PLAYER, SUB, SPECIALS, WEAPONS } from '../config.js';
@@ -58,11 +57,8 @@ class FxHooks {
     sub('actor:footstep', (e) => this._footstep(e.actor, e.pos, e.surface, e.speed));
     sub('actor:land', (e) => this._land(e.actor, e.pos || e.actor.pos, e.speed, e.surface));
     sub('actor:jump', (e) => this._jump(e.actor, e.surface, e.swim));
-    sub('actor:form', (e) => this._form(e.actor, e.form, e.surface));
-    sub('actor:dive', (e) => this._dive(e.actor, e.pos || e.actor.pos, e.speed || 0));
-    sub('actor:emerge', (e) => this._emerge(e.actor, e.pos || e.actor.pos, e.speed || 0));
-    sub('actor:climb', (e) => this._climb(e.actor, e.on));
-    sub('actor:enemyInk', (e) => this._enemyInk(e.actor, e.on));
+    // BREAKOUT: no squid form / swimming / wall climb / enemy-ink effects (actor:form, actor:dive, actor:emerge,
+    // actor:climb and actor:enemyInk are not wired any more — nothing here spawns swim wakes, dive splashes or sizzle)
     sub('hit', (e) => this._hit(e));
     sub('splatted', (e) => this._splatted(e));
     sub('respawn', (e) => this._respawn(e.actor));
@@ -129,48 +125,12 @@ class FxHooks {
     this.fx.jumpOff?.(this._visual(a, _v), this._inkColor(a, surface), surface, false);
     this._bump('jump');
   }
-  _form(a, form, surface = 0) {
-    if (!a || !a.alive || this._fresh(a) || a.superJumpState || a.specialActive) return;
-    if (surface === 1) return;                                 // in own ink the dive / emerge splash covers it
-    if (!this._near(a.pos, 26)) return;
-    this.fx.formPop?.(this._visual(a, _v), a.color, form === 'squid', false);
-    this._bump('form');
-  }
-  _dive(a, pos, speed) {
-    if (!a || !a.alive || this._fresh(a) || !this._near(pos, 30)) return;
-    if (a.climbing) { this._climb(a, true); return; }
-    this.fx.dive?.(pos, a.color, speed);
-    this._bump('dive');
-  }
-  _emerge(a, pos, speed) {
-    if (!a || !a.alive || this._fresh(a) || a.superJumpState || !this._near(pos, 30)) return;
-    const s = this._state(a);
-    if (s.climb || this.time - s.climbEnd < 0.25) { this.fx.climbPop?.(pos, this._heading(a, _dir), a.color); this._bump('climbPop'); return; }
-    this.fx.emerge?.(pos, a.color, speed);
-    s.emergeT = this.time;   // the kid comes up wet: a few drips run off for half a second
-    this._bump('emerge');
-  }
-  _climb(a, onWall) {
-    const s = this._state(a);
-    if (!onWall && s.climb) s.climbEnd = this.time;
-    s.climb = !!onWall;
-    if (!onWall || !a.alive || !this._near(a.pos, 26)) return;
-    const n = a.anim?.wallNormal;
-    if (!n || n.lengthSq() < 0.5) return;
-    _v.copy(a.pos); _v.y += 0.35;
-    for (let i = 0; i < 3; i++) this.fx.climbDrip?.(_v, n, a.color);
-    this.fx.ring?.(_v2.copy(_v).addScaledVector(n, 0.03), n, a.color, { radius: 0.55, life: 0.3, style: 0, alpha: 0.9 });
-    this._bump('climbStart');
-  }
-  _enemyInk(a, onInk) {
-    this._state(a).onEnemy = !!onInk;
-    if (!onInk || !a.alive || this._fresh(a) || !this._near(a.pos, 22)) return;
-    const col = this.G.teamColors[a.enemyTeam];
-    this.fx.footstep?.(a.pos, col, 2, this._heading(a, _dir), 4);
-    this._bump('enemyInk');
-  }
-  _hit({ attacker, victim, damage, killed }) {
+  _hit({ attacker, victim, damage, killed, weaponId }) {
     if (!attacker || !victim || killed || damage <= 0 || !victim.alive) return;
+    // paintballs draw their own body splat at the exact impact point (weapons.js → fx.ballHit); this covers the rest
+    // (the sniper's line, grenades, specials)
+    const w = WEAPONS[weaponId];
+    if (w && w.kind !== 'charger') return;
     const s = this._state(victim);
     if (this.time - s.hitT < 0.05 || !this._near(victim.pos, 40)) return;
     s.hitT = this.time;
@@ -184,7 +144,8 @@ class FxHooks {
   _splatted({ victim, cause }) {
     if (!victim) return;
     if (cause === 'water') { this.fx.waterSplash?.(victim.pos, 1.1); this._bump('seaSplat'); }
-    this.fx.ghost?.(_v.copy(victim.pos).setY(Math.max(victim.pos.y, PLAYER.waterY + 0.2)), victim.color);
+    // the "OUT" moment: the victim's hands-up silhouette holds where they stood while the splat bursts
+    if (cause !== 'water' && this._near(victim.pos, 60)) this.fx.ghost?.(victim.pos, victim.color);
     this._bump('ghost');
   }
   _respawn(a) {
@@ -319,11 +280,6 @@ class FxHooks {
     if (!this.seen['actor:land'] && a.grounded && !s.grounded && s.vy < -3.5) this._land(a, a.pos, -s.vy, a.groundTeam);
     if (!this.seen['actor:jump'] && !a.grounded && s.grounded && a.vel.y > 4 && !a.superJumpState) this._jump(a, a.groundTeam, s.form === 'swim');
     const sub = form === 'swim' || form === 'climb';
-    if (!this.seen['actor:dive'] && sub && !s.sub) this._dive(a, a.pos, hs);
-    if (!this.seen['actor:emerge'] && !sub && s.sub) this._emerge(a, a.pos, hs);
-    if (!this.seen['actor:climb'] && (form === 'climb') !== s.climb) this._climb(a, form === 'climb');
-    const kidForm = form === 'kid' ? 'kid' : 'squid', prevKid = s.form === 'kid' ? 'kid' : 'squid';
-    if (!this.seen['actor:form'] && kidForm !== prevKid) this._form(a, kidForm, a.groundTeam);
     // footsteps from stride distance until character.js emits real foot plants
     if (!this.seen['actor:footstep'] && form === 'kid' && a.grounded && hs > 1.2 && !a.superJumpState && !a.specialActive && near) {
       s.stepAcc += hs * dt;
@@ -340,53 +296,10 @@ class FxHooks {
     // ---- continuous effects
     if (near) {
       const col = a.color;
-      // wall climb drips
-      if (form === 'climb' && an.wallNormal) {
-        s.climbT += dt;
-        if (s.climbT > 0.07) { s.climbT = 0; _v.copy(pos); _v.y += 0.3; fx.climbDrip?.(_v, an.wallNormal, col); }
-      }
-      // carving a hard turn in the ink: throw a fan off the outside of the turn
-      if (form === 'swim' && hs > 4.5) {
-        const yaw = Math.atan2(a.vel.x, a.vel.z);
-        if (s.swimYaw !== null && dt > 0) {
-          let dy = yaw - s.swimYaw; dy -= Math.round(dy / TAU) * TAU;
-          const rate = dy / dt;
-          s.carveT += dt * clamp((Math.abs(rate) - 3.2) / 5, 0, 1) * 22;
-          if (s.carveT >= 1) {
-            s.carveT = 0;
-            _dir.set(a.vel.x / hs, 0, a.vel.z / hs);
-            const sg = rate > 0 ? -1 : 1;   // positive yaw rate turns toward the right vector: spray flies left
-            _v.set(_dir.z * sg, 0, -_dir.x * sg);
-            this.fx.swimCarve?.(pos, _dir, _v, col, clamp(hs / 11.8, 0, 1));
-          }
-        }
-        s.swimYaw = yaw;
-      } else { s.swimYaw = null; s.carveT = 0; }
-      // just emerged: drips run off the body
-      if (form === 'kid' && this.time - s.emergeT < 0.5) {
-        s.wetT += dt * 26 * (1 - (this.time - s.emergeT) / 0.5);
-        while (s.wetT >= 1) {
-          s.wetT -= 1;
-          const ang = rand() * TAU, r = 0.14 + rand() * 0.08;
-          _v.set(pos.x + Math.cos(ang) * r, pos.y + 0.35 + rand() * 0.8, pos.z + Math.sin(ang) * r);
-          fx.hurtDrip?.(_v, col, 0.03);
-        }
-      } else s.wetT = 0;
-      // idle swimming: bubbles
-      if (form === 'swim' && hs < 2) {
-        s.bubbleT += dt;
-        if (s.bubbleT > 0.35) { s.bubbleT = 0; fx.bubbles?.(pos, col, 1); }
-      }
-      // enemy ink under a kid: sticky sizzle
-      const onEnemy = a.onEnemy !== undefined ? a.onEnemy : (a.grounded && a.groundTeam === 2 && form === 'kid');
-      if (onEnemy && this._near(pos, 22)) {
-        s.sizzleT += dt;
-        if (s.sizzleT > 0.11) { s.sizzleT = 0; fx.enemyInkSizzle?.(pos, this.G.teamColors[a.enemyTeam]); }
-      }
-      // damage: enemy-ink drips off the body
+      // damage: the paint marks on a hit player run a little (a slow drip, heavier the more hits taken)
       const hurt = 1 - a.hp / PLAYER.hp;
       if (hurt > 0.08 && !a.superJumpState) {
-        s.dripT += dt * hurt * 7;
+        s.dripT += dt * hurt * 3;
         while (s.dripT >= 1) {
           s.dripT -= 1;
           const sq = form !== 'kid';
@@ -476,7 +389,7 @@ class FxHooks {
     const list = P.list;
     if (!list) return;
     const fx = this.fx, wy = PLAYER.waterY;
-    let budget = 48;
+    let budget = 96;
     const fireFallback = !this.seen['weapon:fire'];
     for (let i = 0; i < list.length; i++) {
       const p = list[i];
@@ -498,12 +411,15 @@ class FxHooks {
         if (!h) { h = { x: 0, y: 0, z: 0, vx: 0, vz: 1, t: 0, color: null, born: this.time }; this.heads.set(p, h); }
         h.x = p.pos.x; h.y = p.pos.y; h.z = p.pos.z; h.vx = p.vel.x; h.vz = p.vel.z; h.t = this.time; h.color = p.owner.color; h.stamp = this.stamp;
       }
-      const step = p.type === 'blast' ? 0.55 : p.type === 'drop' ? 1.1 : slosh ? (p.head ? 0.45 : 1.0) : 0.8;
-      if (p._fxD >= step) {
-        p._fxD = 0;
-        if (budget > 0 && p.age > 0.03 && (p.delay === undefined || p.age > p.delay) && this._near(p.pos, 30)) {
+      // paintballs: a faint short motion streak behind every ball in flight near the camera (no ink trail)
+      if (budget > 0 && sp > 6 && (p.delay === undefined || p.age > p.delay) && fx.streak && this._near(p.pos, 40)) {
+        const trav = p.start ? p.start.distanceTo(p.pos) - 0.25 : 1;
+        const len = Math.min(p.type === 'blast' ? 0.9 : 0.7, sp * 0.014, trav);
+        if (len > 0.06) {
           budget--;
-          if (slosh) fx.sloshTrail?.(p.pos, p.vel, p.owner.color, !!p.head); else fx.shotTrail?.(p.pos, p.vel, p.owner.color, p.type === 'blast');
+          _v.copy(p.pos).addScaledVector(p.vel, -len / sp);
+          const r = p.vis || p.size || 0.07;
+          fx.streak(p.pos, _v, p.owner.color, r * 0.85, p.type === 'blast' ? 0.3 : 0.34);
         }
       }
       if (p._fxY >= wy + 0.05 && p.pos.y < wy + 0.05 && this.G.level && this.G.level.groundHeight(p.pos.x, p.pos.z, p.pos.y + 3) === -Infinity) {

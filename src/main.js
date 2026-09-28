@@ -69,7 +69,7 @@ class Game {
     this.menus?.show('loading');
     this.bootMarks = [];
     const progress = async (p, label) => { this.bootMarks.push([label, Math.round(performance.now() - t0)]); this.menus?.setLoading(p, label); await nextFrame(); };
-    await progress(0.05, 'Mixing ink…');
+    await progress(0.05, 'Mixing paint…');
 
     // renderer / scene
     this.R = new Renderer(app, this.settings);
@@ -117,7 +117,7 @@ class Game {
     // sky-fill balance (scene.environmentIntensity, hemisphere) + per-theme exposure are the environment theme's job
     // (Environment.setTheme), so a stage/time looks the same booted into or switched to mid-session
     G.renderer.toneMappingExposure = 0.94;
-    await progress(0.55, 'Teaching squids to swim…');
+    await progress(0.55, 'Filling the hoppers…');
     G.projectiles = new Projectiles(scene);
     G.fx = new fxMod.FX(scene, { quality: q });
     G.fx.setLighting?.(G.env.getSkyColors?.());
@@ -139,7 +139,7 @@ class Game {
     // online session (G.net) — the menus' online screens and startNetMatch/netMatchGo/netMatchEnd below drive it
     try { (await import('./net/session.js')).installNet(); } catch (e) { console.error('[inkwave] net', e); }
     G.net?.on?.('lobby', ({ lobby }) => this._roomPalette(lobby));
-    await progress(0.7, 'Tuning the tentacles…');
+    await progress(0.7, 'Chalking the lines…');
 
     this._setPalette(this._pickPalette());
     this._bindEvents();
@@ -442,9 +442,10 @@ class Game {
       if (!this.match || this.match.attract) return;
       const local = this.match.local;
       const elim = this.match.elim;
+      // (elimination: the HUD's own kill feed renders every 'eliminated' — "Viper ⟶ Blotch OUT")
       if (attacker?.isLocal) {
         G.audio?.play('splat_enemy', { volume: 0.9 });
-        this.hud?.feed({ text: elim ? `You eliminated ${victim.name}!` : `You splatted ${victim.name}!`, color: G.teamHex[local.team], kind: 'kill' });
+        if (!elim) this.hud?.feed({ text: `You splatted ${victim.name}!`, color: G.teamHex[local.team], kind: 'kill' });
       } else if (victim.isLocal) {
         G.audio?.play('splatted_self');
         G.audio?.duck?.(0.45, 2.2);
@@ -456,35 +457,30 @@ class Game {
         this.rig.lookAt.copy(victim.pos);
       } else if (victim.team === local?.team) {
         G.audio?.play('ally_splatted', { volume: 0.5 });
-        this.hud?.feed({ text: `${victim.name} is out${attacker ? ' (' + attacker.name + ')' : ''}`, color: G.teamHex[victim.enemyTeam], kind: 'death' });
-      } else if (attacker && attacker.team === local?.team) {
-        this.hud?.feed({ text: `${attacker.name} eliminated ${victim.name}`, color: G.teamHex[attacker.team], kind: 'ally' });
+        if (!elim) this.hud?.feed({ text: `${victim.name} was splatted${attacker ? ' (' + attacker.name + ')' : ''}`, color: G.teamHex[victim.enemyTeam], kind: 'death' });
+      } else if (attacker && attacker.team === local?.team && !elim) {
+        this.hud?.feed({ text: `${attacker.name} splatted ${victim.name}`, color: G.teamHex[attacker.team], kind: 'ally' });
       }
     });
     on('respawn', ({ actor }) => {
       if (!this.match || this.match.attract) return;
       if (actor.isLocal) { this.hud?.hideSplatted(); this.rig.follow(actor, true); this.rig.yaw = actor.yaw; this.rig.pitch = -0.12; }
     });
-    // ---- elimination rounds (match.js): banners / countdown / horn. (A dedicated round HUD can take these over.)
-    on('round:pre', ({ round, match }) => {
+    // ---- elimination rounds (match.js): camera + horn here; the HUD owns every round banner / countdown / result card
+    on('round:pre', ({ match }) => {
       if (match !== this.match || match.attract) return;
       this.hud?.hideSplatted?.();
       if (match.local) { this.rig.follow(match.local, true); this.rig.yaw = match.local.yaw; this.rig.pitch = -0.12; }
-      const wins = match.roundWins, my = match.local ? match.local.team : 0;
-      const matchPoint = wins[0] === ROUNDS.toWin - 1 || wins[1] === ROUNDS.toWin - 1;
-      this.hud?.banner('custom', `ROUND ${round}${matchPoint ? ' · MATCH POINT' : ''}  ${wins[my]}–${wins[1 - my]}`);
     });
-    on('round:count', ({ n }) => { if (this.match && !this.match.attract) { this.hud?.countdown(n); G.audio?.play('final_count'); } });
+    on('round:count', () => { if (this.match && !this.match.attract) G.audio?.play('final_count'); });
     on('round:start', ({ match }) => {
       if (match !== this.match || match.attract) return;
-      this.hud?.banner('go'); G.audio?.play('go_horn');
+      G.audio?.play('go_horn');
     });
-    on('round:end', ({ winner, reason, match }) => {
+    on('round:end', ({ round, winner, reason, match }) => {
       if (match !== this.match || match.attract) return;
-      const my = match.local ? match.local.team : 0;
-      const names = this.palette?.names || TEAM_NAMES;
-      const txt = winner < 0 ? 'DRAW — NO POINT' : winner === my ? `ROUND WON${reason === 'wipe' ? ' — WIPEOUT!' : ''}` : `ROUND LOST${reason === 'wipe' ? ' — WIPED OUT' : ''}`;
-      this.hud?.banner('custom', winner < 0 ? txt : `${txt}  ·  ${String(names[winner] || '').toUpperCase()}`);
+      // round log for the results (how each round ended: survivors per side)
+      (this._roundLog || (this._roundLog = []))[round - 1] = { winner, reason, alive: [match.aliveCount(0), match.aliveCount(1)] };
       G.audio?.play(reason === 'time' ? 'times_up' : 'final_count');
     });
     on('special:ready', ({ actor }) => {
@@ -495,7 +491,6 @@ class Game {
     });
     on('shake', ({ amount, pos }) => { if (!this.match?.attract) this.rig.addShake(amount, pos); });
     on('recoil', ({ amount }) => { if (!this.match?.attract) this.rig.recoil(amount); });
-    on('lowink', ({ actor }) => { if (actor.isLocal) this._lowInkFlash = 1.2; });
     // footsteps (character animation → 'actor:footstep'): surface-aware, only for actors near the camera
     on('actor:footstep', ({ actor, surface, pos, speed }) => {
       if (!actor || !actor.alive || actor.form === 'squid') return;
@@ -517,7 +512,7 @@ class Game {
       }
       if (state === 'finish') {
         const bossWon = match.mode === 'boss' && match.boss?.dead;   // the defeat already had its moment (boss:defeat)
-        if (match.elim) this.hud?.banner('custom', 'MATCH OVER'); else this.hud?.banner('timesup');
+        if (!match.elim) this.hud?.banner('timesup');   // elimination: the HUD shows MATCH OVER itself
         if (!bossWon) { G.audio?.play('times_up'); if (match.mode !== 'boss') { G.music?.stop?.(0.4); this._musicTrack = null; } }
         this.input.exitLock();
         if (match.boss) this._bossFinishCam(match.boss);
@@ -626,7 +621,7 @@ class Game {
     this.minimap.setViewerTeam(0);
     G.mode = 'match';
     this.hud?.setVisible(false);
-    this.hudPrompt = null; this._hintT = 0; this._hints = {};
+    this.hudPrompt = null; this._hintT = 0; this._hints = {}; this._roundLog = [];
     m.start();
     this._fade(0, 500);
   }
@@ -665,7 +660,7 @@ class Game {
     this.minimap.setViewerTeam(m.local ? m.local.team : 0);
     G.mode = 'match';
     this.hud?.setVisible(false);
-    this.hudPrompt = null; this._hintT = 0; this._hints = {};
+    this.hudPrompt = null; this._hintT = 0; this._hints = {}; this._roundLog = [];
     // hold on the stage (not black) while the others finish loading
     if (m.local) { this.rig.follow(m.local, true); this.rig.yaw = m.local.team === 0 ? 0 : Math.PI; }
     this.rig.dioFlip = !!(m.local && m.local.team === 1);
@@ -840,16 +835,26 @@ class Game {
     if (m.result?.mode === 'boss') return this._bossResults();
     this.hud?.hideSplatted?.();
     this.rig.overview();
-    this.hud?.setVisible(true);
     const cov = m.result.coverage || G.paint.coverage();
     // elimination: round wins decide it (online followers get only winner + coverage from the host: use their own tally)
     const roundWins = m.result.roundWins || (m.elim ? [...m.roundWins] : null);
-    let judgeP = null;
-    if (!roundWins) judgeP = this.hud?.judge({ colors: [G.teamHex[0], G.teamHex[1]], percents: [cov[0] * 100, cov[1] * 100], names: this.palette.names || TEAM_NAMES });
-    await (judgeP || new Promise((r) => setTimeout(r, roundWins ? 1800 : 4000)));
-    if (this.match !== m) return;
     const myTeam = m.local ? m.local.team : 0;
     const won = m.result.winner === myTeam;
+    const names = this.palette.names || TEAM_NAMES;
+    // every round: who took it, how (wipe / time) and how many were still standing on each side
+    const rounds = (m.result.rounds || m.rounds || []).map((r, i) => ({ ...r, ...(this._roundLog?.[i] && !r.alive ? { alive: this._roundLog[i].alive } : {}) }));
+    const players = m.actors.map((a) => ({ name: a.name, team: a.team, weapon: a.weaponId, turf: Math.round(a.stats.turf), splats: a.stats.splats, elims: a.stats.splats, deaths: a.stats.deaths,
+      damage: Math.round(a.stats.damage || 0), survived: a.stats.roundsSurvived || 0, isSelf: a.isLocal, bot: !!a.isBot }));
+    if (roundWins) {
+      // BREAKOUT: the HUD's full-time card (final score, round strip, per-player table) instead of the turf judge
+      this.hud?.setVisible(false);
+      const fs = this.hud?.finalScore?.({ colors: [G.teamHex[0], G.teamHex[1]], names, myTeam, roundWins, rounds, players, win: won, mapName: this.mapDef.name });
+      await (fs || new Promise((r) => setTimeout(r, 1800)));
+    } else {
+      this.hud?.setVisible(true);
+      await (this.hud?.judge({ colors: [G.teamHex[0], G.teamHex[1]], percents: [cov[0] * 100, cov[1] * 100], names }) || new Promise((r) => setTimeout(r, 4000)));
+    }
+    if (this.match !== m) return;
     m.setState('results');
     this.hud?.setVisible(false);
     // profile / XP: a win / loss, every elimination and every round your team took
@@ -862,10 +867,12 @@ class Game {
     p.xp += gained; p.matches++; if (won) p.wins++; p.totalTurf += turf;
     while (p.xp >= PROGRESSION.xpForLevel(p.level)) { p.xp -= PROGRESSION.xpForLevel(p.level); p.level++; }
     saveJSON('inkwave.profile', p);
+    // results screen data. Elimination adds: roundWins, rounds [{ winner, reason, alive: [t0, t1] }], myTeam, and per
+    // player elims / damage / deaths (outs) / survived (rounds still standing at the whistle)
     const data = {
-      mode: roundWins ? 'elim' : undefined, roundWins, rounds: m.result.rounds || m.rounds,
-      win: won, percents: [cov[0] * 100, cov[1] * 100], colors: [G.teamHex[0], G.teamHex[1]], teamNames: this.palette.names || TEAM_NAMES,
-      players: m.actors.map((a) => ({ name: a.name, team: a.team, weapon: a.weaponId, turf: Math.round(a.stats.turf), splats: a.stats.splats, elims: a.stats.splats, deaths: a.stats.deaths, damage: Math.round(a.stats.damage || 0), isSelf: a.isLocal, bot: !!a.isBot })),
+      mode: roundWins ? 'elim' : undefined, roundWins, rounds, myTeam,
+      win: won, percents: [cov[0] * 100, cov[1] * 100], colors: [G.teamHex[0], G.teamHex[1]], teamNames: names,
+      players,
       xp: { gained, levelBefore: before.level, levelAfter: p.level, xpBefore: before.xp, xpAfter: p.xp, xpToNextBefore: before.toNext, xpToNextAfter: PROGRESSION.xpForLevel(p.level) },
       mapName: this.mapDef.name,
     };
@@ -1142,23 +1149,22 @@ class Game {
     // contextual prompts (light tutorial)
     this._hintT += dt;
     let prompt = null;
-    const inkF = a.ink / PLAYER.inkMax;
+    // (the hopper widget carries the reload / low / empty calls itself: [R] — RELOAD under the reticle)
     if (m.state === 'playing' && a.alive) {
-      if (m.controller?.mapHeld) prompt = null;   // the map diorama carries its own super-jump hints
+      const pad = this.input.lastDevice === 'pad';
+      if (m.controller?.mapHeld) prompt = null;   // the map diorama carries its own hints
       else if (a.superJumpState) prompt = null;
-      else if (a.reloading > 0) { this._lowInkFlash = 0; prompt = null; }
-      else if (this._lowInkFlash > 0) { this._lowInkFlash -= dt; prompt = 'Hopper empty — reloading (R)'; }
-      else if (a.specialReady() && (this._hints.specialT = (this._hints.specialT || 0) + dt) > 2) prompt = `Special ready! Press F`;
-      else if (inkF < 0.2) prompt = 'Low on paint — press R to reload';
-      else if (m.elim && m.roundPhase === 'pre' && m.round === 1) prompt = 'One life per round — eliminate the other team!';
+      else if (a.specialReady() && (this._hints.specialT = (this._hints.specialT || 0) + dt) > 2) prompt = pad ? 'Special ready! Press {Y}' : 'Special ready! Press [F]';
+      else if (m.elim && m.round === 1 && m.roundPhase === 'live' && m.roundTime > ROUNDS.roundTime - 7 && !this._hints.sprinted) prompt = pad ? 'Hold {LT} to sprint (no firing) · {X} reload · {RB} grenade' : 'Hold [SHIFT] to sprint (no firing) · [R] reload · [E] grenade';
       else if (!m.elim && m.duration - m.time < 8 && !this._hints.shot) prompt = 'Paint the ground — most turf wins!';
       if (!a.specialReady()) this._hints.specialT = 0;
       if (a.intent.fire) this._hints.shot = true;
+      if (a.sprinting) this._hints.sprinted = true;
     }
     const frame = {
       time: m.time,
       teams: a.team === 1 ? m.teamSummary().reverse() : m.teamSummary(),   // HUD: [your team, theirs]
-      ink: a.ink / PLAYER.inkMax, inkLow: a.ink < 18 || (this._lowInkFlash > 0), subCost: a.grenades > 0 ? 0 : 2,   // (old tank fields: ink mirrors the hopper; subCost 0 = a grenade is available)
+      ink: a.ink / PLAYER.inkMax, inkLow: a.ammo < a.ammoMax * 0.25, subCost: a.grenades > 0 ? 0 : 2,   // (old tank fields: ink mirrors the hopper; subCost 0 = a grenade is available)
       // BREAKOUT: hopper / reload / grenades / sprint + the round state
       ammo: a.ammo, ammoMax: a.ammoMax, reloading: a.reloading > 0, reloadFrac: a.reloadFrac(), grenades: a.grenades, grenadesMax: SUB.bomb.count,
       sprinting: !!a.sprinting,

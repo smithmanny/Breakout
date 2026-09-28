@@ -1,56 +1,89 @@
-// Bot brain: picks turf to claim, paths there (swimming through its own ink), paints on the move, spots and
-// fights enemies with human-ish reaction time and aim error, refills ink, throws bombs and uses specials.
-// Motion: aim is a critically-damped spring with a turn-rate cap and a smoothly wandering error (plus an
-// acquisition over/undershoot that settles), shots follow the bot's *actual* aim ray, the move command slews its
-// heading (no twitch at waypoint switches / strafe flips), strafes ease, bots dodge-hop when hit, swim in to close
-// distance and retreat through own ink to heal when they're losing a duel.
+// Bot brain (BREAKOUT paintball elimination). Every round starts with a breakout: each bot sprints from its base to a
+// bunker it picked toward the front (cover spots precomputed once per level by nav.coverSpots(): nodes hugging an
+// obstacle, with the compass octants it shields). From cover it plays the classic paintball loop — hold, peek out to
+// the side to shoot at what it can see, duck back in to reload or when it's getting hit — and moves cover to cover:
+// forward when its team has the numbers or the clock is running out (or nobody has been seen for a while: hunt),
+// back when outnumbered. Teammates share what they've seen (last known enemy positions). Grenades get lobbed at
+// enemies hiding behind cover at medium range; specials fire when an enemy is in their reach.
+// Motion: aim is a critically-damped spring with a turn-rate cap and a smoothly wandering error (plus an acquisition
+// over/undershoot that settles), shots follow the bot's *actual* aim ray, the move command slews its heading.
+// Difficulty (config DIFFICULTY) scales reaction time, aim error, the aim spring, awareness range and fire discipline.
+// Attract mode (menu backdrop, free respawns) plays the same way (a respawn is a fresh breakout); Boss Battle has its
+// own tick at the bottom (bots fight HULLBREAKER).
 import * as THREE from 'three';
 import { G, clamp, angleDiff } from '../core/ctx.js';
-import { PLAYER, DIFFICULTY, SUB } from '../config.js';
+import { PLAYER, DIFFICULTY, SUB, SPECIALS } from '../config.js';
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
-const _stats = { own: 0, enemy: 0, empty: 0, n: 0 };
+const OCT = Math.PI / 4;
+const octant = (dx, dz) => ((Math.round(Math.atan2(dx, dz) / OCT) % 8) + 8) % 8;
+// how well a cover spot's octant mask shields against a threat in octant k (1 square on, 0.45 from a neighbour octant)
+const coverScore = (mask, k) => ((mask >> k) & 1 ? 1 : ((mask >> ((k + 1) & 7)) & 1) || ((mask >> ((k + 7) & 7)) & 1) ? 0.45 : 0);
+const wander = (x) => Math.sin(x) * 0.6 + Math.sin(x * 2.27 + 1.3) * 0.4;
+const BOMB_G = 24;          // weapons.js _updateBombs gravity (grenades and the storm beacon)
+
+// team intel: last known enemy positions, shared by a team's bots (lives on the match: gone with it)
+function intelOf(m) {
+  return m._botIntel || (m._botIntel = { seen: [new Map(), new Map()], t: [-99, -99], round: -1 });
+}
 
 export class BotBrain {
   constructor(actor, difficulty = 'normal') {
     this.a = actor;
     this.setDifficulty(difficulty);
+    this.pers = 0.25 + Math.random() * 0.45;           // personality: base aggression
+    this.threat = new THREE.Vector3(); this.lastSeen = new THREE.Vector3(); this.anchor = new THREE.Vector3();
+    this.peekPt = new THREE.Vector3(); this.search = new THREE.Vector3(); this.lobPt = new THREE.Vector3();
+    this.lastPos = new THREE.Vector3();
     this.reset();
+    try { G.nav?.coverSpots?.(); } catch { /* no level yet */ }   // precompute while the match is still loading
   }
   setDifficulty(d) { this.diff = DIFFICULTY[d] || DIFFICULTY.normal; }
   reset() {
     this.path = null; this.pi = 0; this.goal = -1; this.repath = 0; this.goalTimer = 0;
-    this.target = null; this.seeTimer = 0; this.react = 0; this.lostTimer = 0;
-    this.stuck = 0; this.lastPos = new THREE.Vector3(); this.jumpCd = 0; this.bestD = Infinity; this.noProg = 0;
-    this.mode = 'paint';
-    this.sweep = Math.random() * 10;
+    this.target = null; this.visible = false; this.seeT = 99; this.react = 0; this.headOnly = false;
+    this.stuck = 0; this.jumpCd = 0; this.bestD = Infinity; this.noProg = 0;
+    this.mode = 'breakout'; this.needBreak = true; this.goalSpot = null; this.holdT = 0;
+    this.peekPhase = 'duck'; this.peekT = 0; this.peekSide = Math.random() < 0.5 ? 1 : -1; this.hasPeek = false;
+    this.repickCd = 0; this.searchT = 0; this.hasSearch = false; this.threatKnown = false; this.threatAge = 99;
+    this.aggr = this.pers;
     this.aimYaw = this.a.yaw; this.aimPitch = 0;
-    this.errYaw = 0; this.errPitch = 0; this.errT = 0;
-    this.strafe = Math.random() < 0.5 ? 1 : -1; this.strafeT = 0;
-    this.bombCd = 3 + Math.random() * 4;
-    this.fireHold = 0;
+    this.strafe = Math.random() < 0.5 ? 1 : -1; this.strafeT = 0; this.strafeS = 0; this.strafeAmp = 1;
+    this.bombCd = 2 + Math.random() * 4; this.lob = null; this.specialCd = 0;
     this.think = Math.random() * 0.2;
-    this.refillUntil = 0;
-    this.chargeRelease = 0.95 + Math.random() * 0.05;
-    this.paintPause = 0;
+    const d = this.diff;
+    // charger release point: Easy bots often let go early (a partial charge is not a one-hit elimination)
+    this.chargeRelease = clamp((d.fireDiscipline ?? 0.8) + 0.12 + Math.random() * 0.15, 0.7, 1);
     this.aimYawV = 0; this.aimPitchV = 0;
     this.acqT = 9; this.acqSignY = 0; this.acqSignP = 0;
     this.ph1 = Math.random() * 20; this.ph2 = Math.random() * 20; this.t = Math.random() * 10;
-    this.strafeS = 0; this.strafeAmp = 1;
     this.mvYaw = this.a.yaw; this.mvMag = 0;
     this.dodgeCd = 1 + Math.random() * 2;
-    this.retreatT = 0; this._firing = false;
+    this.burstT = 0; this.pauseT = 0; this._firing = false; this.fighting = false;
+    this.pathFail = 0; this.roundT = 0;
+    const kind = this.a.weapon?.kind;
+    // how far up the field this bot breaks out to (sniper hangs back, short-range markers go deep), and which lane
+    this.breakFrac = kind === 'charger' ? 0.16 + Math.random() * 0.14 : kind === 'dualies' || kind === 'blaster' ? 0.32 + Math.random() * 0.16 : 0.24 + Math.random() * 0.18;
+    this.lane = Math.random() * 2 - 1;
+  }
+  /** Match calls this when it puts everyone back at base for a new round. */
+  onRoundReset() {
+    this.reset();
+    const m = G.match;
+    if (m) { const I = intelOf(m); if (I.round !== m.round) { I.round = m.round; I.seen[0].clear(); I.seen[1].clear(); I.t[0] = I.t[1] = -99; } }
   }
 
   update(dt) {
     const a = this.a;
     const it = a.intent;
-    if (!a.alive) { it.move.set(0, 0, 0); it.fire = it.squid = it.sub = it.jump = it.special = false; this.path = null; this.target = null; this._wasDead = true; this.mvMag = 0; return; }
-    if (this._wasDead && G.match && G.match.playing()) {
-      // just respawned: face the way the body faces, then sometimes super jump to the teammate furthest up the field
+    if (!a.alive) { this._idle(it); this.path = null; this.target = null; this._wasDead = true; return; }
+    const m = G.match;
+    if (this._wasDead && m && m.playing()) {
+      // just respawned (attract / boss: free respawns): a fresh breakout; sometimes super jump up the field
       this._wasDead = false;
-      this.aimYaw = a.yaw; this.aimPitch = 0; this.aimYawV = 0; this.aimPitchV = 0;
-      if (Math.random() < 0.5) {
+      this.reset();
+      this.aimYaw = a.yaw; this.aimPitch = 0;
+      if (G.boss && Math.random() < 0.5) {
         const enemyPad = G.level.spawnPads[1 - a.team];
         let best = null, bd = Infinity;
         for (const o of G.actors) {
@@ -61,191 +94,454 @@ export class BotBrain {
         if (best && a.superJump(best)) { this.path = null; this.goalTimer = 0; }
       }
     }
-    if (a.superJumpState) { it.move.set(0, 0, 0); it.fire = it.squid = it.sub = it.jump = it.special = false; this.mvMag = 0; return; }
-    if (!G.match || !G.match.playing()) { it.move.set(0, 0, 0); it.fire = it.squid = it.sub = it.jump = it.special = false; this.mvMag = 0; return; }
-    this.think -= dt; this.jumpCd -= dt; this.bombCd -= dt; this.strafeT -= dt; this.paintPause -= dt; this.dodgeCd -= dt;
-    this.acqT += dt; this.t += dt;
+    if (a.superJumpState || !m || !m.playing()) { this._idle(it); return; }
+    this.think -= dt; this.jumpCd -= dt; this.bombCd -= dt; this.strafeT -= dt; this.dodgeCd -= dt; this.repickCd -= dt;
+    this.specialCd -= dt; this.roundT += dt; this.acqT += dt; this.t += dt; this.seeT += dt; this.react -= dt; this.threatAge += dt;
     if (G.boss) { this._bossTick(dt); return; }   // Boss Battle: a different job (below)
 
-    // ---------------- perception
+    it.fire = false; it.sub = false; it.special = false; it.squid = false; it.sprint = false; it.jump = false; it.reload = false;
     if (this.think <= 0) {
-      this.think = 0.15 + Math.random() * 0.1;
-      this._perceive();
+      this.think = 0.12 + Math.random() * 0.08;
+      this._perceive(m);
+      this._tactics(m);
     }
-    const tgt = this.target;
-    if (tgt && !tgt.alive) { this.target = null; }
+    if (this.target && !this.target.alive) { this.target = null; this.visible = false; }
+    const w = a.weapon, wr = a.weaponRunner, tgt = this.target;
+    const vis = !!(tgt && this.visible && this.seeT < 0.35);
+    const range = this._range();
+    const tdist = tgt ? Math.hypot(tgt.pos.x - a.pos.x, tgt.pos.z - a.pos.z) : 99;
 
-    // ---------------- mode selection (retreat = break line of sight and heal in own ink when losing a duel)
-    const inkFrac = a.ink / PLAYER.inkMax;
-    const hpFrac = a.hp / PLAYER.hp;
-    const w = a.weapon;
-    if (this.mode === 'retreat') {
-      this.retreatT -= dt;
-      if (hpFrac > 0.85 || this.retreatT <= 0 || (!this.target && hpFrac > 0.6)) { this.mode = 'paint'; this.path = null; this.goalTimer = 0; }
-    } else if (this.target && this.seeTimer > 0 && ((hpFrac < 0.34 && w.kind !== 'roller' && a.lastDamage < 0.8) || hpFrac < 0.2) && Math.random() < 0.6 * dt * 60 * this.diff.fireDiscipline) {
-      this.mode = 'retreat'; this.retreatT = 2.2 + Math.random() * 1.4; this.repath = 0; this._pickRetreat();
+    // ---------------- navigation
+    if (this.needBreak) { this.needBreak = false; this._pickCover({ breakout: true }); }
+    let move = null, travelling = false;
+    if (this.mode === 'move' || this.mode === 'breakout') {
+      if (this.goal >= 0 && !this.path) {
+        this.repath -= dt;
+        if (this.repath <= 0 && !this._pathToNode(this.goal)) { if (++this.pathFail > 2) this._arrive(); }
+      }
+      move = this._steer(dt);
+      const gn = this.goal >= 0 ? G.nav.nodes[this.goal] : null;
+      const gd = gn ? Math.hypot(gn.x - a.pos.x, gn.z - a.pos.z) : 0;
+      if (!gn || gd < 0.7 || (this.path && this.pi >= this.path.length && gd < 1.6)) this._arrive();
+      else {
+        travelling = true;
+        // contact while crossing open ground: dive for the nearest cover instead of running the whole route
+        if (vis && this.repickCd <= 0 && gd > 6 && tdist < range * 1.1 && this.aggr < 1.15) { this.repickCd = 2.5; this._pickCover({ maxTravel: 7 }); }
+      }
     }
-    if (this.mode !== 'refill' && this.mode !== 'retreat' && inkFrac < 0.12 && !(this.target && this.seeTimer > 0 && w.kind !== 'roller' && inkFrac > 0.05)) {
-      this.mode = 'refill'; this.refillUntil = 0.85 + Math.random() * 0.1;
-    }
-    if (this.mode === 'refill' && inkFrac >= this.refillUntil) this.mode = 'paint';
-    if (this.mode !== 'refill' && this.mode !== 'retreat') this.mode = this.target ? 'fight' : 'paint';
+    if (this.mode === 'hold') move = this._hold(dt, vis, tdist, range);
+    if (!move) move = this._steer(dt);
 
-    // ---------------- navigation goal
-    this.goalTimer -= dt; this.repath -= dt;
-    if (this.mode === 'fight' && this.target) {
-      if (this.repath <= 0) this._pathTo(this.target.pos, 0.6);
-    } else if (this.mode === 'refill') {
-      if (this.repath <= 0 || !this.path) this._pickRefill();
-    } else if (this.mode === 'retreat') {
-      if (this.repath <= 0 || !this.path) this._pickRetreat();
-    } else if (this.goalTimer <= 0 || !this.path || this.pi >= this.path.length) {
-      this._pickPaintGoal();
-    }
-
-    // ---------------- steering along the path
-    const move = this._steer(dt);
-    const wantMove = move.lengthSq() > 0.01;
-
-    // ---------------- actions
-    it.fire = false; it.sub = false; it.special = false; it.squid = false; it.jump = false;
-    let wantYaw = wantMove ? Math.atan2(move.x, move.z) : a.yaw;
-    let wantPitch = -0.1;
-    const enemyVisible = this.target && this.seeTimer > 0;
-    let fightDist = 0, idealYaw = 0, idealPitch = 0, aimDist = 6;
-
-    if ((this.mode === 'fight' || this.mode === 'retreat') && this.target) {
-      const t = this.target;
-      const dx = t.pos.x - a.pos.x, dz = t.pos.z - a.pos.z;
-      const dist = Math.hypot(dx, dz);
-      fightDist = dist;
-      const range = this._range();
-      // lead the target a little (projectile flight time)
-      // lead the target by the projectile's time to arrive (lobs: the heave windup + a slower, longer arc)
-      const lead = w.kind === 'charger' ? 0 : w.kind === 'slosher' ? (w.windup || 0.13) + dist / ((w.projSpeed || 15) * 0.88) : dist / (w.projSpeed || 30);
-      _v.set(t.pos.x + t.vel.x * lead, t.pos.y + (t.smoothY || 0) + (t.form === 'squid' ? 0.3 : 0.85), t.pos.z + t.vel.z * lead);
-      _v2.copy(_v); _v2.x -= a.pos.x; _v2.y -= a.pos.y + 1.1; _v2.z -= a.pos.z;
-      idealYaw = Math.atan2(_v2.x, _v2.z);
-      idealPitch = Math.atan2(_v2.y, Math.hypot(_v2.x, _v2.z));
+    // ---------------- aim + trigger
+    let wantYaw = move.lengthSq() > 0.01 ? Math.atan2(move.x, move.z) : this.aimYaw;
+    let wantPitch = -0.05, aimDist = 8;
+    this.fighting = false;
+    let fire = false;
+    if (this.lob) {
+      // grenade / storm beacon: settle the aim on the throw, then let go
+      const L = this.lob;
+      L.t += dt;
+      const dx = this.lobPt.x - a.pos.x, dz = this.lobPt.z - a.pos.z;
+      wantYaw = Math.atan2(dx, dz); wantPitch = L.pitch;
+      this.fighting = true;
+      const settled = Math.abs(angleDiff(this.aimYaw, wantYaw)) < 0.07 && Math.abs(this.aimPitch - wantPitch) < 0.07;
+      if (L.kind === 'sub') {
+        it.sub = true;
+        if ((L.t > 0.3 && settled) || L.t > 0.9) { it.sub = false; this.lob = null; }
+      } else if ((L.t > 0.2 && settled) || L.t > 0.8) { it.special = true; this.lob = null; }
+      if (move) move.multiplyScalar(0.5);
+    } else if (tgt && (vis || this.seeT < 3)) {
+      const t = tgt;
+      const lead = w.kind === 'charger' ? 0 : tdist / (w.projSpeed || 40);
+      const h = vis ? (this.headOnly ? 1.22 : 0.9) : 0.9;
+      const px = vis ? t.pos.x + t.vel.x * lead : this.lastSeen.x, pz = vis ? t.pos.z + t.vel.z * lead : this.lastSeen.z;
+      const py = (vis ? t.pos.y + (t.smoothY || 0) : this.lastSeen.y) + h;
+      _v2.set(px - a.pos.x, py - a.pos.y - 1.1, pz - a.pos.z);
+      const idealYaw = Math.atan2(_v2.x, _v2.z), idealPitch = Math.atan2(_v2.y, Math.hypot(_v2.x, _v2.z));
       aimDist = _v2.length();
       // human aim error: a slow wander plus an acquisition error that settles over the reaction time
-      const e = this.diff.aimError;
+      const e = this.diff.aimError * (this.headOnly ? 0.8 : 1);
       const acq = Math.exp(-this.acqT / Math.max(0.12, this.diff.reaction * 0.9));
-      const wander = (x) => Math.sin(x) * 0.6 + Math.sin(x * 2.27 + 1.3) * 0.4;
       wantYaw = idealYaw + e * (0.75 * wander(this.t * 1.7 + this.ph1) + 2.4 * acq * this.acqSignY);
       wantPitch = idealPitch + e * 0.6 * (0.75 * wander(this.t * 2.1 + this.ph2) + 1.6 * acq * this.acqSignP);
-      if (this.mode === 'fight') {
-        // movement in combat: keep preferred distance + eased strafing (+ swim in to close distance)
-        const pref = w.kind === 'charger' ? range * 0.8 : w.kind === 'roller' ? 0.5 : range * 0.7;
-        if (this.strafeT <= 0) { this.strafeT = 0.6 + Math.random() * 1.2; this.strafe = Math.random() < 0.5 ? -1 : 1; this.strafeAmp = 0.5 + Math.random() * 0.5; }
-        this.strafeS += (this.strafe * this.strafeAmp - this.strafeS) * (1 - Math.exp(-5 * dt));
-        const nx = dx / Math.max(dist, 0.01), nz = dz / Math.max(dist, 0.01);
-        let mvx = 0, mvz = 0;
-        if (dist > pref + 1.2 && wantMove) { mvx = move.x; mvz = move.z; }
-        else if (dist < pref - 1.5 && w.kind !== 'roller') { mvx = -nx; mvz = -nz; }
-        if (w.kind !== 'charger' || !a.weaponRunner.charging) { mvx += -nz * this.strafeS * 0.9; mvz += nx * this.strafeS * 0.9; }
-        if (w.kind === 'roller' && dist < 7) { mvx = nx; mvz = nz; }
-        const l = Math.hypot(mvx, mvz);
-        if (l > 0.01) move.set(mvx / l, 0, mvz / l); else move.set(0, 0, 0);
-        // fire only when the *actual* aim is on the body (shots follow the visible aim, not the target)
-        const off = Math.hypot(angleDiff(this.aimYaw, idealYaw), this.aimPitch - idealPitch);
-        const tol = Math.max(0.05, Math.atan2(0.55, dist)) * (this._firing ? 2.4 : 1.5);
-        const aimed = off < tol;
-        this._firing = false;
-        if (enemyVisible && this.react <= 0 && aimed && inkFrac > 0.02) {
-          if (w.kind === 'charger') {
-            it.fire = !(a.weaponRunner.charging && a.weaponRunner.charge >= this.chargeRelease);
-            if (a.weaponRunner.charging) move.multiplyScalar(0.3);
-          } else if (w.kind === 'roller') {
-            it.fire = dist < 5.5 || (a.weaponRunner.rolling && dist < 8);
-          } else if (w.kind === 'splatling') {
-            // spin up (a full charge at range, a quicker partial one up close), release, track while the stream runs
-            const wr = a.weaponRunner, want = dist > range * 0.55 ? this.chargeRelease : 0.55 + 0.25 * this.chargeRelease;
-            it.fire = !wr.streaming && dist < range * 1.1 && !(wr.charging && wr.charge >= want);
-            if (wr.charging) move.multiplyScalar(0.45);
-          } else if (w.kind === 'slosher') {
-            it.fire = dist < range * 1.05;   // the lob also reaches targets up on ledges / behind low cover
-          } else {
-            it.fire = dist < range * 1.08;
-          }
-          this._firing = it.fire;
-          if (this.bombCd <= 0 && a.ink > SUB.bomb.inkCost + 8 && dist > 5 && dist < 14 && Math.random() < 0.02 * (1 + this.diff.fireDiscipline)) {
-            it.sub = true; this.bombCd = 5 + Math.random() * 6;
-            this._bombAim = true;
-          }
-        } else if ((w.kind === 'charger' || w.kind === 'splatling') && a.weaponRunner.charging && !enemyVisible) {
-          it.fire = true; // keep charge while target briefly hidden
-        }
-        // out of range with own ink underfoot: swim in (fast, hard to hit) instead of walking
-        if (!it.fire && !a.weaponRunner.charging && dist > range * 1.15 && a.groundTeam === 1) it.squid = true;
-        // dodge: a strafe-hop right after taking a hit
-        if (w.kind === 'dualies') {
-          // dodge roll: while firing, roll sideways when hit or when the fight gets close (the runner locks the turret after)
-          const wr = a.weaponRunner;
-          if (it.fire && this.dodgeCd <= 0 && a.grounded && !wr.dodge && wr.rollsLeft > 0 && (a.lastDamage < 0.3 || dist < 5.5) && Math.random() < 0.08 * dt * 60) {
-            const side = Math.random() < 0.5 ? -1 : 1;
-            if (!this._nearWater(a, 3.2)) { move.set(-nz * side, 0, nx * side); it.jump = true; this.dodgeCd = 1.4 + Math.random() * 1.6; }
-          }
-        } else if (a.lastDamage < 0.25 && this.dodgeCd <= 0 && a.grounded && w.kind !== 'charger' && Math.random() < 0.3 && !this._nearWater(a, 1.6)) { it.jump = true; this.dodgeCd = 2 + Math.random() * 2.5; }
-        // special
-        if (a.specialReady()) {
-          if (w.special === 'slam' && dist < 4.5) it.special = true;
-          if (w.special === 'storm' && dist < 16) it.special = true;
-        }
-      } else {
-        // retreat: swim away through own ink, keep eyes on the threat
-        it.squid = true;
+      this.fighting = vis;
+      const off = Math.hypot(angleDiff(this.aimYaw, idealYaw), this.aimPitch - idealPitch);
+      const tol = Math.max(0.045, Math.atan2(this.headOnly ? 0.35 : 0.55, tdist)) * (this._firing ? 2.4 : 1.5);
+      fire = this._trigger(dt, vis, off, tol, tdist, range);
+      // blaster: splash the spot they ducked behind for a moment
+      if (!fire && w.kind === 'blaster' && !vis && this.seeT < 1.6 && tdist < range && tdist > 3 && !a.reloading && a.ammo > 3 && Math.abs(angleDiff(this.aimYaw, idealYaw)) < 0.12) fire = Math.random() < 0.6;
+      if (w.kind === 'charger' && wr.charging && move) move.multiplyScalar(0.25);
+      if (w.kind === 'splatling' && (wr.charging || wr.streaming) && move) move.multiplyScalar(0.7);
+      // dualies: dive-roll sideways while firing when hit / up close
+      if (fire && w.kind === 'dualies' && move && this.dodgeCd <= 0 && a.grounded && !wr.dodge && wr.rollsLeft > 0 && (a.lastDamage < 0.3 || tdist < 5) && Math.random() < 0.08 * dt * 60) {
+        const nx = _v2.x / Math.max(aimDist, 0.01), nz = _v2.z / Math.max(aimDist, 0.01), side = Math.random() < 0.5 ? -1 : 1;
+        if (!this._nearWater(a, 3.2)) { move.set(-nz * side, 0, nx * side); it.jump = true; this.dodgeCd = 1.6 + Math.random() * 1.8; }
       }
-    } else if (this.mode === 'paint') {
-      // paint the ground ahead with a sweeping aim
-      this.sweep += dt * (w.kind === 'charger' ? 0.8 : 2.1);
-      const sweepAmt = w.kind === 'roller' ? 0 : 0.55;
-      wantYaw += Math.sin(this.sweep) * sweepAmt;
-      wantPitch = w.kind === 'charger' ? -0.12 : w.kind === 'blaster' ? -0.28 : w.kind === 'slosher' ? -0.16 : w.kind === 'splatling' ? -0.3 : -0.42;
-      const aheadStats = G.paint.regionStats(a.pos.x + Math.sin(wantYaw) * 4, a.pos.y, a.pos.z + Math.cos(wantYaw) * 4, 3, a.team, _stats);
-      const needPaint = aheadStats.n === 0 || aheadStats.own < 0.75;
-      if (w.kind === 'roller') {
-        it.fire = inkFrac > 0.08 && (needPaint || Math.random() < 0.02) && wantMove;
-      } else if (w.kind === 'charger') {
-        // charge to ~70 % and release a paint line, then a short breather before the next one
-        if (a.weaponRunner.charging) {
-          it.fire = a.weaponRunner.charge < 0.7;
-          if (!it.fire) this.paintPause = 0.3 + Math.random() * 0.35;
-        } else it.fire = needPaint && inkFrac > 0.3 && this.paintPause <= 0;
-      } else if (w.kind === 'splatling') {
-        // spin up ~60 %, hose the lane while the stream runs, breathe, repeat
-        const wr = a.weaponRunner;
-        if (wr.streaming) it.fire = false;
-        else if (wr.charging) { it.fire = wr.charge < 0.6; if (!it.fire) this.paintPause = 0.25 + Math.random() * 0.3; }
-        else it.fire = needPaint && inkFrac > 0.25 && this.paintPause <= 0;
-      } else {
-        it.fire = needPaint && inkFrac > 0.18;
-      }
-      // travel as a squid through own ink when not painting
-      if (!it.fire && this._pathRemaining() > 5 && a.groundTeam === 1) it.squid = true;
-      if (a.specialReady() && Math.random() < 0.01) {
-        const r = G.paint.regionStats(a.pos.x, a.pos.y, a.pos.z, 5, a.team, _stats);
-        if (r.own < 0.5) it.special = true;
-      }
-    } else if (this.mode === 'refill') {
-      it.squid = a.groundTeam === 1 || this._pathRemaining() > 2;
-      if (a.groundTeam !== 1 && this._pathRemaining() < 1.5 && inkFrac > 0.03) {
-        // no ink here: paint a puddle to swim in
-        it.squid = false; it.fire = true;
-        wantPitch = -1.0;
-      }
+      // specials: the slam right on top of them
+      if (vis && a.specialReady() && w.special === 'slam' && tdist < 4.3 && this.specialCd <= 0) { it.special = true; this.specialCd = 2; }
+    } else if (this.threatKnown || this.mode === 'hold') {
+      // no one in sight: watch where they're expected to come from
+      const dx = this.threat.x - a.pos.x, dz = this.threat.z - a.pos.z;
+      if (!travelling || Math.hypot(dx, dz) < 12) { wantYaw = Math.atan2(dx, dz) + Math.sin(this.t * 0.7 + this.ph1) * 0.25; wantPitch = -0.03; }
     }
-    this._tail(dt, move, wantYaw, wantPitch, aimDist, wantMove);
+    if (fire) {
+      if (a.ammo < (w.ammoPerShot ?? 1) - 1e-6 && a.reloading <= 0) { fire = false; it.reload = true; }
+    }
+    if (m.fireLocked && m.fireLocked()) fire = false;
+    it.fire = fire;
+    this._firing = fire;
+
+    // ---------------- reload: when dry, or proactively when low with nobody in sight
+    if (!fire && a.reloading <= 0 && !this.lob && !wr.charging && !wr.streaming && a.ammo < a.ammoMax - 1e-6) {
+      const frac = a.ammo / a.ammoMax, lowAt = w.kind === 'charger' ? 0.5 : w.kind === 'blaster' ? 0.45 : 0.35;
+      if (a.ammo < (w.ammoPerShot ?? 1) || (frac < lowAt && this.seeT > 1.0) || (frac < 0.8 && this.seeT > 5 && this.mode === 'hold')) it.reload = true;
+    }
+
+    // ---------------- sprint while crossing ground with nobody to shoot
+    if (travelling && !fire && !this.lob && !wr.charging && !wr.streaming && this._pathRemaining() > 2.2 && !(vis && tdist < range * 1.05 && this.react <= 0)) it.sprint = true;
+    it.squid = it.sprint;
+    this._tail(dt, move, wantYaw, wantPitch, aimDist, move.lengthSq() > 0.01);
   }
 
-  // shared by turf and boss play: bomb release, the aim spring, the smoothed move command, edge guard, stuck recovery
+  _idle(it) {
+    it.move.set(0, 0, 0); it.fire = it.squid = it.sprint = it.sub = it.jump = it.special = it.reload = false;
+    this.mvMag = 0; this.lob = null;
+  }
+
+  // Per-weapon trigger handling. Returns whether the trigger is held this frame.
+  //   shooter / dualies / blaster: held while aimed at a visible target in range
+  //   splatling: hold to spin up (starts while the aim is still coming on), keep holding while it streams on target
+  //   charger: hold to charge (from first sight), release once charged enough for the distance and on target
+  _trigger(dt, vis, off, tol, dist, range) {
+    const a = this.a, w = a.weapon, wr = a.weaponRunner;
+    if (a.reloading > 0) return false;
+    const ready = vis && this.react <= 0;
+    // fire discipline: bursts with short breaths (sloppier bots spray longer and breathe less often)
+    if (this._firing) { this.burstT += dt; } else this.burstT = Math.max(0, this.burstT - dt * 2);
+    this.pauseT -= dt;
+    switch (w.kind) {
+      case 'charger': {
+        const need = clamp((dist - w.rangeMin) / (w.rangeMax - w.rangeMin), 0, 1);
+        if (wr.charging) {
+          const want = Math.max(this.chargeRelease, need + 0.03);
+          if (vis && off < tol && wr.charge >= Math.min(1, want)) return false;       // release: the shot
+          if (!vis && this.seeT > 2.2) return false;                                    // gave up waiting
+          return true;
+        }
+        return ready && dist < w.rangeMax * 1.02 && off < tol * 5 && wr.cooldown <= 0;
+      }
+      case 'splatling': {
+        if (wr.streaming) return (vis || this.seeT < 0.4) && off < tol * 3.5 && dist < range * 1.2;
+        if (wr.charging) return ready || this.seeT < 0.7;
+        return ready && dist < range * 1.1 && off < tol * 4;
+      }
+      default: {
+        if (this.pauseT > 0) return false;
+        const burstMax = 0.7 + (this.diff.fireDiscipline ?? 0.8) * 1.4;
+        if (this.burstT > burstMax) { this.burstT = 0; this.pauseT = 0.12 + (1 - (this.diff.fireDiscipline ?? 0.8)) * 0.5 + Math.random() * 0.15; return false; }
+        const k = w.kind === 'blaster' ? 1.4 : 1;
+        return ready && off < tol * k && dist < range * (w.kind === 'blaster' ? 1.0 : 1.08);
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------------------------------ holding a bunker
+  // At the anchor (the cover spot) facing the threat: ducked while reloading / hurt, otherwise peek out sideways to a
+  // spot that sees the threat, shoot, duck back; leave for the next cover when the hold time runs out.
+  _hold(dt, vis, tdist, range) {
+    const a = this.a, out = this._mv || (this._mv = new THREE.Vector3());
+    out.set(0, 0, 0);
+    this.holdT -= dt * (this.threatKnown ? 1 : 1.6) * (vis && tdist > range * 1.1 ? 2 : 1);
+    const sp = this.goalSpot;
+    const tx = this.threat.x - this.anchor.x, tz = this.threat.z - this.anchor.z;
+    const covered = sp ? coverScore(sp.mask, octant(tx, tz)) : 0;
+    // cover no longer faces the fight and we're taking hits: find better cover close by
+    if (covered === 0 && a.lastDamage < 0.4 && this.repickCd <= 0) { this.repickCd = 2; if (this._pickCover({ maxTravel: 8 })) return this._steer(dt); }
+    if (this.holdT <= 0 && !(vis && tdist < range && this.aggr < 1.1 && a.hp > 40)) {
+      this.holdT = 1.5;
+      if (this._pickCover({ minTravel: 2.5 })) return this._steer(dt);
+    }
+    const hurt = a.lastDamage < 0.5 && a.hp < 55;
+    const duck = covered > 0 && (a.reloading > 0 || hurt || (a.weaponRunner.cooldown > 0.3 && !vis));
+    let gx = this.anchor.x, gz = this.anchor.z;
+    this.peekT -= dt;
+    if (duck) { this.peekPhase = 'duck'; this.peekT = Math.max(this.peekT, 0.35 + Math.random() * 0.4); }
+    else if (vis) {
+      // shooting: stay where we can see them, drifting a little side to side
+      if (this.peekPhase === 'peek' && this.hasPeek) { gx = this.peekPt.x; gz = this.peekPt.z; }
+      else { gx = a.pos.x; gz = a.pos.z; }
+      this.peekT = Math.max(this.peekT, 0.6);
+      if (this.strafeT <= 0) { this.strafeT = 0.5 + Math.random() * 1.0; this.strafe = Math.random() < 0.5 ? -1 : 1; this.strafeAmp = 0.3 + Math.random() * 0.5; }
+      this.strafeS += (this.strafe * this.strafeAmp - this.strafeS) * (1 - Math.exp(-5 * dt));
+      const l = Math.hypot(tx, tz) || 1, px = -tz / l, pz = tx / l;
+      gx += px * this.strafeS * 0.8; gz += pz * this.strafeS * 0.8;
+      // don't drift far off the bunker
+      const ox = gx - this.anchor.x, oz = gz - this.anchor.z, ol = Math.hypot(ox, oz);
+      if (ol > 2.6) { gx = this.anchor.x + (ox / ol) * 2.6; gz = this.anchor.z + (oz / ol) * 2.6; }
+    } else if (this.threatKnown && covered > 0) {
+      if (this.peekPhase === 'duck' && this.peekT <= 0) {
+        this.peekPhase = 'peek'; this.peekT = 1.2 + Math.random() * 1.6;
+        this.hasPeek = this._findPeek();
+      } else if (this.peekPhase === 'peek' && this.peekT <= 0) {
+        this.peekPhase = 'duck'; this.peekT = 0.5 + Math.random() * 1.1; this.peekSide = -this.peekSide;
+      }
+      if (this.peekPhase === 'peek' && this.hasPeek) { gx = this.peekPt.x; gz = this.peekPt.z; }
+    }
+    const dx = gx - a.pos.x, dz = gz - a.pos.z, d = Math.hypot(dx, dz);
+    if (d > 0.2) { const s = Math.min(1, d / 0.7) / d; out.set(dx * s, 0, dz * s); }
+    return out;
+  }
+
+  // a spot beside the anchor (either side, perpendicular to the threat) that sees the threat point
+  _findPeek() {
+    const a = this.a, nav = G.nav, A = this.anchor, T = this.threat;
+    const tx = T.x - A.x, tz = T.z - A.z, l = Math.hypot(tx, tz) || 1, px = -tz / l, pz = tx / l;
+    _v3.set(T.x, T.y + 1.0, T.z);
+    for (let s = 0; s < 2; s++) {
+      const side = s ? -this.peekSide : this.peekSide;
+      for (const off of [0.9, 1.6, 2.3]) {
+        const id = nav.nearest(_v.set(A.x + px * side * off, A.y, A.z + pz * side * off), 0.8);
+        if (id < 0) continue;
+        const n = nav.nodes[id];
+        if (Math.abs(n.y - A.y) > 0.5 || Math.hypot(n.x - _v.x, n.z - _v.z) > 0.8) continue;
+        if (!G.physics.los(_v2.set(n.x, n.y + 1.25, n.z), _v3)) continue;
+        if (!this._fatLos(A.x, A.y, A.z, n.x, n.y, n.z)) break;   // can't get there in a straight step
+        this.peekPt.set(n.x, n.y, n.z); this.peekSide = side;
+        return true;
+      }
+    }
+    // no side peek: stand tall at the anchor (shooting over a low bunker, if it is one)
+    this.peekPt.copy(A);
+    return false;
+  }
+
+  _arrive() {
+    const a = this.a;
+    this.mode = 'hold'; this.path = null; this.pathFail = 0;
+    const gn = this.goal >= 0 ? G.nav.nodes[this.goal] : null;
+    if (gn) this.anchor.set(gn.x, gn.y, gn.z); else this.anchor.copy(a.pos);
+    const k = clamp(this.aggr, 0, 1.2) / 1.2;
+    this.holdT = (9 - 6.5 * k) * (0.7 + Math.random() * 0.6);
+    this.peekPhase = 'duck'; this.peekT = 0.3 + Math.random() * 0.6; this.hasPeek = false;
+  }
+
+  // ------------------------------------------------------------------------------------------ cover choice
+  // Score every cover spot against the current threat point: shielded from it, at a good distance for the weapon (closer
+  // when aggressive), forward / back by aggression, not too far to travel, apart from teammates. Breakout: a spot at
+  // this bot's depth and lane, shielded from the enemy base.
+  _pickCover(o = {}) {
+    const a = this.a, nav = G.nav, L = G.level;
+    const spots = nav.coverSpots ? nav.coverSpots() : [];
+    if (!spots.length) { this._pathTo(this.threat, 0.6); this.mode = 'move'; return false; }
+    const Po = L.spawnPads[a.team], Pe = L.spawnPads[1 - a.team];
+    const axx = Pe.x - Po.x, axz = Pe.z - Po.z, len2 = axx * axx + axz * axz || 1, len = Math.sqrt(len2);
+    const T = o.breakout ? Pe : this.threat;
+    const range = this._range();
+    const aggr = this.aggr;
+    const prefD = range * (0.9 - 0.5 * clamp(aggr / 1.4, 0, 1));
+    const myT = Math.hypot(T.x - a.pos.x, T.z - a.pos.z);
+    const maxTravel = o.maxTravel ?? 30, minTravel = o.minTravel ?? 0;
+    const cur = this.goalSpot;
+    let best = null, bs = -Infinity;
+    for (let i = 0; i < spots.length; i++) {
+      const s = spots[i];
+      if (s === cur && minTravel > 0) continue;
+      const travel = Math.hypot(s.x - a.pos.x, s.z - a.pos.z);
+      if (travel > maxTravel || travel < minTravel) continue;
+      if (Math.abs(s.y - a.pos.y) > 3.5) continue;
+      const tx = T.x - s.x, tz = T.z - s.z, dT = Math.hypot(tx, tz);
+      const k = octant(tx, tz);
+      const cs = coverScore(s.mask, k);
+      if (cs <= 0) continue;
+      let sc = cs * 3 + ((s.tall >> k) & 1 ? 0.8 : 0);
+      if (o.breakout) {
+        const rx = s.x - Po.x, rz = s.z - Po.z;
+        const prog = (rx * axx + rz * axz) / len2;
+        const lat = (rx * -axz + rz * axx) / len / 12;      // ~ −1 … 1 across the field
+        sc -= Math.abs(prog - this.breakFrac) * 16 + Math.abs(lat - this.lane) * 2.2;
+      } else {
+        sc -= Math.abs(dT - prefD) * 0.3;
+        sc += (myT - dT) * 0.14 * (aggr - 0.45);          // forward when aggressive, back when cautious
+        sc -= travel * 0.06;
+      }
+      for (const mt of G.actors) {
+        if (mt === a || mt.team !== a.team || !mt.alive) continue;
+        const g = mt.bot && mt.bot.goalSpot;
+        if (g && Math.abs(g.x - s.x) < 3.2 && Math.abs(g.z - s.z) < 3.2) sc -= 4;
+        else if (Math.abs(mt.pos.x - s.x) < 2 && Math.abs(mt.pos.z - s.z) < 2) sc -= 2;
+      }
+      sc += Math.random() * 1.4;
+      if (sc > bs) { bs = sc; best = s; }
+    }
+    if (!best) return false;
+    this.goalSpot = best; this.goal = best.id;
+    this.mode = o.breakout ? 'breakout' : 'move';
+    this.pathFail = 0;
+    if (!this._pathToNode(best.id)) { this.repath = 0.3; }
+    return true;
+  }
+
+  // Aggression / what we know. Runs at the think rate.
+  _tactics(m) {
+    const a = this.a, I = intelOf(m);
+    let adv = 0, tl = 99;
+    const mine = m.aliveCount(a.team), theirs = m.aliveCount(1 - a.team);
+    if (m.elim) { adv = mine - theirs; tl = m.roundTime; }
+    else adv = clamp(mine - theirs, -1, 1);
+    const noC = Math.min(G.time - I.t[a.team], this.roundT);
+    let g = this.pers + 0.3 * adv + (tl < 32 ? 0.45 : 0) + (tl < 16 ? 0.6 : 0) + clamp((noC - 5) / 9, 0, 0.9) - (a.hp < 45 ? 0.3 : 0);
+    if (m.elim && theirs === 1 && adv > 0) g += 0.3;        // last one standing: go get them
+    this.aggr = g;
+    // threat point: our target's last known spot, else the freshest team intel, else a search point on their side
+    if (this.target && this.seeT < 6) { this.threat.copy(this.lastSeen); this.threatKnown = true; this.threatAge = this.seeT; }
+    else {
+      let best = null, bd = Infinity;
+      for (const [e, r] of I.seen[a.team]) {
+        if (!e.alive || G.time - r.t > 10) continue;
+        const d = Math.hypot(r.x - a.pos.x, r.z - a.pos.z) + (G.time - r.t) * 1.5;
+        if (d < bd) { bd = d; best = r; }
+      }
+      if (best) { this.threat.set(best.x, best.y, best.z); this.threatKnown = true; this.threatAge = G.time - best.t; }
+      else {
+        this.threatKnown = false;
+        if (this.roundT < 10) this.threat.copy(G.level.spawnPads[1 - a.team]);
+        else {
+          // hunting: sweep search points (cover spots on their side); a new one once it's reached or seen
+          if (!this.hasSearch || Math.hypot(this.search.x - a.pos.x, this.search.z - a.pos.z) < 4 || (this.searchT -= 0.15) <= 0) this._pickSearch();
+          this.threat.copy(this.search);
+        }
+      }
+    }
+    // grenades: at someone hiding behind cover at medium range (or only showing their head over it)
+    const tgt = this.target;
+    if (!this.lob && this.bombCd <= 0 && a.grenades > 0 && tgt && tgt.alive && !a.sprinting) {
+      const P = this.visible ? tgt.pos : this.lastSeen;
+      const d = Math.hypot(P.x - a.pos.x, P.z - a.pos.z);
+      const hidden = !this.visible && this.seeT > 0.4 && this.seeT < 5;
+      if (d > 4.5 && d < 11 && (hidden || (this.visible && this.headOnly)) && Math.random() < 0.2 + 0.35 * (this.diff.fireDiscipline ?? 0.8)) {
+        this._startLob('sub', P, d, SUB.bomb.throwSpeed, hidden);
+        this.bombCd = 5 + Math.random() * 5;
+      }
+    }
+    // storm beacon special: onto whoever we know about in reach
+    if (!this.lob && a.specialReady() && a.weapon.special === 'storm' && this.specialCd <= 0 && this.threatKnown && this.threatAge < 4) {
+      const d = Math.hypot(this.threat.x - a.pos.x, this.threat.z - a.pos.z);
+      if (d > 5 && d < 13) { this._startLob('special', this.threat, d, SPECIALS.storm.throwSpeed || 16, false); this.specialCd = 3; }
+    }
+  }
+
+  _pickSearch() {
+    const a = this.a, L = G.level, spots = G.nav.coverSpots ? G.nav.coverSpots() : [];
+    const Po = L.spawnPads[a.team], Pe = L.spawnPads[1 - a.team];
+    const axx = Pe.x - Po.x, axz = Pe.z - Po.z, len2 = axx * axx + axz * axz || 1;
+    this.searchT = 7 + Math.random() * 5; this.hasSearch = true;
+    for (let i = 0; i < 24 && spots.length; i++) {
+      const s = spots[(Math.random() * spots.length) | 0];
+      const prog = ((s.x - Po.x) * axx + (s.z - Po.z) * axz) / len2;
+      if (prog < 0.4 || prog > 0.92) continue;
+      if (Math.hypot(s.x - a.pos.x, s.z - a.pos.z) < 6) continue;
+      this.search.set(s.x, s.y, s.z);
+      return;
+    }
+    this.search.copy(Pe);
+  }
+
+  // aim a throw at P (horizontal distance d): the throw pitch is aimPitch + 0.28 (weapons.js throwVelocity), launched
+  // from 1.35 m with +1.5 m/s up; grenades bounce, so aim a little short. `high` = lob it over cover.
+  _startLob(kind, P, d, speed, high) {
+    const a = this.a;
+    const dd = kind === 'sub' ? Math.max(2, d - 0.7) : d;
+    const dy = P.y - (a.pos.y + 1.35);
+    const reach = (p) => {
+      const vh = speed * Math.cos(p);
+      if (vh < 0.5) return -1e3;
+      const t = dd / vh;
+      if (kind === 'special' && t > 1.1) return -1e3;       // the beacon pops at 1.1 s in the air
+      return (speed * Math.sin(p) + 1.5) * t - 0.5 * BOMB_G * t * t;
+    };
+    let pitch = null;
+    if (high) { for (let p = 1.1; p > 0.2; p -= 0.04) if (reach(p) >= dy) { pitch = p; break; } }
+    if (pitch === null) for (let p = -0.3; p < 1.1; p += 0.04) if (reach(p) >= dy) { pitch = p; break; }
+    if (pitch === null) pitch = 0.75;
+    this.lobPt.copy(P);
+    this.lob = { kind, t: 0, pitch: clamp(pitch - 0.28, -1.1, 1.0) };
+  }
+
+  _range() {
+    const w = this.a.weapon;
+    if (w.kind === 'charger') return w.rangeMax * 0.9;
+    if (w.kind === 'roller') return 6;
+    return w.range || 15;
+  }
+
+  _perceive(m) {
+    const a = this.a, I = intelOf(m), seen = I.seen[a.team];
+    const eye = _v.copy(a.pos); eye.y += 1.3;
+    let best = null, bd = Infinity, bestHead = false;
+    const aw = this.diff.awareness * (a.weapon.kind === 'charger' ? 1.35 : 1);
+    for (const e of G.actors) {
+      if (e.team === a.team || !e.alive || e.superJumpState) continue;
+      const d = e.pos.distanceTo(a.pos);
+      if (d > aw) continue;
+      const by = e.pos.y + (e.smoothY || 0);
+      let head = false;
+      if (!G.physics.los(eye, _v2.set(e.pos.x, by + 0.95, e.pos.z))) {
+        if (!G.physics.los(eye, _v2.set(e.pos.x, by + 1.32, e.pos.z))) continue;
+        head = true;
+      }
+      // seen: tell the team
+      let r = seen.get(e);
+      if (!r) { r = { x: 0, y: 0, z: 0, t: 0 }; seen.set(e, r); }
+      r.x = e.pos.x; r.y = e.pos.y; r.z = e.pos.z; r.t = G.time;
+      I.t[a.team] = G.time;
+      const score = d - (PLAYER.hp - Math.max(0, e.hp)) * 0.06 + (head ? 2 : 0) - (e === this.target ? 3 : 0);
+      if (score < bd) { bd = score; best = e; bestHead = head; }
+    }
+    // shot at: we know where it came from (and turn to face it faster)
+    const la = a.lastAttacker;
+    if (a.lastDamage < 0.5 && la && la.alive && la.team !== a.team) {
+      let r = seen.get(la);
+      if (!r) { r = { x: 0, y: 0, z: 0, t: 0 }; seen.set(la, r); }
+      r.x = la.pos.x; r.y = la.pos.y; r.z = la.pos.z; r.t = G.time;
+      I.t[a.team] = G.time;
+      if (!best && (!this.target || this.seeT > 1)) { this.target = la; this.lastSeen.copy(la.pos); this.seeT = 0.5; }
+    }
+    if (best) {
+      if (best !== this.target || this.seeT > 1.5) {
+        // (re)acquired: a reaction time (longer when they came from behind), and the first look lands a little off
+        const behind = Math.abs(angleDiff(this.aimYaw, Math.atan2(best.pos.x - a.pos.x, best.pos.z - a.pos.z))) > 1.9;
+        this.react = this.diff.reaction * (0.7 + Math.random() * 0.6) * (behind ? 1.6 : 1) * (best === this.target ? 0.5 : 1);
+        this.acqT = 0; this.acqSignY = (Math.random() < 0.5 ? -1 : 1) * (0.5 + Math.random() * 0.5); this.acqSignP = (Math.random() - 0.5) * 1.2;
+      }
+      this.target = best; this.visible = true; this.seeT = 0; this.headOnly = bestHead;
+      this.lastSeen.copy(best.pos);
+    } else {
+      this.visible = false;
+      if (this.target && (this.seeT > 7 || !this.target.alive)) this.target = null;
+    }
+  }
+
+  _pathToNode(id) {
+    const n = G.nav.nodes[id];
+    return this._pathTo(_v3.set(n.x, n.y, n.z), 0.4);
+  }
+  _pathTo(pos, maxUp = 0.8) {
+    const nav = G.nav;
+    const s = nav.nearest(this.a.pos, 1.2);
+    const g = nav.nearest(pos, maxUp);
+    this.repath = 0.8 + Math.random() * 0.4;
+    if (s < 0 || g < 0) { this.path = null; return false; }
+    const p = nav.path(s, g, this.a.team);
+    if (!p) { this.path = null; return false; }
+    this.path = p; this.pi = Math.min(1, p.length - 1); this.goal = g; this.bestD = Infinity; this.noProg = 0;
+    return true;
+  }
+
+  // shared by paintball and boss play: the aim spring, the smoothed move command, edge guard, stuck recovery
   _tail(dt, move, wantYaw, wantPitch, aimDist, wantMove) {
     const a = this.a, it = a.intent, w = a.weapon;
-    if (this._bombAim) { it.sub = true; this._bombAim = false; this._releaseBomb = true; }
-    else if (this._releaseBomb) { it.sub = false; this._releaseBomb = false; }
-
     // ---------------- aim: critically-damped spring with a turn-rate cap (flicks accelerate and settle; no twitch)
-    const fighting = this.mode === 'fight';
+    const fighting = this.fighting;
     const om = fighting ? (this.diff.aimOmega ?? 13) : 8;
     const maxRate = fighting ? (this.diff.aimTurn ?? 10) : 6;
     wantPitch = clamp(wantPitch, -1.1, 1.0);
@@ -260,9 +556,8 @@ export class BotBrain {
     // shots go where the bot is actually aiming (its eye ray at the target's distance), never straight to the target
     {
       const cp = Math.cos(this.aimPitch);
-      const d = fighting && this.target ? aimDist : this.mode === 'refill' ? 1.6 : 6;
+      const d = this.target ? aimDist : 8;
       a.aimPoint.set(a.pos.x + Math.sin(this.aimYaw) * cp * d, a.pos.y + 1.1 + Math.sin(this.aimPitch) * d, a.pos.z + Math.cos(this.aimYaw) * cp * d);
-      if (!fighting) { const gy = a.pos.y; if (a.aimPoint.y < gy) a.aimPoint.y = gy; }
     }
 
     // ---------------- smooth the move command: heading slews (no twitch at waypoint switches / strafe flips)
@@ -276,130 +571,17 @@ export class BotBrain {
     }
     this.mvMag += (ml - this.mvMag) * (1 - Math.exp(-14 * dt));
     it.move.set(Math.sin(this.mvYaw) * this.mvMag, 0, Math.cos(this.mvYaw) * this.mvMag);
-    // edge guard: never steer off a deck into the sea. Probe the ground a stopping distance ahead; if it's water, slide
-    // along the edge (whichever diagonal is safe) or stop.
+    // edge guard: never steer off a deck into the sea
     if (this.mvMag > 0.05 && a.grounded) this._edgeGuard(a, it.move);
     // stuck recovery, based on progress toward the current waypoint: hop → skip the waypoint → replan
     const trying = this.path && wantMove && !(w.kind === 'charger' && a.weaponRunner.charging);
     if (!trying) this.noProg = 0;
     if (this.noProg > 0.7 && this.jumpCd <= 0 && a.grounded && !this._nearWater(a, 1.2)) { it.jump = true; this.jumpCd = 1.0; }
     if (this.noProg > 1.5 && this.path && this.pi < this.path.length - 1 && !this._skipped) { this.pi++; this._skipped = true; this.bestD = Infinity; }
-    if (this.noProg > 2.4) { this.noProg = 0; this._skipped = false; this.path = null; this.goalTimer = 0; this.repath = 0; }
+    if (this.noProg > 2.4) { this.noProg = 0; this._skipped = false; this.path = null; this.goalTimer = 0; this.repath = 0; if (++this.pathFail > 3 && this.mode !== 'boss') this._arrive(); }
     if (this.noProg === 0) this._skipped = false;
     this.stuck = this.noProg;
     if (this._needJump && this.jumpCd <= 0 && a.grounded) { it.jump = true; this.jumpCd = 0.6; this._needJump = false; }
-  }
-
-  // Low on health mid-duel: head for own ink away from the threat (swim = heal + hard to spot), then come back.
-  _pickRetreat() {
-    const a = this.a, t = this.target;
-    let bestP = null, bs = -Infinity;
-    for (let i = 0; i < 16; i++) {
-      const ang = Math.random() * Math.PI * 2, r = 3 + Math.random() * 8;
-      _v.set(a.pos.x + Math.cos(ang) * r, a.pos.y, a.pos.z + Math.sin(ang) * r);
-      const st = G.paint.regionStats(_v.x, _v.y, _v.z, 1.4, a.team, _stats);
-      if (!st.n) continue;
-      const away = t ? Math.hypot(_v.x - t.pos.x, _v.z - t.pos.z) - Math.hypot(a.pos.x - t.pos.x, a.pos.z - t.pos.z) : 0;
-      const score = st.own * 6 + away * 0.8 - r * 0.15 + (t && !G.physics.los(_v2.set(_v.x, _v.y + 1, _v.z), _v3.set(t.pos.x, t.pos.y + 1, t.pos.z)) ? 4 : 0);
-      if (score > bs) { bs = score; bestP = _v.clone(); }
-    }
-    if (bestP) this._pathTo(bestP, 0.5); else this.path = null;
-    this.repath = 1.0;
-  }
-
-  _range() {
-    const w = this.a.weapon;
-    if (w.kind === 'charger') return w.rangeMax * 0.9;
-    if (w.kind === 'roller') return 6;
-    return w.range;
-  }
-
-  _perceive() {
-    const a = this.a;
-    const eye = _v.copy(a.pos); eye.y += 1.3;
-    let best = null, bd = Infinity;
-    const aw = this.diff.awareness;
-    for (const e of G.actors) {
-      if (e.team === a.team || !e.alive) continue;
-      const d = e.pos.distanceTo(a.pos);
-      if (d > aw) continue;
-      const swimming = e.anim.form === 'swim';
-      const hs = Math.hypot(e.vel.x, e.vel.z);
-      if (swimming && d > 3 && !(hs > 7 && d < 9)) continue;
-      _v2.copy(e.pos); _v2.y += e.form === 'squid' ? 0.3 : 1.0;
-      if (!G.physics.los(eye, _v2)) continue;
-      const score = d - (e === this.target ? 4 : 0);
-      if (score < bd) { bd = score; best = e; }
-    }
-    if (best) {
-      if (best !== this.target) {
-        this.target = best; this.react = this.diff.reaction * (0.7 + Math.random() * 0.6); this.repath = 0;
-        // first look lands a little off (over- or under-shoot) and settles — like a human flick
-        this.acqT = 0; this.acqSignY = (Math.random() < 0.5 ? -1 : 1) * (0.5 + Math.random() * 0.5); this.acqSignP = (Math.random() - 0.5) * 1.2;
-      }
-      this.seeTimer = 1.2;
-      this.lostTimer = 0;
-    } else {
-      this.seeTimer -= 0.2;
-      if (this.target) {
-        this.lostTimer += 0.2;
-        if (this.lostTimer > 2.5 || this.target.pos.distanceTo(a.pos) > aw + 6) this.target = null;
-      }
-    }
-    this.react -= 0.2;
-  }
-
-  _pathTo(pos, maxUp = 0.8) {
-    const nav = G.nav;
-    const s = nav.nearest(this.a.pos, 1.2);
-    const g = nav.nearest(pos, maxUp);
-    this.repath = 0.8 + Math.random() * 0.4;
-    if (s < 0 || g < 0) { this.path = null; return false; }
-    const p = nav.path(s, g, this.a.team);
-    if (!p) { this.path = null; return false; }
-    this.path = p; this.pi = Math.min(1, p.length - 1); this.goal = g; this.bestD = Infinity; this.noProg = 0;
-    return true;
-  }
-
-  _pickPaintGoal() {
-    const a = this.a, nav = G.nav;
-    let best = -1, bs = -Infinity;
-    const enemyPad = G.level.spawnPads[1 - a.team];
-    const ownPad = G.level.spawnPads[a.team];
-    const total = ownPad.distanceTo(enemyPad);
-    const mates = G.actors.filter((o) => o !== a && o.team === a.team && o.bot);
-    for (let i = 0; i < 16; i++) {
-      const id = nav.validIds[(Math.random() * nav.validIds.length) | 0];
-      const n = nav.nodes[id];
-      if (n.zone >= 0) continue;
-      const d = Math.hypot(n.x - a.pos.x, n.z - a.pos.z);
-      if (d > 34) continue;
-      const st = G.paint.regionStats(n.x, n.y, n.z, 3.5, a.team, _stats);
-      if (!st.n) continue;
-      const progress = 1 - Math.hypot(n.x - enemyPad.x, n.z - enemyPad.z) / total; // 0 at own base → 1 at enemy base
-      let score = (st.empty + st.enemy * 1.25) * 12 - d * 0.18 + clamp(progress, 0, 0.8) * 4 + Math.random() * 2.5;
-      for (const m of mates) if (m.bot.goal >= 0) { const g = nav.nodes[m.bot.goal]; if (Math.hypot(g.x - n.x, g.z - n.z) < 7) score -= 4; }
-      if (score > bs) { bs = score; best = id; }
-    }
-    this.goalTimer = 4 + Math.random() * 3;
-    if (best < 0) return;
-    const n = nav.nodes[best];
-    this._pathTo(_v3.set(n.x, n.y, n.z), 0.3);
-  }
-
-  _pickRefill() {
-    const a = this.a;
-    // search nearby for own ink
-    let bestP = null, bd = Infinity;
-    for (let i = 0; i < 14; i++) {
-      const ang = Math.random() * Math.PI * 2, r = 1 + Math.random() * 7;
-      _v.set(a.pos.x + Math.cos(ang) * r, a.pos.y, a.pos.z + Math.sin(ang) * r);
-      const st = G.paint.regionStats(_v.x, _v.y, _v.z, 1.2, a.team, _stats);
-      if (st.n && st.own > 0.6 && r < bd) { bd = r; bestP = _v.clone(); }
-    }
-    if (bestP) this._pathTo(bestP, 0.4);
-    else { this.path = null; }
-    this.repath = 1.2;
   }
 
   _pathRemaining() {
@@ -408,7 +590,6 @@ export class BotBrain {
     return Math.hypot(n.x - this.a.pos.x, n.z - this.a.pos.z);
   }
 
-  // body-width line of sight at knee height (centre + both shoulders) so bots never cut corners they can't fit past
   _wet(x, z, y) { const gy = G.level.groundHeight(x, z, y + 0.6); return gy === -Infinity || gy < PLAYER.fallDeathY; }
   // ground all the way along a straight walk (samples every 0.45 m)
   _dryLine(x0, y0, z0, x1, z1) {
@@ -434,6 +615,7 @@ export class BotBrain {
     mv.set(0, 0, 0);
   }
 
+  // body-width line of sight at knee height (centre + both shoulders) so bots never cut corners they can't fit past
   _fatLos(ax, ay, az, bx, by, bz) {
     let dx = bx - ax, dz = bz - az;
     const l = Math.hypot(dx, dz) || 1;
@@ -510,42 +692,35 @@ export class BotBrain {
 
   // ============================================================================================ Boss Battle
   // One squad vs HULLBREAKER (docs/BOSS.md): spread round its flanks at weapon range, shoot what it exposes (eyes; the
-  // belly while it's stunned — everyone piles in), step out of every telegraph, hop the shockwave rings, duck under the
-  // sweep in own ink, pop the crablets that come for the squad, and clean boss ink off the routes (rollers most of all).
+  // belly while it's stunned — everyone piles in), step out of every telegraph (the sweep beam included: there's no
+  // diving under it any more), hop the shockwave rings, pop the crablets that come for the squad, reload when low.
   _bossTick(dt) {
-    const a = this.a, it = a.intent, w = a.weapon, boss = G.boss;
-    const inkFrac = a.ink / PLAYER.inkMax;
-    it.fire = false; it.sub = false; it.special = false; it.squid = false; it.jump = false;
+    const a = this.a, it = a.intent, w = a.weapon, boss = G.boss, wr = a.weaponRunner;
+    it.fire = false; it.sub = false; it.special = false; it.squid = false; it.sprint = false; it.jump = false; it.reload = false;
+    this.mode = 'boss';
     if (this.think <= 0) { this.think = 0.12 + Math.random() * 0.1; this._bossPerceive(boss); }
-    this.react -= dt; this.evadeT = (this.evadeT || 0) - dt;
+    this.evadeT = (this.evadeT || 0) - dt;
     const th = Object.assign(this._th || (this._th = {}), boss.hz.threat(a.pos.x, a.pos.y, a.pos.z, 1.4));   // (threat() reuses its result)
     // human-ish: a new telegraph takes a reaction time to register, and now and then a ring hop is simply missed
     if (th.level > 0 || th.ringIn >= 0) {
       if (this.thSeen === undefined) { this.thSeen = this.t + this.diff.reaction * (0.5 + Math.random() * 0.9); this.hopMiss = Math.random() < (0.45 - this.diff.fireDiscipline * 0.4); }
       if (this.t < this.thSeen) { th.level = 0; th.ringIn = -1; th.beam = false; th.cover = false; }
     } else this.thSeen = undefined;
-    // ---- mode: refill when dry (unless a crablet is right on us), else fight
-    if (this.mode === 'refill' && inkFrac >= this.refillUntil) { this.mode = 'boss'; this.path = null; this.goalTimer = 0; }
-    if (this.mode !== 'refill' && inkFrac < 0.1 && !(this.bTgt?.crab && this.bTgt.dist < 4 && inkFrac > 0.03)) { this.mode = 'refill'; this.refillUntil = 0.8 + Math.random() * 0.15; this.path = null; }
-    if (this.mode !== 'refill') this.mode = 'boss';
     // ---- where to go
     this.goalTimer -= dt; this.repath -= dt;
-    const evading = th.level > 0.2 && !(th.beam && a.groundTeam === 1);   // in own ink under a sweep: just dive
+    const evading = th.level > 0.2;
     if (evading && (this.evadeT <= 0 || !this.path)) { this._bossEvade(boss, th); this.evadeT = 0.45; }
     else if (!evading && this._wasEvading) { this.path = null; this.goalTimer = 0; }
     this._wasEvading = evading;
-    if (!evading) {
-      if (this.mode === 'refill') { if (this.repath <= 0 || !this.path) this._pickRefill(); }
-      else if (this.goalTimer <= 0 || !this.path || this.pi >= this.path.length || (boss.stunned && !this._rushing)) this._bossGoal(boss);
-    }
+    if (!evading && (this.goalTimer <= 0 || !this.path || this.pi >= this.path.length || (boss.stunned && !this._rushing))) this._bossGoal(boss);
     const move = this._steer(dt);
     let wantMove = move.lengthSq() > 0.01;
     // ---- aim + fire
     let wantYaw = wantMove ? Math.atan2(move.x, move.z) : a.yaw, wantPitch = -0.1, aimDist = 6;
     const T = this.bTgt;
-    const dive = th.beam && a.groundTeam === 1;   // submerged in own ink: the beam passes over
-    this.target = null;
-    if (T && this.mode === 'boss' && !dive) {
+    this.target = null; this.fighting = false;
+    let fire = false;
+    if (T) {
       const tp = T.shape ? T.shape.pos : T.pos;
       _v.set(tp.x, tp.y, tp.z);
       _v2.copy(_v); _v2.x -= a.pos.x; _v2.y -= a.pos.y + 1.1; _v2.z -= a.pos.z;
@@ -555,12 +730,10 @@ export class BotBrain {
       aimDist = _v2.length();
       const e = this.diff.aimError * 0.8;
       const acq = Math.exp(-this.acqT / Math.max(0.12, this.diff.reaction * 0.9));
-      const wander = (x) => Math.sin(x) * 0.6 + Math.sin(x * 2.27 + 1.3) * 0.4;
       wantYaw = idealYaw + e * (0.75 * wander(this.t * 1.7 + this.ph1) + 2.4 * acq * this.acqSignY);
       wantPitch = idealPitch + e * 0.6 * (0.75 * wander(this.t * 2.1 + this.ph2) + 1.6 * acq * this.acqSignP);
       this.target = T;
       const range = this._range() + (T.crab ? 0 : T.rad * 0.6);
-      const inRange = dist < range * (w.kind === 'charger' ? 1.0 : 1.05);
       // circle-strafe a little while holding position (a squad that stands still gets slammed)
       if (!wantMove && !th.level && w.kind !== 'charger') {
         if (this.strafeT <= 0) { this.strafeT = 0.8 + Math.random() * 1.4; this.strafe = Math.random() < 0.5 ? -1 : 1; this.strafeAmp = 0.35 + Math.random() * 0.4; }
@@ -572,44 +745,35 @@ export class BotBrain {
       }
       const off = Math.hypot(angleDiff(this.aimYaw, idealYaw), this.aimPitch - idealPitch);
       const tol = Math.max(0.05, Math.atan2(T.rad, Math.max(dist, 0.5))) * (this._firing ? 2.4 : 1.5);
-      this._firing = false;
-      if (inRange && T.los && off < tol && this.react <= 0 && inkFrac > 0.02) {
-        const wr = a.weaponRunner;
-        if (w.kind === 'charger') { it.fire = !(wr.charging && wr.charge >= this.chargeRelease); if (wr.charging) move.multiplyScalar(0.3); }
-        else if (w.kind === 'splatling') { it.fire = !wr.streaming && !(wr.charging && wr.charge >= this.chargeRelease * 0.9); if (wr.charging) move.multiplyScalar(0.45); }
-        else if (w.kind === 'roller') it.fire = dist < 5.5 || (wr.rolling && dist < 8);
-        else it.fire = true;
-        this._firing = it.fire;
-        this.mode = 'fight';   // (the aim spring's combat stiffness while shooting; reset each frame)
-        if (this.bombCd <= 0 && !T.crab && a.ink > SUB.bomb.inkCost + 10 && dist > 5 && dist < 13 && Math.random() < 0.025) { it.sub = true; this.bombCd = 6 + Math.random() * 6; this._bombAim = true; }
-      } else if ((w.kind === 'charger' || w.kind === 'splatling') && a.weaponRunner.charging && T.los) it.fire = true;   // hold a charge through a blink
+      if (T.los) this.seeT = 0;
+      this.fighting = !!T.los;
+      fire = this._trigger(dt, !!T.los && dist < range * 1.05, off, tol, dist, range);
+      if (w.kind === 'charger' && wr.charging) move.multiplyScalar(0.3);
+      if (w.kind === 'splatling' && (wr.charging || wr.streaming)) move.multiplyScalar(0.6);
+      if (fire && this.bombCd <= 0 && !T.crab && a.grenades > 0 && dist > 5 && dist < 11 && Math.random() < 0.025) {
+        this._startLob('sub', _v, dist, SUB.bomb.throwSpeed, false); this.bombCd = 6 + Math.random() * 6;
+      }
       // specials: slam from under its claws, the storm cloud onto it
       if (a.specialReady() && !th.level && !T.crab) {
         if (w.special === 'slam' && dist < 5.5) it.special = true;
         if (w.special === 'storm' && dist < 13 && T.los) it.special = true;
       }
     }
-    // ---- not shooting it: clean boss ink off the way (and rollers roll it up)
-    if (!it.fire && this.mode !== 'refill' && !dive && inkFrac > 0.15) {
-      const aheadYaw = wantMove ? Math.atan2(move.x, move.z) : a.yaw;
-      const st = G.paint.regionStats(a.pos.x + Math.sin(aheadYaw) * 3, a.pos.y, a.pos.z + Math.cos(aheadYaw) * 3, 2.5, a.team, _stats);
-      if (a.groundTeam === 2 || (st.n && st.enemy > 0.2)) {
-        this.sweep += dt * 2.1;
-        if (this.mode !== 'fight') { wantYaw = aheadYaw + (w.kind === 'roller' ? 0 : Math.sin(this.sweep) * 0.5); wantPitch = w.kind === 'charger' ? -0.12 : w.kind === 'blaster' ? -0.28 : -0.42; }
-        it.fire = w.kind === 'roller' ? wantMove : w.kind !== 'charger' && w.kind !== 'splatling' ? true : !a.weaponRunner.charging || a.weaponRunner.charge < 0.6;
-      }
+    if (this.lob) {
+      const L = this.lob; L.t += dt;
+      wantYaw = Math.atan2(this.lobPt.x - a.pos.x, this.lobPt.z - a.pos.z); wantPitch = L.pitch; fire = false;
+      it.sub = true;
+      if (L.t > 0.5) { it.sub = false; this.lob = null; }
     }
-    if (this.mode === 'refill') {
-      it.squid = a.groundTeam === 1 || this._pathRemaining() > 2;
-      if (a.groundTeam !== 1 && this._pathRemaining() < 1.5 && inkFrac > 0.03) { it.squid = false; it.fire = true; wantPitch = -1.0; }
-    }
-    // ---- dodges: hop the shockwave, dive under the sweep, swim when travelling through own ink
+    if (fire && a.ammo < (w.ammoPerShot ?? 1)) { fire = false; it.reload = true; }
+    it.fire = fire; this._firing = fire;
+    // reload: dry, or low while nothing is in the sights
+    if (!fire && a.reloading <= 0 && !wr.charging && !wr.streaming && a.ammo < a.ammoMax && (a.ammo < (w.ammoPerShot ?? 1) || (a.ammo / a.ammoMax < 0.3 && !(T && T.los)))) it.reload = true;
+    // ---- hop the shockwave; sprint when travelling far with nothing to shoot
     if (th.ringIn >= 0 && th.ringIn < 0.2 && a.grounded && this.jumpCd <= 0 && !this.hopMiss) { it.jump = true; this.jumpCd = 0.5; }
-    if (dive) { it.squid = true; it.fire = false; }
-    else if (!it.fire && !a.weaponRunner.charging && a.groundTeam === 1 && (this._pathRemaining() > 4 || evading)) it.squid = true;
-    if (!wantMove && !it.fire && a.groundTeam !== 1) it.squid = false;
+    if (!fire && !wr.charging && !wr.streaming && !this.lob && (this._pathRemaining() > 5 || (evading && this._pathRemaining() > 1.5))) it.sprint = true;
+    it.squid = it.sprint;
     this._tail(dt, move, wantYaw, wantPitch, aimDist, wantMove);
-    if (this.mode === 'fight') this.mode = 'boss';
   }
 
   // what to shoot: a crablet that's closing in, else the part of the boss worth hitting that it can see
@@ -663,22 +827,8 @@ export class BotBrain {
     const stunned = boss.stunned || (boss.phase >= 3 && Math.random() < 0.3);
     this._rushing = boss.stunned;
     const fwd = boss.yaw, bx = boss.pos.x, bz = boss.pos.z;
-    // rollers keep the squad's routes clean while the boss isn't open
-    if (w.kind === 'roller' && !boss.stunned) {
-      let bestP = null, bs = 0.25;
-      for (let i = 0; i < 12; i++) {
-        const ang = Math.random() * Math.PI * 2, r = 3 + Math.random() * 12;
-        _v.set(a.pos.x + Math.cos(ang) * r, a.pos.y, a.pos.z + Math.sin(ang) * r);
-        const st = G.paint.regionStats(_v.x, _v.y, _v.z, 2.2, a.team, _stats);
-        if (!st.n || boss.hz.threat(_v.x, _v.y, _v.z, 1.5).level > 0) continue;
-        const sc = st.enemy - r * 0.02;
-        if (sc > bs) { bs = sc; bestP = _v.clone(); }
-      }
-      if (bestP && Math.random() < 0.7) { this._pathTo(bestP, 0.4); return; }
-    }
-    const reach = w.kind === 'charger' ? 15 : w.kind === 'roller' ? 3.2 : clamp(this._range() * 0.7, 4.5, 11);
+    const reach = w.kind === 'charger' ? 15 : clamp(this._range() * 0.7, 4.5, 11);
     const R = 3.4 + (boss.stunned ? Math.min(reach, 6) : reach);
-    const mates = G.actors.filter((o) => o !== a && o.bot && o.alive && o.bot.goal >= 0);
     let best = -1, bs = -Infinity;
     for (let i = 0; i < 12; i++) {
       // bearing: its front when it's open (belly), else a flank or the rear
@@ -692,7 +842,11 @@ export class BotBrain {
       let s = -Math.hypot(n.x - a.pos.x, n.z - a.pos.z) * 0.08 + Math.random();
       if (boss.hz.threat(n.x, n.y, n.z, 1.5).level > 0) s -= 6;
       if (G.physics.los(_v2.set(n.x, n.y + 1.3, n.z), _v3.set(bx, boss.pos.y + 2.5, bz))) s += 3;
-      for (const m of mates) { const g = nav.nodes[m.bot.goal]; if (Math.hypot(g.x - n.x, g.z - n.z) < 4) s -= 2.5; }
+      for (const m of G.actors) {
+        if (m === a || !m.bot || !m.alive || m.bot.goal < 0) continue;
+        const g = nav.nodes[m.bot.goal];
+        if (g && Math.hypot(g.x - n.x, g.z - n.z) < 4) s -= 2.5;
+      }
       if (s > bs) { bs = s; best = id; }
     }
     if (best < 0) { this.path = null; return; }

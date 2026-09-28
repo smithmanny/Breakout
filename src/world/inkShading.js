@@ -140,7 +140,7 @@ export const INK_COLOR = /* glsl */`
     float s = clamp((amt - 0.5) * 1.7, 0.0, 1.0);
     float hs = 1.0 - (1.0 - s) * (1.0 - s);
     gInkS = hs;
-    float thick = (wallF ? 0.6 : 1.0) * (1.0 + 0.5 * fresh);
+    float thick = (wallF ? 0.55 : 0.8) * (1.0 + 0.5 * fresh);   // paint film: a little thinner than the old ink pools
     gInkKeep = wallF ? 0.32 * (1.0 - 0.5 * fresh) : 0.0;
     vec2 gradA = vec2(gX.a, gY.a);
     gInkD = gradA * 2.0 * (1.0 - s) * 1.7 * 1.9 * gInk * thick;
@@ -162,7 +162,9 @@ export const INK_COLOR = /* glsl */`
       seamShadow = seam * (0.45 * max(0.0, -x * newer) * e1 + 0.55 * e2 * (1.0 - 0.7 * abs(newer)));
     }
     vec3 team = mix(uTeamA, uTeamB, tm);
-    vec3 inkCol = team * (0.93 + 0.13 * tone);
+    // per-splat tone: every paintball splat is a slightly different shade, so overlapping splats of one team read as
+    // layers of separate fresh splats rather than one flat puddle
+    vec3 inkCol = team * (0.88 + 0.22 * tone);
     // translucent thin lip reads lighter and a touch more saturated; the thick body a little deeper
     float lip = (1.0 - hs) * near;
     inkCol = mix(inkCol, inkCol * 1.16 + team * 0.05, lip * 0.35);

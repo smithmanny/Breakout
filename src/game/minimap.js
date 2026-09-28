@@ -7,7 +7,7 @@
 //   ink    (≤ 6 Hz, on paint.version)  bilinear team field → smooth anti-aliased blobs, glossy embossed rims
 //   flash  (with ink)                  freshly claimed pixels, faded out over ~0.4 s
 //   live   (every frame)               spawn pads, bombs (arming blink), tempest clouds + rain radius, slam shock rings,
-//                                      super-jump landing targets, respawn pulses, splat bursts
+//                                      super-jump landing targets, respawn pulses, splat bursts, OUT marks (elimination)
 import { G, on } from '../core/ctx.js';
 import { SPECIALS, SUB } from '../config.js';
 
@@ -22,6 +22,11 @@ on('superjump', ({ actor, phase, to }) => { if (phase === 'flight' && to) pushFx
 on('superjump:land', ({ actor }) => { for (const f of fxList) if (f.kind === 'jump' && f.actor === actor) f.life = Math.min(f.life, f.t + 0.35); });
 on('respawn', ({ actor }) => { const p = G.level?.spawnPads?.[actor.team]; if (p) pushFx({ kind: 'spawn', x: p.x, z: p.z, team: actor.team, t: 0, life: 0.8 }); });
 on('splatted', ({ victim, attacker }) => { if (victim && victim.pos) pushFx({ kind: 'splat', x: victim.pos.x, z: victim.pos.z, team: attacker ? attacker.team : 1 - victim.team, t: 0, life: 1.6 }); });
+// elimination (BREAKOUT): where each player went OUT stays marked (a greyed X in their team colour) until the next round
+on('eliminated', ({ victim }) => { if (victim && victim.pos && G.match?.elim) pushFx({ kind: 'out', x: victim.pos.x, z: victim.pos.z, team: victim.team, t: 0, life: 1e9 }); });
+const clearOuts = () => { for (let i = fxList.length - 1; i >= 0; i--) if (fxList[i].kind === 'out') fxList.splice(i, 1); };
+on('round:pre', clearOuts);
+on('match:state', ({ state }) => { if (state === 'intro' || state === 'results') clearOuts(); });
 
 // linear → sRGB 0..255
 function lin2s(c) { return Math.round(255 * (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055)); }
@@ -376,6 +381,13 @@ export class Minimap {
       } else if (f.kind === 'spawn') {
         const r = s * (2 + 5 * k);
         c.globalAlpha = 1 - k; c.lineWidth = 3; c.strokeStyle = '#ffffff'; c.beginPath(); c.arc(tc.x, tc.y, r, 0, TAU); c.stroke(); c.globalAlpha = 1;
+      } else if (f.kind === 'out') {
+        const r = s * 0.62, a = Math.min(1, f.t / 0.3);
+        c.globalAlpha = 0.85 * a;
+        c.beginPath(); c.arc(tc.x, tc.y, r * 1.35, 0, TAU); c.fillStyle = 'rgba(21,18,28,.55)'; c.fill();
+        c.lineWidth = 3.6; c.strokeStyle = '#15121c'; this._cross(c, tc.x, tc.y, r);
+        c.lineWidth = 1.8; c.strokeStyle = col; this._cross(c, tc.x, tc.y, r);
+        c.globalAlpha = 1;
       } else if (f.kind === 'splat') {
         const a = k < 0.15 ? k / 0.15 : 1 - (k - 0.15) / 0.85;
         const r = s * 0.9;

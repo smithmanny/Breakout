@@ -39,7 +39,7 @@ const angDiff = (a, b) => { let d = (b - a) % TAU; if (d > Math.PI) d -= TAU; el
 const F = {
   alive: 1, squid: 2, sub: 4, climb: 8, grounded: 16, gt1: 32, gt2: 64, charging: 128, rolling: 256, streaming: 512,
   dodge: 1024, subAim: 2048, firing: 4096, special: 8192, sjCharge: 16384, sjFlight: 32768, flick: 65536, slosh: 131072,
-  invuln: 262144, enemy: 524288,
+  invuln: 262144, enemy: 524288, sprint: 1048576, reload: 2097152,
 };
 // events forwarded from owners (actor-bearing payloads; vectors/actors are packed)
 const FORWARD = ['actor:jump', 'superjump', 'superjump:land', 'special:use', 'special:slam', 'weapon:dodge', 'weapon:fire', 'splatted', 'respawn'];
@@ -76,6 +76,12 @@ export class NetMatch {
     // humans-only stage: anyone who left while the match was loading (no NetMatch yet to hear it) is dropped now
     if (mapNoBots(this.cfg.map)) for (const a of [...this.byNid.values()]) if (a.owner !== this.myId && !this.s._members.has(a.owner)) this._remove(a);
     this.unsubs.push(on('match:state', ({ state, match: m }) => { if (m === this.match && this.isHost) this._sendNow({ k: 'st', s: state, t: r2(m.time) }); }));
+    // elimination rounds: the host is authoritative on every transition. Its round state rides the host's event
+    // timeline (['rd' …], played on followers in step with the snapshots — the last kill shows before the round ends)
+    // on every round:* event, plus ~2 Hz with the clock tick (msg.r).
+    for (const ev of ['round:pre', 'round:start', 'round:end']) {
+      this.unsubs.push(on(ev, ({ match: m }) => { if (m && m === this.match && m.elim && this.isHost) this._rec(['rd', m.netRoundState()]); }));
+    }
   }
 
   _setupActor(a) {
@@ -128,7 +134,9 @@ export class NetMatch {
   _onLocalEvent(name, e) {
     const a = e.actor || e.victim;
     if (!a || a.remote || a.nid === undefined || G.netm !== this) return;
-    this._rec(['ev', name, packEvent(e)]);
+    const o = packEvent(e);
+    if (name === 'respawn') o.tp = a.netTp || 0;   // the new life's teleport count: proxies stay hidden until it is due
+    this._rec(['ev', name, o]);
   }
 
   // Boss Battle: the host's move records / crablet bursts go on its event timeline (played in step with the snapshots)
@@ -144,6 +152,8 @@ export class NetMatch {
   sendHit(attacker, victim, dmg, wid) {
     if (victim.owner === this.myId) return false;
     this.s.tr?.sendTo(victim.owner, { k: 'hit', v: victim.nid, a: attacker.nid, d: r2(dmg), w: wid });
+    // damage dealt is counted by the attacker's owner (it streams the total with the actor: results / scoreboards)
+    if (!attacker.remote && victim.alive && !(victim.invuln > 0)) attacker.stats.damage = (attacker.stats.damage || 0) + Math.min(dmg, Math.max(0, victim.hp));
     return true;
   }
 
@@ -177,7 +187,10 @@ export class NetMatch {
     if (this.isHost && boss && boss.sim) { this.bossN = (this.bossN || 0) + 1; msg.B = boss.pack(this.bossN % 10 === 0); }
     if (this.isHost && this.match) {
       this.clockT -= TICK;
-      if (this.clockT <= 0) { this.clockT = 0.5; msg.c = [this.match.state, r2(this.match.time)]; }
+      if (this.clockT <= 0) {
+        this.clockT = 0.5; msg.c = [this.match.state, r2(this.match.time)];
+        if (this.match.elim && this.match.state === 'playing') msg.r = this.match.netRoundState();
+      }
     }
     this.stats.out++;
     this.s.tr?.broadcast(msg);
@@ -230,6 +243,7 @@ export class NetMatch {
     }
     // events → the sender's queue (played on its timeline)
     if (d.e) for (const e of d.e) p.events.push(e);
+    if (d.r && from === this.s.hostId) p.events.push([d.ts, 'rd', d.r]);   // (after d.e: its moments are all earlier)
     if (d.c && from === this.s.hostId) this._hostClock(d.c);
     // the boss: the host's snapshot, on the host's playback timeline
     const boss = this.match?.boss;
@@ -327,6 +341,17 @@ export class NetMatch {
     a.anim.time = G.time;
     if (!n.ready) { a.character.root.visible = false; return; }
     const S = n.cur;
+    // safety net for the alive state (the splatted / respawn events decide it; they are reliable and on the same
+    // timeline, so this only catches a thread lost across an ownership handoff): the owner's own alive flag, held for
+    // a moment, wins
+    const sAlive = !!(S.f & F.alive);
+    const off = a.alive ? !sAlive && !n.spawnPending : sAlive && S.tp !== n.deathTp;
+    n.aliveOff = off ? (n.aliveOff || 0) + dt : 0;
+    if (n.aliveOff > 0.5) {
+      n.aliveOff = 0;
+      if (a.alive) { this._remoteSplat(a, null, 'net'); return; }
+      this._remoteRespawn(a, { quiet: true, tp: S.tp });
+    }
     if (!a.alive) { a.respawnTimer -= dt; return; }
     // position = sampled path + decaying correction; velocity drives the gait
     a.pos.set(S.x + n.err.x, S.y + n.err.y, S.z + n.err.z);
@@ -349,7 +374,16 @@ export class NetMatch {
     if (a.climbing) { a.wallN.set(S.wx, S.wy, S.wz); a.anim.wallNormal.copy(a.wallN); }
     if (S.hp < a.hp - 0.5) a.hurtFlash = Math.min(1, a.hurtFlash + (a.hp - S.hp) / 60);
     a.hurtFlash = Math.max(0, a.hurtFlash - dt * 0.6);
-    a.hp = S.hp; a.ink = S.ink; a.special = S.sp;
+    a.hp = S.hp; a.ink = S.ink; a.special = S.sp;   // (ink: the 0..100 mirror of the hopper → a.ammo)
+    // paintball state: sprint lean (character anim.sprinting), reload pose, grenades left, damage dealt (the owner's
+    // count is authoritative: it credits its own actors' hits, local or sent)
+    const spr = !!(f & F.sprint);
+    if (spr !== a.sprinting) { a.sprinting = spr; emit('actor:sprint', { actor: a, on: spr }); }
+    const rl = f & F.reload ? Math.max(0.01, S.rl || 0.01) : 0, wasRl = a.reloading > 0;
+    a.reloading = rl;
+    if ((rl > 0) !== wasRl) emit(rl > 0 ? 'reload:start' : 'reload:end', { actor: a });
+    if (S.gr !== undefined) a.grenades = S.gr;
+    if (S.dmg !== undefined) a.stats.damage = S.dmg;
     a.invuln = f & F.invuln ? 0.1 : 0;
     a.stats.turf = Math.max(a.stats.turf, S.turf);
     a.specialActive = f & F.special ? (a.specialActive || { id: a.weapon.special, net: true }) : null;
@@ -386,11 +420,11 @@ export class NetMatch {
       if (n.sjRing > 0.12) { n.sjRing = 0; G.fx?.ring(_v2.copy(n.sjTo).setY(n.sjTo.y + 0.05), UPV, a.color, { radius: 1.6, life: 0.5 }); }
     }
     if (n.spawnPending) {
-      if (S.tp === n.deathTp) { a.character.root.visible = false; return; }
+      if (n.spawnTp !== undefined ? S.tp < n.spawnTp : S.tp === n.deathTp) { a.character.root.visible = false; return; }
       n.spawnPending = false;
       a.character.setVisible(true);
       const pad = G.level.spawnPads[a.team];
-      G.fx?.spawnFlash(_v2.set(a.pos.x, pad.y, a.pos.z), a.color);
+      if (!n.spawnQuiet) G.fx?.spawnFlash(_v2.set(a.pos.x, pad.y, a.pos.z), a.color);   // (a round reset just appears)
     }
     a.character.root.visible = true;
     a._finishFrame(dt);
@@ -451,6 +485,7 @@ export class NetMatch {
         break;
       }
       case 'ev': this._playEvent(e[2], e[3]); break;
+      case 'rd': if (from === this.s.hostId && !this.isHost) this.match?.applyNetRound(e[2]); break;
       case 'bm': this.match?.boss?.onMove(e[2]); break;
       case 'bc': { const b = this.match?.boss; if (b && !b.sim) b._crabBurst(e[2], e[3], e[4], e[5], !!e[6]); break; }
     }
@@ -536,8 +571,9 @@ export class NetMatch {
     if (!a || !a.remote) return;
     const near = a._nearCamera();
     switch (name) {
-      case 'splatted': this._remoteSplat(e.victim, e.attacker, e.cause); return;
-      case 'respawn': this._remoteRespawn(a); return;
+      // (re-emitted below for everyone else: kill feed, Match → 'eliminated', minimap …)
+      case 'splatted': if (!this._remoteSplat(e.victim, e.attacker, e.cause)) return; break;
+      case 'respawn': this._remoteRespawn(a, { quiet: !!e.round, tp: e.tp }); break;
       case 'actor:jump':
         if (near) G.audio?.play(e.swim ? 'swim_splash' : 'jump', { pos: a.pos, volume: 0.6 });
         if (e.swim) G.fx?.burst(_v2.copy(a.pos), UPV, a.color, { count: 10, speed: 3.5, size: 0.08 });
@@ -560,11 +596,12 @@ export class NetMatch {
   }
 
   _remoteSplat(victim, attacker, cause) {
-    if (!victim || !victim.alive) return;
+    if (!victim || !victim.alive) return false;
     victim.alive = false; victim.hp = 0;
     victim.respawnTimer = PLAYER.respawnTime;
     victim.stats.deaths++;
     victim.specialActive = null; victim.superJumpState = null;
+    victim.sprinting = false; victim.reloading = 0;
     victim.weaponRunner.reset();
     this._stopLoops(victim);
     _v2.copy(victim.pos); _v2.y += 0.6;
@@ -575,14 +612,23 @@ export class NetMatch {
     victim.net.deathTp = victim.net.tp;
     // your own kills: the confirm sting / marker (the hit that did it was only a prediction)
     if (attacker && !attacker.remote) emit('hit', { attacker, victim, damage: 0, killed: true, weaponId: cause });
+    return true;
   }
 
   // Alive again, but the path still holds the old life until the owner's first post-respawn sample is due: stay hidden
   // until then (applyRemote), so the squidkid never flashes up where it was splatted and slides to the pad.
-  _remoteRespawn(a) {
+  // Elimination round resets arrive the same way (a 'respawn' with `round`): an actor still standing is hidden too
+  // until its sample at base is due (deathTp = the life being left), then appears there without a spawn flash.
+  _remoteRespawn(a, o = {}) {
+    const wasAlive = a.alive;
     a.alive = true; a.hp = PLAYER.hp; a.invuln = PLAYER.spawnInvuln;
     a.respawnTimer = 0;
-    a.net.spawnPending = true;
+    a.hurtFlash = 0;
+    const n = a.net;
+    n.spawnTp = typeof o.tp === 'number' ? o.tp : undefined;
+    if (n.spawnTp === undefined && wasAlive) n.deathTp = n.tp;   // (an older owner: hide until the path moves on)
+    n.spawnPending = true;
+    n.spawnQuiet = !!o.quiet;
   }
 
   // ---- hits (victim's owner) ------------------------------------------------------------------------------------------
@@ -597,7 +643,7 @@ export class NetMatch {
   // ---- host clock / state / result --------------------------------------------------------------------------------------
   _hostClock([state, time]) {
     const m = this.match;
-    if (!m || this.isHost) return;
+    if (!m || this.isHost || m.elim) return;   // (elimination: the round state carries the round clock)
     if (state === 'playing' && m.state === 'playing' && Math.abs(m.time - time) > 0.2) m.time += (time - m.time) * 0.5;
   }
   _hostState(d) {
@@ -608,15 +654,29 @@ export class NetMatch {
   }
   sendResult(result) {
     if (!this.isHost) return;
-    this._sendNow({ k: 'res', cov: result.coverage, win: result.winner, mode: result.mode, bo: result.boss,
-      st: this.match.actors.map((a) => [a.nid, Math.round(a.stats.turf), a.stats.splats, a.stats.deaths, Math.round(a.stats.bossDmg || 0), a.stats.weakHits || 0]) });
+    this._sendNow({ k: 'res', cov: result.coverage, win: result.winner, mode: result.mode, bo: result.boss, rw: result.roundWins, rd: result.rounds,
+      st: this.match.actors.map((a) => [a.nid, Math.round(a.stats.turf), a.stats.splats, a.stats.deaths, Math.round(a.stats.bossDmg || 0), a.stats.weakHits || 0, Math.round(a.stats.damage || 0), a.stats.roundsSurvived || 0]) });
   }
   _result(d) {
     const m = this.match;
     if (!m || this.isHost) return;
-    for (const [nid, turf, splats, deaths, bossDmg, weakHits] of d.st || []) { const a = this.byNid.get(nid); if (a) { a.stats.turf = turf; a.stats.splats = splats; a.stats.deaths = deaths; if (bossDmg !== undefined) { a.stats.bossDmg = bossDmg; a.stats.weakHits = weakHits; } } }
+    for (const [nid, turf, splats, deaths, bossDmg, weakHits, dmg, surv] of d.st || []) {
+      const a = this.byNid.get(nid);
+      if (!a) continue;
+      a.stats.turf = turf; a.stats.splats = splats; a.stats.deaths = deaths;
+      if (bossDmg !== undefined) { a.stats.bossDmg = bossDmg; a.stats.weakHits = weakHits; }
+      if (dmg !== undefined) a.stats.damage = dmg;
+      if (surv !== undefined) a.stats.roundsSurvived = surv;
+    }
     if (d.mode !== 'boss') m.time = 0;   // (a boss win stops the clock where it was)
-    m.result = d.mode === 'boss' ? { mode: 'boss', coverage: d.cov, winner: d.win, boss: d.bo } : { coverage: d.cov, winner: d.win };
+    if (d.mode === 'boss') m.result = { mode: 'boss', coverage: d.cov, winner: d.win, boss: d.bo };
+    else {
+      // elimination: the host's round count is the score on every screen (older hosts: fall back to our own)
+      const rw = Array.isArray(d.rw) ? [d.rw[0] | 0, d.rw[1] | 0] : [...(m.roundWins || [0, 0])];
+      const rounds = Array.isArray(d.rd) ? d.rd.map((r) => ({ winner: r.winner, reason: r.reason })) : (m.rounds || []).map((r) => ({ ...r }));
+      if (m.elim) { m.roundWins = [...rw]; m.rounds = rounds.map((r) => ({ ...r })); }
+      m.result = { mode: d.mode || 'elim', winner: d.win, roundWins: rw, rounds, coverage: d.cov };
+    }
     m.setState('judge');
   }
   sendEnd() { if (this.isHost) this._sendNow({ k: 'end' }); }
@@ -626,6 +686,10 @@ export class NetMatch {
   // screen; the clock and judge still move with the host)
   onLeave(id, hostChanged) {
     if (!this.match) return;
+    // whatever the leaver already said (a splat, a round reset …) happens now, on every screen alike, before anyone
+    // adopts its squidkids — so the adopter continues from the same alive / dead state everyone else ends up with
+    const lp = this.peers.get(id);
+    if (lp && lp.events.length) for (const e of lp.events.splice(0)) { try { this._play(id, e); } catch (err) { console.warn('[net] flush', err); } }
     const drop = mapNoBots(this.cfg.map);
     for (const a of [...this.byNid.values()]) {
       if (a.owner !== id) continue;
@@ -651,13 +715,17 @@ export class NetMatch {
     this._stopLoops(a);
     a.isBot = true;
     a.intent.move.set(0, 0, 0); a.intent.fire = a.intent.squid = a.intent.jump = a.intent.sub = a.intent.special = false;
+    a.intent.sprint = a.intent.reload = false;
+    a.sprinting = false;
     a.bot = new BotBrain(a, this.cfg.difficulty || 'normal');
     a.bot.aimYaw = a.yaw; a.bot.aimPitch = 0;
     a.weaponRunner.reset();
     a.superJumpState = null; a.specialActive = null;
     a.netTp = a.net.tp || 0;          // continue the teleport counter everyone else has seen: no false snap
     a.net.buf.length = 0;
-    if (a.alive && a.net.spawnPending) { a.net.spawnPending = false; a.respawn(); }   // mid-respawn: finish it here
+    // mid-respawn: finish it here (elimination: a round reset → back to base like everyone else; an eliminated
+    // squidkid stays out — Match.canRespawn() is false — until the next round resets the actors this client owns)
+    if (a.alive && a.net.spawnPending) { a.net.spawnPending = false; if (this.match.elim && this.match._resetActor) this.match._resetActor(a); else a.respawn(); }
     else if (a.alive) { a.character.setVisible(true); a.character.root.visible = true; }
     a.net.err.set(0, 0, 0); a.net.errV?.set(0, 0, 0);   // a.pos is already where it was drawn (path + offset)
   }
@@ -697,19 +765,22 @@ function packActor(a) {
   if (wr.slosh >= 0) f |= F.slosh;
   if (a.invuln > 0) f |= F.invuln;
   if (a.onEnemy) f |= F.enemy;
+  if (a.sprinting) f |= F.sprint;
+  if (a.reloading > 0) f |= F.reload;
   // the visual position (the owner's step smoothing included) — that's what the owner sees
   const y = a.pos.y + (a.smoothY || 0);
   const n = a.climbing ? a.wallN : null;
   return [a.nid, r2(a.pos.x), r2(y), r2(a.pos.z), r2(a.vel.x), r2(a.vel.y), r2(a.vel.z), r3(a.yaw), r3(a.aimYaw), r3(a.aimPitch), f,
     Math.round(a.hp), Math.round(a.ink), Math.round(a.special), r2(wr.streaming ? wr.burstFrac : wr.charge), Math.round(a.stats.turf), a.netTp || 0,
-    n ? r2(n.x) : 0, n ? r2(n.y) : 0, n ? r2(n.z) : 0, r2(wr.lockT || 0)];
+    n ? r2(n.x) : 0, n ? r2(n.y) : 0, n ? r2(n.z) : 0, r2(wr.lockT || 0),
+    r2(a.reloading || 0), a.grenades ?? 0, Math.round(a.stats.damage || 0)];
 }
 
 function unpackActor(s, ts) {
-  return { t: ts, x: s[1], y: s[2], z: s[3], vx: s[4], vy: s[5], vz: s[6], yaw: s[7], aimYaw: s[8], aimPitch: s[9], f: s[10], hp: s[11], ink: s[12], sp: s[13], ch: s[14], turf: s[15], tp: s[16], wx: s[17], wy: s[18], wz: s[19], lock: s[20] };
+  return { t: ts, x: s[1], y: s[2], z: s[3], vx: s[4], vy: s[5], vz: s[6], yaw: s[7], aimYaw: s[8], aimPitch: s[9], f: s[10], hp: s[11], ink: s[12], sp: s[13], ch: s[14], turf: s[15], tp: s[16], wx: s[17], wy: s[18], wz: s[19], lock: s[20], rl: s[21] ?? 0, gr: s[22], dmg: s[23] };
 }
 
-function blankSample() { return { t: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, yaw: 0, aimYaw: 0, aimPitch: 0, f: 0, hp: 100, ink: 100, sp: 0, ch: 0, turf: 0, tp: 0, wx: 0, wy: 0, wz: 1, lock: 0 }; }
+function blankSample() { return { t: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, yaw: 0, aimYaw: 0, aimPitch: 0, f: 0, hp: 100, ink: 100, sp: 0, ch: 0, turf: 0, tp: 0, wx: 0, wy: 0, wz: 1, lock: 0, rl: 0, gr: undefined, dmg: undefined }; }
 function copySample(s, o) { for (const k in s) o[k] = s[k]; return o; }
 
 // cubic Hermite on position (owner velocities as tangents), linear on velocity/angles, discrete state from the earlier

@@ -257,9 +257,9 @@ export const PLACEMENTS = [
   // spectators' side: a long bleacher outside the net on the snake side (the mirror gives the far side's), scoreboard
   { type: 'speedball_bleacher', pos: [17.3, 0, -8.5], rotY: -P / 2, length: 11, rows: 5 },
   { type: 'speedball_scoreboard', pos: [-16.2, 0, -7.5], rotY: P / 2 },
-  // flood lights at the corners (dusk), trees round the park
-  { type: 'lightpole', pos: [15.6, 0, -25.8], rotY: -0.55, variant: 0, height: 10, color: '#b9c0c6' },
-  { type: 'lightpole', pos: [-15.6, 0, -25.8], rotY: 0.55, variant: 0, height: 10, color: '#b9c0c6' },
+  // flood lights along both sidelines (dusk), trees round the park
+  { type: 'lightpole', pos: [15.4, 0, -16.5], rotY: -P / 2 + 0.25, variant: 0, height: 10, color: '#b9c0c6' },
+  { type: 'lightpole', pos: [-15.4, 0, -16.5], rotY: P / 2 - 0.25, variant: 0, height: 10, color: '#b9c0c6' },
   { type: 'tree', pos: [-21.5, 0, -33.5], variant: 0, height: 5.2 },
   { type: 'tree', pos: [-13.5, 0, -36.5], variant: 0, height: 4.6 },
   { type: 'tree', pos: [13.0, 0, -35.8], variant: 0, height: 5.0 },

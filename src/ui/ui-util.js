@@ -1,4 +1,4 @@
-// INKWAVE UI — tiny DOM / colour / motion helpers shared by menus.js and hud.js.
+// BREAKOUT UI — tiny DOM / colour / motion helpers shared by menus.js and hud.js.
 // Pure DOM; no three.js dependency.
 
 // ---------------------------------------------------------------- DOM

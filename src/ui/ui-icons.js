@@ -1,4 +1,4 @@
-// INKWAVE UI — inline SVG icon set, input glyphs, logo and illustrations.
+// BREAKOUT UI — inline SVG icon set, input glyphs, logo and illustrations.
 // Everything is a markup string (cheap to clone via innerHTML) using currentColor / CSS classes for team ink:
 //   .iw-fa = accent/team A ink, .iw-fb = accent/team B ink (see ui.css).
 import { esc, splatShape, blobPath } from './ui-util.js';
@@ -130,21 +130,21 @@ export const SPECIAL_ICONS = {
     <path d="M14 26 Q15 22.5 19 23" stroke="#fff" stroke-opacity=".6" stroke-width="3" fill="none" stroke-linecap="round"/>`),
 };
 
-// ------------------------------------------------------------------ squid (team icons, avatar)
+// ------------------------------------------------------------------ player (team icons, avatar)
+// A paintball player's masked head, front view: headwrap dome, goggle lens band, ear pieces, vented jaw guard.
+// (Export name SQUID / class iw-squid kept from INKWAVE so every importer keeps working.)
+export const MASK_PATH = 'M32 4 C43 4 50.5 12 51 23 L55.5 24 C57.5 24.5 58.5 26 58.5 28 L58.5 36 C58.5 38 57.5 39.5 55.5 40 L50.5 41 C49 51 42 58.5 32 60 C22 58.5 15 51 13.5 41 L8.5 40 C6.5 39.5 5.5 38 5.5 36 L5.5 28 C5.5 26 6.5 24.5 8.5 24 L13 23 C13.5 12 21 4 32 4 Z';
 export const SQUID = svg(`<g ${O} stroke-width="3.4">
-    <path d="M22 44 Q19 53 13 58 Q20 61 26 50 Z" fill="currentColor"/>
-    <path d="M29 46 Q28.5 55 25 61 Q32.5 61 33 48 Z" fill="currentColor"/>
-    <path d="M35 46 Q35.5 55 39 61 Q31.5 61 31 48 Z" fill="currentColor"/>
-    <path d="M42 44 Q45 53 51 58 Q44 61 38 50 Z" fill="currentColor"/>
-    <path d="M32 3 C36.5 3 50.5 17.5 55.5 24.5 C57.5 27.8 55.5 31 51.5 30.2 L46 29.4 L46 39.5 C46 46.5 41.5 49 32 49 C22.5 49 18 46.5 18 39.5 L18 29.4 L12.5 30.2 C8.5 31 6.5 27.8 8.5 24.5 C13.5 17.5 27.5 3 32 3 Z" fill="currentColor"/>
+    <path d="${MASK_PATH}" fill="currentColor"/>
+    <path d="M17.5 42 L46.5 42 C45 51 39.5 56 32 57 C24.5 56 19 51 17.5 42 Z" fill="${DK}" stroke-width="2.6"/>
   </g>
-  <path d="M25 13 Q29 8.5 32 8" stroke="#fff" stroke-opacity=".55" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <path d="M22 12 Q27 7.5 33 7.5" stroke="#fff" stroke-opacity=".55" stroke-width="3" fill="none" stroke-linecap="round"/>
   <g class="iw-squid-eyes">
-    <ellipse cx="26" cy="36" rx="4.6" ry="5.6" fill="#fff" stroke="${K}" stroke-width="2.4"/>
-    <ellipse cx="38" cy="36" rx="4.6" ry="5.6" fill="#fff" stroke="${K}" stroke-width="2.4"/>
-    <ellipse cx="27" cy="37" rx="2.2" ry="3" fill="${K}"/>
-    <ellipse cx="37" cy="37" rx="2.2" ry="3" fill="${K}"/>
-  </g>`, '0 0 64 64', 'iw-squid');
+    <rect x="11.5" y="22" width="41" height="16" rx="7.5" fill="#252c3d" stroke="${K}" stroke-width="3"/>
+    <path d="M16.5 26.5 L27 26.5" stroke="#fff" stroke-opacity=".7" stroke-width="2.6" stroke-linecap="round"/>
+    <path d="M31 31.5 L34 31.5" stroke="#fff" stroke-opacity=".35" stroke-width="2.2" stroke-linecap="round"/>
+  </g>
+  <path d="M26 45.5 L26 51.5 M32 46.5 L32 53.5 M38 45.5 L38 51.5" stroke="#fff" stroke-opacity=".5" stroke-width="2.4" stroke-linecap="round"/>`, '0 0 64 64', 'iw-squid');
 
 // ------------------------------------------------------------------ line glyphs (single colour, currentColor)
 const G = `fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"`;
@@ -157,8 +157,8 @@ function gearPath() {
   }
   return 'M' + pts.join('L') + 'Z';
 }
-/** Squid silhouette (64 box): pointed mantle, fins, four tentacles. Shared by GLYPHS.squidlet and the splashtag art. */
-export const SQUID_PATH = 'M32 3 C40 10 49 19 50 29 L44 31.5 L44 41 C44 44.5 42 46.5 39.5 46.5 L39.5 58 L35.5 53 L32 60 L28.5 53 L24.5 58 L24.5 46.5 C22 46.5 20 44.5 20 41 L20 31.5 L14 29 C15 19 24 10 32 3 Z';
+/** Masked-player silhouette (64 box). Shared by GLYPHS.squidlet and the player-tag art. (Old name kept.) */
+export const SQUID_PATH = MASK_PATH;
 export const GLYPHS = {
   play: svg(`<path d="M21 12 L51 32 L21 52 Z" fill="currentColor" stroke="currentColor" stroke-width="7" stroke-linejoin="round"/>`),
   gear: svg(`<path d="${gearPath()}" fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><circle cx="32" cy="32" r="8.5" fill="var(--k, #15121c)"/>`),
@@ -210,8 +210,8 @@ export const GLYPHS = {
   note: svg(`<path d="M24 46 L24 12 L52 6 L52 40" ${G} stroke-width="6"/><ellipse cx="17" cy="47" rx="9" ry="7" fill="currentColor" transform="rotate(-18 17 47)"/><ellipse cx="45" cy="41" rx="9" ry="7" fill="currentColor" transform="rotate(-18 45 41)"/><path d="M24 21 L52 15" ${G} stroke-width="6"/>`),
   flex: svg(`<path d="M14 54 Q8 40 16 30 L24 20 Q22 14 26 10 Q32 6 37 10 L40 14 Q36 18 33 18 L30 24 Q38 22 46 26 Q56 32 54 44 Q52 54 40 56 Z" fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><path d="M30 36 Q38 32 46 38" fill="none" stroke="var(--k, #15121c)" stroke-width="3.5" stroke-linecap="round" opacity=".45"/>`),
   signal: svg(`<rect x="8" y="40" width="10" height="16" rx="3" fill="currentColor"/><rect x="27" y="28" width="10" height="28" rx="3" fill="currentColor"/><rect x="46" y="12" width="10" height="44" rx="3" fill="currentColor"/>`),
-  // squid silhouette (lobby head-count pips, splashtag patterns): outlined in ink, eyes cut out
-  squidlet: svg(`<path d="${SQUID_PATH}" fill="currentColor" stroke="var(--k, #15121c)" stroke-width="4" stroke-linejoin="round"/><circle cx="26.5" cy="36" r="3.4" fill="var(--k, #15121c)"/><circle cx="37.5" cy="36" r="3.4" fill="var(--k, #15121c)"/>`),
+  // masked-player silhouette (lobby head-count pips, player-tag patterns): outlined, goggle lens cut out
+  squidlet: svg(`<path d="${SQUID_PATH}" fill="currentColor" stroke="var(--k, #15121c)" stroke-width="4" stroke-linejoin="round"/><rect x="14" y="24" width="36" height="12" rx="6" fill="var(--k, #15121c)"/>`),
 };
 
 /** Kill-feed / stat glyphs */
@@ -220,9 +220,38 @@ export const SPLAT_ICON = (() => {
   return svg(`<path d="${s.core}" fill="currentColor" stroke="${K}" stroke-width="3" stroke-linejoin="round"/>${s.drops.map((d) => `<circle cx="${d.x}" cy="${d.y}" r="${Math.max(2.2, d.r)}" fill="currentColor" stroke="${K}" stroke-width="2"/>`).join('')}`);
 })();
 export const DEATH_ICON = svg(`<g ${O} stroke-width="3.4">
-    <path d="M32 6 C36.5 6 50 19 54.5 25.5 C56.5 28.5 54.5 31.5 50.5 30.7 L46 30 L46 40 C46 47 41.5 50 32 50 C22.5 50 18 47 18 40 L18 30 L13.5 30.7 C9.5 31.5 7.5 28.5 9.5 25.5 C14 19 27.5 6 32 6 Z" fill="currentColor"/>
+    <path d="${MASK_PATH}" fill="currentColor"/>
+    <path d="M17.5 42 L46.5 42 C45 51 39.5 56 32 57 C24.5 56 19 51 17.5 42 Z" fill="${DK}" stroke-width="2.6"/>
+    <rect x="11.5" y="22" width="41" height="16" rx="7.5" fill="#252c3d" stroke-width="3"/>
   </g>
-  <path d="M21.5 31.5 L29 39 M29 31.5 L21.5 39 M35 31.5 L42.5 39 M42.5 31.5 L35 39" stroke="${K}" stroke-width="3.6" stroke-linecap="round"/>`);
+  <path d="M20.5 25.5 L27.5 34.5 M27.5 25.5 L20.5 34.5 M36.5 25.5 L43.5 34.5 M43.5 25.5 L36.5 34.5" stroke="#ff5a6a" stroke-width="3.4" stroke-linecap="round"/>`);
+
+// ------------------------------------------------------------------ BREAKOUT (paintball) HUD glyphs
+/** Paint grenade: a stubby canister with a pin ring (currentColor = team paint). */
+export const GRENADE_ICON = svg(`<g ${O}>
+    <rect x="25" y="5" width="14" height="9" rx="2.5" fill="${DK}"/>
+    <path d="M40 9 Q51 6 52 16 Q52.5 21 47 22" fill="none" stroke-width="3.4"/>
+    <rect x="15" y="13" width="34" height="45" rx="11" fill="currentColor"/>
+    <path d="M15 27 L49 27 M15 44 L49 44" stroke-width="3.4"/>
+  </g>
+  <path d="M40 9 Q51 6 52 16 Q52.5 21 47 22" fill="none" stroke="${LT}" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M21.5 19 L21.5 22 M21.5 32 L21.5 39" stroke="#fff" stroke-opacity=".65" stroke-width="3.4" stroke-linecap="round"/>`);
+/** One paintball (ammo glyph). */
+export const BALL_ICON = svg(`<circle cx="32" cy="32" r="22" fill="currentColor" stroke="${K}" stroke-width="4.5"/>
+  <path d="M14 35 Q32 44 50 35" fill="none" stroke="${K}" stroke-opacity=".35" stroke-width="3"/>
+  <ellipse cx="24.5" cy="23" rx="7" ry="4.6" transform="rotate(-30 24.5 23)" fill="#fff" fill-opacity=".7"/>`);
+/** Sprint: three forward chevrons. */
+export const SPRINT_ICON = svg(`<g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 16 L22 32 L8 48 M24 16 L38 32 L24 48 M40 16 L54 32 L40 48" stroke="${K}" stroke-width="11"/>
+    <path d="M8 16 L22 32 L8 48 M24 16 L38 32 L24 48 M40 16 L54 32 L40 48" stroke="currentColor" stroke-width="5.5"/></g>`);
+/** Elimination mark: a bold X (feed / scoreboard / results). */
+export const OUT_ICON = svg(`<path d="M15 15 L49 49 M49 15 L15 49" fill="none" stroke="${K}" stroke-width="15" stroke-linecap="round"/>
+  <path d="M15 15 L49 49 M49 15 L15 49" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"/>`);
+/** Round decided by the clock. */
+export const WHISTLE_ICON = svg(`<g ${O} stroke-width="3.4">
+    <path d="M6 24 L30 24 A15 15 0 1 1 22 38 L10 34 Q6 33 6 29 Z" fill="currentColor"/>
+    <circle cx="36" cy="37" r="5" fill="${DK}"/>
+    <path d="M46 20 L54 12" fill="none"/></g>`);
 
 // ------------------------------------------------------------------ input glyphs
 const PAD_FACE = { A: '#3fc46e', B: '#ff4f5a', X: '#3c8cff', Y: '#ffc31d' };
@@ -262,10 +291,24 @@ export function richText(str) {
 }
 
 // ------------------------------------------------------------------ logo
-/** Big display logo: letters + ink splat + animated drips. size: 'xl' | 'md' | 'sm' */
-export function logoMarkup(title = 'INKWAVE', subtitle = 'Turf Riot', size = 'xl') {
-  const letters = [...title].map((ch, i) => `<span class="iw-logo__l" style="--i:${i}" data-l="${esc(ch)}">${esc(ch)}</span>`).join('');
+/** Crosshair reticle (100 box): ring, centre dot and four ticks — the O of the wordmark sits inside it. */
+const RETICLE = `<svg class="iw-logo__reticle" viewBox="0 0 100 100" aria-hidden="true">
+    <g fill="none" stroke-linecap="round">
+      <circle cx="50" cy="50" r="33" stroke="${K}" stroke-width="12"/>
+      <path d="M50 2 L50 20 M50 80 L50 98 M2 50 L20 50 M80 50 L98 50" stroke="${K}" stroke-width="12"/>
+      <circle cx="50" cy="50" r="33" stroke="var(--b-light, #8fb0ff)" stroke-width="5"/>
+      <path d="M50 2 L50 20 M50 80 L50 98 M2 50 L20 50 M80 50 L98 50" stroke="var(--b-light, #8fb0ff)" stroke-width="5"/>
+    </g>
+  </svg>`;
+/** Big display wordmark: sporty italic block letters over a paint splat with drips; the O is framed by a crosshair
+ *  and a trailing "OUT" (BREAKOUT) takes the accent colour. size: 'xl' | 'md' | 'sm' */
+export function logoMarkup(title = 'BREAKOUT', subtitle = '4v4 Paintball', size = 'xl') {
+  const chars = [...title];
+  const hiFrom = /OUT$/i.test(title) && chars.length > 3 ? chars.length - 3 : chars.length;
+  const oIdx = chars.findIndex((ch, i) => i >= Math.min(hiFrom, chars.length - 3) && /o/i.test(ch));
+  const letters = chars.map((ch, i) => `<span class="iw-logo__l${i >= hiFrom ? ' is-hi' : ''}${i === oIdx ? ' is-o' : ''}" style="--i:${i}" data-l="${esc(ch)}">${i === oIdx ? RETICLE : ''}<span class="iw-logo__g">${esc(ch)}</span></span>`).join('');
   const s = splatShape(300, 110, 88, { seed: 23, arms: 11, drops: 9, armLen: 0.55 });
+  const s2 = splatShape(470, 60, 30, { seed: 5, arms: 8, drops: 4, armLen: 0.6 });
   // drips hanging off the splat, grow + drop
   const drips = [[190, 150, 1.0], [262, 162, 1.35], [335, 158, 0.8], [402, 150, 1.15]].map(([x, y, k], i) =>
     `<g class="iw-drip" style="--d:${i}"><path class="iw-fa" d="M${x - 7} ${y} L${x + 7} ${y} L${x + 5} ${y + 28 * k} Q${x} ${y + 38 * k} ${x - 5} ${y + 28 * k} Z"/>
@@ -276,6 +319,7 @@ export function logoMarkup(title = 'INKWAVE', subtitle = 'Turf Riot', size = 'xl
         <path class="iw-fb" transform="translate(-30 12) rotate(-10 300 110)" d="${s.core}"/>
         <path class="iw-fa" d="${s.core}"/>
       </g>
+      <path class="iw-fb" d="${s2.core}"/>${s2.drops.map((d) => `<circle class="iw-fb" cx="${d.x}" cy="${d.y}" r="${d.r}"/>`).join('')}
       ${s.drops.map((d) => `<circle class="iw-fa" cx="${(300 + (d.x - 300) * 1.7).toFixed(1)}" cy="${d.y}" r="${d.r}"/>`).join('')}
       ${drips}
     </svg>
@@ -332,37 +376,53 @@ export function mapThumb(map, seed = 3) {
 }
 
 // ------------------------------------------------------------------ how-to illustrations (120 x 80)
+const MASK_AT = (x, y, sc, color) => `<g transform="translate(${x} ${y}) scale(${sc})" style="color:${color}">${SQUID.replace('class="iw-ico iw-squid"', 'x="0" y="0" width="64" height="64"')}</g>`;
+const BALL = (x, y, r, cls = 'iw-fa') => `<circle class="${cls}" cx="${x}" cy="${y}" r="${r}" stroke="${K}" stroke-width="2"/><circle cx="${x - r * 0.35}" cy="${y - r * 0.35}" r="${r * 0.3}" fill="#fff" opacity=".7"/>`;
 export const RULE_ART = {
-  turf: `<svg viewBox="0 0 120 80" aria-hidden="true">
-    <path d="M10 60 L60 34 L110 60 L60 78 Z" fill="#f4ecdc" stroke="${K}" stroke-width="2.5" stroke-linejoin="round"/>
-    <path class="iw-fa" d="${blobPath(46, 58, 16, { seed: 4, sy: 0.55, points: 10, wobble: 0.22 })}"/>
-    <path class="iw-fa" d="${blobPath(64, 47, 9, { seed: 9, sy: 0.55, points: 8, wobble: 0.25 })}"/>
-    <path class="iw-fb" d="${blobPath(84, 58, 8, { seed: 5, sy: 0.55, points: 8, wobble: 0.25 })}"/>
-    <g transform="translate(18 8)"><rect width="84" height="13" rx="6.5" fill="${K}"/><rect x="3" y="3" width="52" height="7" rx="3.5" class="iw-fa"/><rect x="55" y="3" width="26" height="7" rx="3.5" class="iw-fb"/></g>
-    <path d="M60 22 L60 30" stroke="#fff" stroke-width="2.5" stroke-dasharray="2 3"/>
+  // one life per round: a rival mask tagged OUT, splatted with your paint
+  elim: `<svg viewBox="0 0 120 80" aria-hidden="true">
+    <path class="iw-fb" d="${blobPath(60, 70, 46, { seed: 31, sy: 0.22, points: 11, wobble: 0.14 })}" opacity=".55"/>
+    ${MASK_AT(34, 12, 0.8, 'var(--b)')}
+    <path class="iw-fa" d="${splatShape(58, 34, 9, { seed: 7, arms: 8, drops: 0 }).core}" stroke="${K}" stroke-width="1.6"/>
+    ${BALL(16, 22, 4.2)}${BALL(8, 30, 3.2)}
+    <path d="M13 24 L2 29" stroke="#fff" stroke-width="2" stroke-dasharray="2 3" stroke-linecap="round"/>
+    <g transform="translate(78 10) rotate(10)"><rect width="36" height="17" rx="4" fill="#ff3d5e" stroke="${K}" stroke-width="2.5"/>
+      <text x="18" y="13" text-anchor="middle" font-family="Rubik, sans-serif" font-style="italic" font-weight="900" font-size="12" fill="#fff">OUT!</text></g>
   </svg>`,
-  swim: `<svg viewBox="0 0 120 80" aria-hidden="true">
-    <path class="iw-fa" d="${blobPath(60, 58, 44, { seed: 12, sy: 0.3, points: 12, wobble: 0.12 })}"/>
-    <g transform="translate(40 26) scale(.62)" style="color:var(--a)">${SQUID.replace('class="iw-ico iw-squid"', 'x="0" y="0" width="64" height="64"')}</g>
-    <path d="M18 42 L32 42 M12 50 L30 50 M20 58 L34 58" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/>
-    <g transform="translate(88 14)"><rect width="16" height="34" rx="8" fill="#fff" stroke="${K}" stroke-width="2.5"/><rect x="3" y="12" width="10" height="19" rx="5" class="iw-fa"/><path d="M8 -2 L8 8 M4 3 L8 -2 L12 3" stroke="#fff" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></g>
+  // first to N: round pips + the round clock
+  rounds: `<svg viewBox="0 0 120 80" aria-hidden="true">
+    <g transform="translate(8 12)">
+      ${[0, 1, 2, 3].map((i) => `<circle cx="${8 + i * 15}" cy="8" r="6" class="${i < 3 ? 'iw-fa' : ''}" fill="${i < 3 ? '' : '#fff'}" fill-opacity="${i < 3 ? 1 : 0.18}" stroke="${K}" stroke-width="2.4"/>`).join('')}
+      ${[0, 1, 2, 3].map((i) => `<circle cx="${8 + i * 15}" cy="26" r="6" class="${i < 1 ? 'iw-fb' : ''}" fill="${i < 1 ? '' : '#fff'}" fill-opacity="${i < 1 ? 1 : 0.18}" stroke="${K}" stroke-width="2.4"/>`).join('')}
+    </g>
+    <g transform="translate(92 42)">
+      <circle r="22" fill="#fff" stroke="${K}" stroke-width="3"/>
+      <path d="M0 0 L0 -22 A22 22 0 0 1 20.9 -6.8 Z" class="iw-fa" opacity=".85"/>
+      <path d="M0 0 L0 -14 M0 0 L9 5" stroke="${K}" stroke-width="3" stroke-linecap="round"/>
+      <rect x="-5" y="-29" width="10" height="6" rx="2" fill="${K}"/>
+    </g>
+    <text x="8" y="70" font-family="Rubik, sans-serif" font-style="italic" font-weight="900" font-size="13" fill="#fff" stroke="${K}" stroke-width="3" paint-order="stroke">3 – 1</text>
   </svg>`,
-  enemy: `<svg viewBox="0 0 120 80" aria-hidden="true">
-    <path class="iw-fb" d="${blobPath(58, 60, 44, { seed: 31, sy: 0.3, points: 11, wobble: 0.14 })}"/>
-    <g transform="translate(36 22) scale(.62)" style="color:var(--a)">${SQUID.replace('class="iw-ico iw-squid"', 'x="0" y="0" width="64" height="64"')}</g>
-    <path d="M78 16 q4 6 0 9 q-4 -3 0 -9z" fill="#9fe3ff" stroke="${K}" stroke-width="1.8"/>
-    <g transform="translate(86 34)"><rect width="26" height="16" rx="8" fill="${K}"/><text x="13" y="12" text-anchor="middle" font-family="Rubik, sans-serif" font-weight="900" font-size="10" fill="#ff5a6a">HP</text></g>
-    <path d="M92 58 L100 58 M96 54 L96 62" stroke="#fff" stroke-width="0" />
-    <path d="M18 28 l6 6 m0 -6 l-6 6" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+  // the hopper: a loader full of balls + a pod sliding in
+  hopper: `<svg viewBox="0 0 120 80" aria-hidden="true">
+    <path d="M22 18 Q22 8 40 8 Q58 8 58 18 L54 48 Q53 54 46 54 L34 54 Q27 54 26 48 Z" fill="#fff" fill-opacity=".22" stroke="${K}" stroke-width="3" stroke-linejoin="round"/>
+    <g>${[[32, 44], [42, 45], [37, 36], [47, 36], [30, 30], [40, 27], [50, 27]].map(([x, y]) => BALL(x, y, 4.6)).join('')}</g>
+    <rect x="34" y="54" width="12" height="12" rx="2" fill="${DK}" stroke="${K}" stroke-width="2.5"/>
+    <path d="M14 70 L96 70" stroke="${K}" stroke-width="7" stroke-linecap="round"/><path d="M14 70 L96 70" class="iw-fa" stroke="currentColor" stroke-width="3" stroke-linecap="round" style="stroke:var(--a)"/>
+    <g transform="translate(78 16) rotate(18)"><rect width="16" height="36" rx="7" fill="#fff" stroke="${K}" stroke-width="2.5"/><rect x="3" y="12" width="10" height="21" rx="4" class="iw-fb"/></g>
+    <path d="M72 44 Q64 40 60 30" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M58 34 L60 29 L65 31" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="104" y="16" text-anchor="middle" font-family="Rubik, sans-serif" font-weight="900" font-size="12" fill="#fff" stroke="${K}" stroke-width="3" paint-order="stroke">R</text>
   </svg>`,
-  climb: `<svg viewBox="0 0 120 80" aria-hidden="true">
-    <path d="M58 6 L102 6 L102 76 L58 76 Z" fill="#e8dcc6" stroke="${K}" stroke-width="2.5" stroke-linejoin="round"/>
-    <path d="M58 6 L50 12 L50 80 L58 76 Z" fill="#cdbd9f" stroke="${K}" stroke-width="2.5" stroke-linejoin="round"/>
-    <path class="iw-fa" d="M68 76 L68 20 Q68 12 76 12 Q86 12 86 22 L86 76 Z"/>
-    <path class="iw-fa" d="M66 34 q-6 2 -5 8 q4 -2 5 -8z M88 50 q6 2 5 8 q-4 -2 -5 -8z"/>
-    <g transform="translate(62 30) scale(.4)" style="color:var(--a-light, #fff)">${SQUID.replace('class="iw-ico iw-squid"', 'x="0" y="0" width="64" height="64"')}</g>
-    <path d="M36 62 L36 22 M28 30 L36 20 L44 30" stroke="#fff" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M36 62 L36 22 M28 30 L36 20 L44 30" stroke="${K}" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity=".4"/>
+  // sprint to cover: an inflatable bunker, speed lines, a grenade lobbed over it
+  cover: `<svg viewBox="0 0 120 80" aria-hidden="true">
+    <ellipse cx="60" cy="72" rx="54" ry="6" fill="#000" opacity=".2"/>
+    <path d="M44 72 L44 40 Q44 30 56 30 L80 30 Q92 30 92 40 L92 72 Z" class="iw-fb" stroke="${K}" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M56 30 L56 72 M68 30 L68 72 M80 30 L80 72" stroke="${K}" stroke-width="2" opacity=".35"/>
+    <path d="M50 38 Q52 34 57 34" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" opacity=".6"/>
+    ${MASK_AT(12, 34, 0.55, 'var(--a)')}
+    <path d="M4 44 L10 44 M2 52 L10 52 M6 60 L12 60" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+    <path d="M40 30 Q62 -6 100 24" stroke="#fff" stroke-width="2.4" fill="none" stroke-dasharray="3 4" stroke-linecap="round"/>
+    <g transform="translate(100 30)"><rect x="-3.5" y="-12" width="7" height="5" rx="1.5" fill="${DK}" stroke="${K}" stroke-width="1.6"/><path class="iw-fa" d="M0 -9 C4 -9 9 1 9 4 C9 8 5 9.5 0 9.5 C-5 9.5 -9 8 -9 4 C-9 1 -4 -9 0 -9 Z" stroke="${K}" stroke-width="2.2"/></g>
   </svg>`,
 };
 

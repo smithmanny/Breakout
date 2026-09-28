@@ -5,7 +5,7 @@
 // sends one roster to everyone; every client builds the stage, reports ready, and the host says go — so intros start
 // together. In the match NetMatch (netmatch.js) does the replication.
 import { G, emit } from '../core/ctx.js';
-import { MAPS, WEAPONS, WEAPON_ORDER, MATCH, BOT_NAMES, TEAM_PALETTES, mapNoBots, mapBossOk, bossFallbackMap, noBotsStartBlock } from '../config.js';
+import { MAPS, WEAPONS, WEAPON_ORDER, validWeapon, MATCH, ROUNDS, BOT_NAMES, TEAM_PALETTES, mapNoBots, mapBossOk, bossFallbackMap, noBotsStartBlock } from '../config.js';
 import { randomStyle } from '../game/character-style.js';
 import { Transport } from './transport.js';
 import { NetMatch } from './netmatch.js';
@@ -61,7 +61,7 @@ export class NetSession {
 
   _profile() {
     const p = G.game?.profile || {};
-    return { name: (p.name || 'Player').slice(0, 16), weapon: WEAPONS[p.weapon] ? p.weapon : 'shooter', style: p.style || null };
+    return { name: (p.name || 'Player').slice(0, 16), weapon: validWeapon(p.weapon), style: p.style || null };
   }
 
   // ------------------------------------------------------------------ rooms
@@ -163,7 +163,7 @@ export class NetSession {
   }
 
   _newPlayer(id, name, o) {
-    return { id, name: (name || 'Player').slice(0, 16), team: 'auto', weapon: WEAPONS[o.weapon] ? o.weapon : 'shooter', style: o.style || randomStyle(), ready: false, host: id === this.hostId, ping: 0 };
+    return { id, name: (name || 'Player').slice(0, 16), team: 'auto', weapon: validWeapon(o.weapon), style: o.style || randomStyle(), ready: false, host: id === this.hostId, ping: 0 };
   }
 
   // host: honour team requests while keeping ≤ 4 a side, then place everyone still on 'auto' on the smaller side
@@ -195,7 +195,7 @@ export class NetSession {
     if (!this.tr || !this.myId) return;
     const o = {};
     if (ch.name != null) o.name = String(ch.name).slice(0, 16);
-    if (ch.weapon && WEAPONS[ch.weapon]) o.weapon = ch.weapon;
+    if (ch.weapon && WEAPONS[ch.weapon]) o.weapon = validWeapon(ch.weapon);   // (retired markers → a playable one)
     if (ch.style) o.style = ch.style;
     if (ch.ready != null) o.ready = !!ch.ready;
     if (ch.team === 0 || ch.team === 1 || ch.team === 'auto') o.team = ch.team;
@@ -212,7 +212,7 @@ export class NetSession {
     const p = this.lobby.players.find((x) => x.id === id);
     if (!p) return;
     if (o.name) p.name = o.name;
-    if (o.weapon && WEAPONS[o.weapon]) p.weapon = o.weapon;
+    if (o.weapon && WEAPONS[o.weapon]) p.weapon = validWeapon(o.weapon);
     if (o.style) p.style = o.style;
     if (o.ready != null) p.ready = !!o.ready;
     if (o.ping != null) p.ping = Math.round(o.ping);
@@ -269,7 +269,7 @@ export class NetSession {
       const humans = boss ? l.players : l.players.filter((p) => p.team === team);
       const weapons = [...WEAPON_ORDER].sort(() => Math.random() - 0.5);
       let slot = 0;
-      for (const p of humans) roster.push({ nid: nid++, owner: p.id, bot: false, team, slot: slot++, name: p.name, weapon: p.weapon, style: p.style });
+      for (const p of humans) roster.push({ nid: nid++, owner: p.id, bot: false, team, slot: slot++, name: p.name, weapon: validWeapon(p.weapon), style: p.style });
       if (bots) {
         while (slot < (boss ? TEAM * 2 : TEAM)) {
           const used = new Set(roster.filter((r) => r.team === team).map((r) => r.weapon));
@@ -278,7 +278,9 @@ export class NetSession {
         }
       }
     }
-    const cfg = { k: 'start', roster, map: l.map, time: l.time, duration: l.duration, difficulty: l.difficulty, palette: l.palette, mode: boss ? 'boss' : 'turf', host: this.myId, id: Math.random().toString(36).slice(2, 8) };
+    // (elimination has no match length: rounds of ROUNDS.roundTime until a side has ROUNDS.toWin — lobby.duration only
+    // matters for Boss Battle)
+    const cfg = { k: 'start', roster, map: l.map, time: l.time, duration: boss ? l.duration : ROUNDS.roundTime, difficulty: l.difficulty, palette: l.palette, mode: boss ? 'boss' : 'turf', host: this.myId, id: Math.random().toString(36).slice(2, 8) };
     this.tr.lock(true);
     this.tr.broadcast(cfg);
     this._begin(cfg);

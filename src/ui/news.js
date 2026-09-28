@@ -1,23 +1,25 @@
-// INKWAVE — "What's New" launch pop-ups. Shown ONCE per update, the first time the player reaches the main menu
+// BREAKOUT — "What's New" launch pop-ups. Shown ONCE per update, the first time the player reaches the main menu
 // (never over the title screen, never mid-match). Two sticker cards behind a splat wipe:
-//   1. INTRODUCING THE MULTIPLAYER EXPANSION  → CONTINUE ▶ · Skip
-//   2. INTRODUCING HULLBREAKER (Boss Battle · public beta) → TRY IT (Play › Boss Battle) · LATER
-// Seen state: localStorage['inkwave.news'] = NEWS_ID (bump NEWS_ID for the next update's cards).
+//   1. WELCOME TO BREAKOUT (the paintball conversion: elimination rounds, markers) → CONTINUE ▶ · Skip
+//   2. NEW FIELD: BREAKPOINT FIELD (speedball field, masks & jerseys) → PLAY NOW (Play › Elimination) · LATER
+// Seen state: localStorage['inkwave.news'] = NEWS_ID (bump NEWS_ID for the next update's cards; the key keeps its
+// historical name so saves carry over).
 // Test flows never see it: ?skipTitle / ?netmock / ?autostart / ?autopilot skip it. ?news=1 re-enables the normal
 // once-only logic on those URLs, ?news=force shows it regardless of the seen state, ?news=0 turns it off.
 //
 // Lives inside the menus: the overlay is the menus' modal (focus trap, pad/keyboard/mouse nav, cursor ring for free),
 // hosted in the main screen's element. Hooks in menus.js: constructor, _swap (main mounted → maybeShow), _back (Esc).
-import { h, clamp, splatSVG, restartAnim, prefersReducedMotion, easeOutCubic, easeInOutCubic, safeCall } from './ui-util.js';
-import { GLYPHS, SQUID } from './ui-icons.js';
+import { h, esc, clamp, splatSVG, splatShape, restartAnim, prefersReducedMotion, easeOutCubic, easeInOutCubic, safeCall } from './ui-util.js';
+import { GLYPHS, SQUID, WEAPON_ICONS, richText } from './ui-icons.js';
 import { splatClip, splatCover, inkBurst } from './menu-art.js';
-import { BOSS_NAME, bossSilhouette } from './boss-art.js';
 import { G } from '../core/ctx.js';
+import { ROUNDS, WEAPONS, WEAPON_ORDER, mapById } from '../config.js';
 
-export const NEWS_ID = 'mp-expansion-1';
+export const NEWS_ID = 'breakout-launch-1';
 const KEY = 'inkwave.news';
 const art = (f) => new URL(`../../assets/${f}`, import.meta.url).href;
 const CONFETTI = ['var(--nc)', 'var(--nc-light)', '#ffd23f', '#fff', 'var(--a)', 'var(--b)'];
+const K = '#15121c';
 
 export function newsSeen() { try { return localStorage.getItem(KEY) === NEWS_ID; } catch (e) { return false; } }
 function markSeen() { try { localStorage.setItem(KEY, NEWS_ID); } catch (e) { /* private mode: it just shows again next time */ } }
@@ -32,28 +34,70 @@ function gate() {
   return true;
 }
 
+// ---- illustrated heroes (used when there is no render for the card, or it fails to load)
+const maskAt = (x, y, sc, color, flip = false) => `<g transform="translate(${x} ${y}) scale(${flip ? -sc : sc} ${sc})" style="color:${color}">${SQUID.replace('class="iw-ico iw-squid"', 'x="0" y="0" width="64" height="64"')}</g>`;
+const splatAt = (cls, x, y, r, seed) => { const s = splatShape(x, y, r, { seed, arms: 9, drops: 5, armLen: 0.5 }); return `<path class="${cls}" d="${s.core}"/>${s.drops.map((d) => `<circle class="${cls}" cx="${d.x}" cy="${d.y}" r="${d.r}"/>`).join('')}`; };
+/** Two masked players face off across a crosshair, paint everywhere. */
+function heroFaceoff() {
+  return `<svg viewBox="0 0 320 180" aria-hidden="true">
+    <defs><radialGradient id="nwfo" cx=".5" cy=".6" r=".7"><stop offset="0" stop-color="#3a2d62"/><stop offset="1" stop-color="#150f26"/></radialGradient></defs>
+    <rect width="320" height="180" fill="url(#nwfo)"/>
+    ${splatAt('iw-fa', 92, 96, 44, 11)}${splatAt('iw-fb', 232, 90, 42, 23)}${splatAt('iw-fa', 250, 30, 12, 5)}${splatAt('iw-fb', 60, 150, 11, 8)}
+    ${maskAt(46, 50, 1.3, 'var(--a)')}${maskAt(274, 50, 1.3, 'var(--b)', true)}
+    <g transform="translate(160 88)" fill="none" stroke-linecap="round">
+      <circle r="26" stroke="${K}" stroke-width="9"/><path d="M0 -40 V-18 M0 18 V40 M-40 0 H-18 M18 0 H40" stroke="${K}" stroke-width="9"/>
+      <circle r="26" stroke="#fff" stroke-width="4"/><path d="M0 -40 V-18 M0 18 V40 M-40 0 H-18 M18 0 H40" stroke="#fff" stroke-width="4"/>
+      <circle r="4" fill="#ff3d5e" stroke="none"/>
+    </g>
+    ${[[128, 70], [118, 80], [196, 104], [206, 96]].map(([x, y], i) => `<circle cx="${x}" cy="${y}" r="4" class="${i < 2 ? 'iw-fa' : 'iw-fb'}" stroke="${K}" stroke-width="1.8"/>`).join('')}
+  </svg>`;
+}
+/** A top-down speedball field: net, inflatable snakes / doritos / cans, both start boxes. */
+function heroField() {
+  const bunk = (x, y, w, hh, r = 8, cls = 'nwb') => `<rect x="${x}" y="${y}" width="${w}" height="${hh}" rx="${r}" class="${cls}"/>`;
+  const dor = (x, y, s, rot) => `<path class="nwb" transform="translate(${x} ${y}) rotate(${rot}) scale(${s})" d="M0 -10 L9 7 L-9 7 Z"/>`;
+  return `<svg viewBox="0 0 320 180" aria-hidden="true">
+    <style>.nwb{fill:#f5f1e6;stroke:${K};stroke-width:2.2;stroke-linejoin:round}</style>
+    <rect width="320" height="180" fill="#2c7a3f"/>
+    <path d="M0 0 H320 V180 H0 Z" fill="none" stroke="#fff" stroke-opacity=".6" stroke-width="10" stroke-dasharray="2 6"/>
+    ${Array.from({ length: 8 }, (_, i) => `<rect x="${i * 40}" y="0" width="20" height="180" fill="#fff" opacity=".04"/>`).join('')}
+    <path d="M160 14 V166" stroke="#fff" stroke-opacity=".7" stroke-width="2.5" stroke-dasharray="6 6"/>
+    ${splatAt('iw-fa', 40, 90, 16, 3)}${splatAt('iw-fb', 280, 90, 16, 9)}${splatAt('iw-fa', 132, 48, 9, 14)}${splatAt('iw-fb', 196, 130, 10, 21)}
+    <rect x="10" y="70" width="22" height="40" rx="4" class="iw-fa" stroke="${K}" stroke-width="2.2"/><rect x="288" y="70" width="22" height="40" rx="4" class="iw-fb" stroke="${K}" stroke-width="2.2"/>
+    ${bunk(60, 24, 70, 14, 7)}${bunk(190, 142, 70, 14, 7)}
+    ${bunk(150, 80, 20, 20, 10)}${bunk(96, 128, 16, 16, 8)}${bunk(208, 36, 16, 16, 8)}
+    ${dor(118, 96, 1.4, 0)}${dor(202, 84, 1.4, 180)}${dor(70, 60, 1.1, 20)}${dor(250, 120, 1.1, 200)}
+    ${bunk(236, 64, 12, 26, 6)}${bunk(72, 90, 12, 26, 6)}
+    ${maskAt(116, 116, 0.34, 'var(--a)')}${maskAt(192, 44, 0.34, 'var(--b)')}
+  </svg>`;
+}
+
+const markerNames = () => WEAPON_ORDER.map((id) => WEAPONS[id] && WEAPONS[id].name).filter(Boolean);
+const FIELD = () => (mapById('speedball') || { id: 'speedball', name: 'Breakpoint Field' });
+
 const PAGES = [
   {
-    id: 'mp', tone: 'a', kicker: 'INTRODUCING', title: ['THE MULTIPLAYER', 'EXPANSION'], img: 'news/lobby.webp',
+    id: 'launch', tone: 'a', kicker: 'WELCOME TO', title: ['BREAKOUT'], img: 'news/breakout.webp', fallback: heroFaceoff,
     stamp: { text: 'NEW!', cls: 'is-new' },
-    lede: 'Grab your crew — the harbour just got a whole lot louder!',
+    lede: 'Same harbour crew, brand-new game: masks on, markers up — it’s 4v4 paintball.',
     bullets: [
-      [GLYPHS.key, 'Private rooms', 'share a code, squad up with up to 8 friends'],
-      [GLYPHS.smile, 'The Lobby', 'watch your squad roll in, emote, ready up'],
-      [GLYPHS.map, 'Cargo Terminal', 'a brand-new stage, online only', 'stages/cargo-day-sm.webp'],
+      [GLYPHS.flag, 'Elimination rounds', `one life per round, no respawns — first team to ${ROUNDS.toWin} rounds takes the match`],
+      [WEAPON_ICONS.shooter, `${WEAPON_ORDER.length} markers`, () => markerNames().join(' · ')],
+      [GLYPHS.bolt, 'Sprint · Reload · Grenades', 'hold [SHIFT] to sprint, [R] to reload your hopper, two Paint Grenades a round'],
     ],
   },
   {
-    id: 'boss', tone: 'b', kicker: 'INTRODUCING', title: [BOSS_NAME], img: 'news/boss.webp', fallback: () => bossSilhouette(),
-    tape: 'BOSS BATTLE · PUBLIC BETA',
-    lede: 'A giant hermit crab has moved into a rusty shipping container — and it wants the whole harbour.',
+    id: 'field', tone: 'b', kicker: 'NEW FIELD', title: () => FIELD().name.toUpperCase().split(' '), img: 'stages/speedball-day.webp', fallback: heroField,
+    tape: 'SPEEDBALL · 4 V 4',
+    lede: () => FIELD().blurb || 'A tournament speedball field of inflatable bunkers.',
     bullets: [
-      [GLYPHS.users, 'Co-op showdown', 'your whole squad vs one colossal crab'],
-      [GLYPHS.target, 'Three phases of chaos', 'dodge the tells, crack the shell, blast the glowing weak points'],
-      [GLYPHS.sparkle, 'Public beta', 'it’s still sharpening its claws — tell us what you think!'],
+      [GLYPHS.map, 'Speedball layout', 'snakes, doritos and cans — break fast, then fight for the wire'],
+      [GLYPHS.hanger, 'Masks & jerseys', 'pro masks, team jerseys and camo kits in the Locker'],
+      [GLYPHS.target, 'Referee’s call', 'take the hits and you’re OUT — spectate your team until the next whistle'],
     ],
   },
 ];
+const val = (v) => (typeof v === 'function' ? v() : v);
 
 export class WhatsNew {
   constructor(menus) {
@@ -132,7 +176,7 @@ export class WhatsNew {
     img.addEventListener('error', () => {
       img.remove();
       frame.classList.add('is-loaded', 'is-fallback');
-      frame.prepend(h('div', { class: 'iw-news__fb', html: P.fallback ? P.fallback() : `<span class="iw-news__fbsquid">${SQUID}</span>` }));
+      frame.prepend(h('div', { class: 'iw-news__fb' + (P.fallback ? ' is-art' : ''), html: P.fallback ? P.fallback() : `<span class="iw-news__fbsquid">${SQUID}</span>` }));
     }, { once: true });
     img.src = art(P.img);
     const hero = h('div', { class: 'iw-news__hero' },
@@ -143,7 +187,7 @@ export class WhatsNew {
       P.tape ? h('span', { class: 'iw-news__tape' }, h('span', null, P.tape)) : null);
     // body
     const list = h('ul', { class: 'iw-news__list' }, P.bullets.map(([ic, b, t, thumb], k) => {
-      const li = h('li', { style: { '--i': k } }, h('i', { class: 'iw-news__bico', html: ic }), h('span', null, h('b', null, b), ` — ${t}`));
+      const li = h('li', { style: { '--i': k } }, h('i', { class: 'iw-news__bico', html: ic }), h('span', { html: `<b>${esc(b)}</b> — ${richText(val(t))}` }));
       if (thumb) {
         const im = h('img', { class: 'iw-news__thumb', alt: '', draggable: 'false' });
         im.addEventListener('error', () => im.remove(), { once: true });
@@ -160,16 +204,17 @@ export class WhatsNew {
       skip.appendChild(h('span', { class: 'iw-news__skipkey' }, M._hint('Esc', 'B')));
       btns.push(go, skip);
     } else {
-      const go = M._btn({ id: 'news-try', label: 'TRY IT', icon: GLYPHS.play, cls: 'iw-btn--primary iw-btn--wide iw-news__go', sound: 'ui_confirm', accept: () => this.close('try') });
+      const go = M._btn({ id: 'news-try', label: 'PLAY NOW', icon: GLYPHS.play, cls: 'iw-btn--primary iw-btn--wide iw-news__go', sound: 'ui_confirm', accept: () => this.close('try') });
       const later = M._btn({ id: 'news-later', label: 'LATER', cls: 'iw-btn--wide iw-btn--ghost iw-news__later', sound: 'ui_back', accept: () => this.close('later') });
       btns.push(go, later);
     }
     btns[0].appendChild(h('span', { class: 'iw-news__key' }, M._hint('Enter', 'A')));
     const dots = h('span', { class: 'iw-news__dots' }, PAGES.map((_, k) => h('i', { class: k === i ? 'is-on' : '' })));
+    const title = val(P.title);
     const body = h('div', { class: 'iw-news__body' },
       h('div', { class: 'iw-news__kicker' }, h('i', { html: GLYPHS.sparkle }), P.kicker),
-      h('div', { class: 'iw-news__title iw-display' + (P.title.length === 1 ? ' is-one' : '') }, P.title.map((t, k) => h('span', { style: { '--i': k } }, t))),
-      h('p', { class: 'iw-news__lede' }, P.lede),
+      h('div', { class: 'iw-news__title iw-display' + (title.length === 1 ? ' is-one' : '') }, title.map((t, k) => h('span', { style: { '--i': k } }, t))),
+      h('p', { class: 'iw-news__lede' }, val(P.lede)),
       list,
       h('div', { class: 'iw-news__btns' }, btns),
       h('div', { class: 'iw-news__foot' }, dots, h('span', { class: 'iw-news__count' }, `${i + 1} / ${PAGES.length}`)));
@@ -261,7 +306,7 @@ export class WhatsNew {
     this.card.classList.add('is-out');
     if (how === 'back') M._sfx('ui_back');
     const finish = () => { el.remove(); if (this.el === el) this.el = null; };
-    if (how === 'try') { finish(); this._tryBoss(); return; }
+    if (how === 'try') { finish(); this._tryPlay(); return; }
     // the splat drains back into the card's centre, the menu underneath comes back
     const last = this.inkHost.lastElementChild;
     if (!this.reduced && last && last._splat) {
@@ -274,12 +319,13 @@ export class WhatsNew {
     if (prev && prev.isConnected) M._setFocus(prev, { snap: true });
   }
 
-  /** TRY IT: Play › Boss Battle stage select, with Back leading to the mode cards (boss focused). */
-  _tryBoss() {
+  /** PLAY NOW: Play › Elimination stage select on the new field, with Back leading to the mode cards. */
+  _tryPlay() {
     const M = this.M;
     const st = M._setup || (M._setup = { times: {} });
-    st.mode = 'boss';
-    M._setSetting('lastMode', 'boss');
+    st.mode = 'turf';   // (historical id of the regular 4v4 mode — Elimination)
+    M._setSetting('lastMode', 'turf');
+    if (mapById('speedball')) { st.mapId = 'speedball'; M._setSetting('lastStage', 'speedball'); }
     M._stack = ['main', 'mode'];
     M.show('setup', { push: true });
   }

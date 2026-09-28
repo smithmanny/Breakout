@@ -1,5 +1,6 @@
-// INKWAVE UI — menu art + helpers.
+// BREAKOUT UI — menu art + helpers.
 //   computeAwards(players, { win, percents }) → { byPlayer: [[award…]…], match: [tag…] }
+//   computeElimAwards(players, { win, roundWins }) → same shape for Elimination (damage, eliminations, times OUT)
 //   computeBossAwards(players) → same shape for Boss Battle (damage, weak hits, crablets, survival)
 //   awardIcon(id) · medalMarkup(award) · awardBadge(award) · rankEmblem(tier) · RANK_TIERS
 //   inkBurst(parent, { x, y, color, count, dist, size, splat, ring })     — DOM ink splash (auto-removes)
@@ -58,12 +59,12 @@ export const awardIcon = (id) => AWARD_ICONS[id] || AWARD_ICONS.star;
 // ================================================================================== awards
 export const AWARDS = {
   mvp: { label: 'MVP', metal: 'gold', icon: 'star', desc: 'Best all-round score on the winning team' },
-  turf: { label: 'TURF KING', metal: 'gold', icon: 'crown', desc: 'Most turf inked in the match' },
-  splats: { label: 'TOP SPLATTER', metal: 'silver', icon: 'splat', desc: 'Most splats in the match' },
-  inker: { label: 'TOP INKER', metal: 'silver', icon: 'roller', desc: 'Most turf inked on their team' },
-  untouchable: { label: 'UNTOUCHABLE', metal: 'bronze', icon: 'shield', desc: 'Never got splatted' },
-  survivor: { label: 'SURVIVOR', metal: 'bronze', icon: 'buoy', desc: 'Splatted the fewest times' },
-  pure: { label: 'PURE PAINTER', metal: 'bronze', icon: 'brush', desc: 'Top-3 turf without splatting anyone' },
+  turf: { label: 'PAINT KING', metal: 'gold', icon: 'crown', desc: 'Painted the most ground in the match' },
+  splats: { label: 'SHARPSHOOTER', metal: 'silver', icon: 'splat', desc: 'Most eliminations in the match' },
+  inker: { label: 'TOP PAINTER', metal: 'silver', icon: 'brush', desc: 'Painted the most ground on their team' },
+  untouchable: { label: 'UNTOUCHABLE', metal: 'bronze', icon: 'shield', desc: 'Never got eliminated' },
+  survivor: { label: 'SURVIVOR', metal: 'bronze', icon: 'buoy', desc: 'Eliminated the fewest times' },
+  pure: { label: 'PURE PAINTER', metal: 'bronze', icon: 'brush', desc: 'Top-3 painter without eliminating anyone' },
 };
 const AWARD_ORDER = ['mvp', 'turf', 'splats', 'inker', 'untouchable', 'survivor', 'pure'];
 // boss mode (co-op: one squad, no team split — the MVP is given win or lose)
@@ -72,9 +73,9 @@ export const BOSS_AWARDS = {
   heavy: { label: 'HEAVY HITTER', metal: 'gold', icon: 'pow', desc: 'Dealt the most damage to the boss' },
   crit: { label: 'SHELL CRACKER', metal: 'silver', icon: 'crit', desc: 'Most weak-point hits' },
   brood: { label: 'BROOD BUSTER', metal: 'silver', icon: 'splat', desc: 'Popped the most crablets' },
-  unsinkable: { label: 'UNSINKABLE', metal: 'bronze', icon: 'anchor', desc: 'Never got splatted' },
-  survivor: { label: 'SURVIVOR', metal: 'bronze', icon: 'buoy', desc: 'Splatted the fewest times' },
-  cleaner: { label: 'CLEANUP CREW', metal: 'bronze', icon: 'roller', desc: 'Painted over the most boss ink' },
+  unsinkable: { label: 'UNSINKABLE', metal: 'bronze', icon: 'anchor', desc: 'Never went down' },
+  survivor: { label: 'SURVIVOR', metal: 'bronze', icon: 'buoy', desc: 'Went down the fewest times' },
+  cleaner: { label: 'CLEANUP CREW', metal: 'bronze', icon: 'brush', desc: 'Painted over the most boss goo' },
 };
 const BOSS_ORDER = ['mvp', 'heavy', 'crit', 'brood', 'unsinkable', 'survivor', 'cleaner'];
 /** Boss-mode awards from the final stats: players [{ damage, weakHits, splats, deaths, turf, isSelf }]. */
@@ -88,14 +89,14 @@ export function computeBossAwards(players = []) {
     if (md > 0) P.filter((p) => p.dmg === md).forEach((p) => give(p, 'heavy', `${fmtInt(p.dmg)} damage`));
     if (mw >= 3) P.filter((p) => p.weak === mw).forEach((p) => give(p, 'crit', `${mw} weak-point hits`));
     if (ms >= 2) P.filter((p) => p.splats === ms).forEach((p) => give(p, 'brood', `${ms} crablets`));
-    if (mt > 0) P.filter((p) => p.turf === mt).forEach((p) => give(p, 'cleaner', `${fmtInt(p.turf)}p inked`));
+    if (mt > 0) P.filter((p) => p.turf === mt).forEach((p) => give(p, 'cleaner', `${fmtInt(p.turf)}p painted`));
     const active = P.filter((p) => p.dmg > 0 || p.turf >= 30);
     const zero = active.filter((p) => p.deaths === 0);
-    if (zero.length && zero.length <= 3) zero.forEach((p) => give(p, 'unsinkable', 'Never splatted'));
+    if (zero.length && zero.length <= 3) zero.forEach((p) => give(p, 'unsinkable', 'Never went down'));
     else if (!zero.length && active.length) {
       const m = Math.min(...active.map((p) => p.deaths));
       const s = active.filter((p) => p.deaths === m);
-      if (s.length === 1) give(s[0], 'survivor', `Splatted ${m}×`);
+      if (s.length === 1) give(s[0], 'survivor', `Down ${m}×`);
     }
     const score = (p) => p.dmg / Math.max(1, md) + 0.35 * (p.weak / Math.max(1, mw)) + 0.2 * (p.splats / Math.max(1, ms)) + 0.15 * (p.turf / Math.max(1, mt)) - 0.25 * (p.deaths / mD);
     const cand = P.filter((p) => p.dmg > 0 || p.turf > 0);
@@ -122,28 +123,28 @@ export function computeAwards(players = [], { win = true, percents = [50, 50] } 
     // Turf King — most turf in the lobby (ties share the crown)
     const mt = maxOf('turf');
     const kings = mt > 0 ? P.filter((p) => p.turf === mt) : [];
-    kings.forEach((p) => give(p, 'turf', `${fmtInt(p.turf)}p inked`));
+    kings.forEach((p) => give(p, 'turf', `${fmtInt(p.turf)}p painted`));
     // Top Inker — best painter on each team that doesn't already hold the crown
     for (const t of [0, 1]) {
       const team = P.filter((p) => p.team === t);
       if (!team.length || team.some((p) => kings.includes(p))) continue;
       const m = maxOf('turf', team);
-      if (m > 0) team.filter((p) => p.turf === m).forEach((p) => give(p, 'inker', `${fmtInt(p.turf)}p inked`));
+      if (m > 0) team.filter((p) => p.turf === m).forEach((p) => give(p, 'inker', `${fmtInt(p.turf)}p painted`));
     }
     // Top Splatter
     const ms = maxOf('splats');
-    if (ms > 0) P.filter((p) => p.splats === ms).forEach((p) => give(p, 'splats', `${ms} splat${ms === 1 ? '' : 's'}`));
+    if (ms > 0) P.filter((p) => p.splats === ms).forEach((p) => give(p, 'splats', `${ms} elim${ms === 1 ? '' : 's'}`));
     // Untouchable (never splatted — only special when few managed it) / Survivor (unique fewest)
     const active = P.filter((p) => p.turf >= 30 || p.splats > 0);
     const zero = active.filter((p) => p.deaths === 0);
-    if (zero.length && zero.length <= 3) zero.forEach((p) => give(p, 'untouchable', 'Never splatted'));
+    if (zero.length && zero.length <= 3) zero.forEach((p) => give(p, 'untouchable', 'Never OUT'));
     else if (!zero.length && active.length) {
       const md = Math.min(...active.map((p) => p.deaths));
       const s = active.filter((p) => p.deaths === md);
-      if (s.length === 1) give(s[0], 'survivor', `Splatted ${md}×`);
+      if (s.length === 1) give(s[0], 'survivor', `OUT ${md}×`);
     }
     // Pure Painter — top-3 turf with zero splats
-    [...P].sort((a, b) => b.turf - a.turf).slice(0, 3).filter((p) => p.splats === 0 && p.turf > 0).forEach((p) => give(p, 'pure', `${fmtInt(p.turf)}p · 0 splats`));
+    [...P].sort((a, b) => b.turf - a.turf).slice(0, 3).filter((p) => p.splats === 0 && p.turf > 0).forEach((p) => give(p, 'pure', `${fmtInt(p.turf)}p · 0 elims`));
     // MVP — best normalised all-round score on the winning team
     const self = P.find((p) => p.isSelf);
     const selfTeam = self ? self.team : 0;
@@ -167,6 +168,71 @@ export function computeAwards(players = [], { win = true, percents = [50, 50] } 
   return { byPlayer: by, match };
 }
 
+// ---------------------------------------------------------------- elimination (BREAKOUT) awards
+export const ELIM_AWARDS = {
+  mvp: { label: 'MVP', metal: 'gold', icon: 'star', desc: 'Best all-round score on the winning team' },
+  topgun: { label: 'TOP GUN', metal: 'gold', icon: 'pow', desc: 'Dealt the most damage in the match' },
+  elims: { label: 'SHARPSHOOTER', metal: 'silver', icon: 'crit', desc: 'Most eliminations in the match' },
+  anchor: { label: 'TEAM ANCHOR', metal: 'silver', icon: 'anchor', desc: 'Dealt the most damage on their team' },
+  untouchable: { label: 'UNTOUCHABLE', metal: 'bronze', icon: 'shield', desc: 'Never got eliminated' },
+  survivor: { label: 'SURVIVOR', metal: 'bronze', icon: 'buoy', desc: 'Eliminated the fewest times' },
+};
+const ELIM_ORDER = ['mvp', 'topgun', 'elims', 'anchor', 'untouchable', 'survivor'];
+export const ELIM_TAGS = {
+  close: { id: 'close', label: 'DOWN TO THE WIRE', icon: 'stopwatch' },
+  shutout: { id: 'shutout', label: 'SHUTOUT', icon: 'wave' },
+};
+/**
+ * Elimination awards from the final stats: players [{ team, damage, splats (= eliminations), deaths (= times OUT), isSelf }].
+ * roundWins: [team0, team1] → match tags (a one-round margin, or a shutout).
+ */
+export function computeElimAwards(players = [], { win = true, roundWins = null } = {}) {
+  const P = players.map((p, i) => ({ i, team: p.team | 0, dmg: Math.max(0, +p.damage || 0), elims: Math.max(0, +(p.elims ?? p.splats) || 0), outs: Math.max(0, +p.deaths || 0), isSelf: !!p.isSelf }));
+  const by = P.map(() => []);
+  const give = (p, id, value) => { if (!by[p.i].some((a) => a.id === id)) by[p.i].push({ id, ...ELIM_AWARDS[id], value }); };
+  const maxOf = (k, arr = P) => (arr.length ? Math.max(...arr.map((p) => p[k])) : 0);
+  if (P.length) {
+    const md = maxOf('dmg');
+    const tops = md > 0 ? P.filter((p) => p.dmg === md) : [];
+    tops.forEach((p) => give(p, 'topgun', `${fmtInt(p.dmg)} damage`));
+    for (const t of [0, 1]) {
+      const team = P.filter((p) => p.team === t);
+      if (!team.length || team.some((p) => tops.includes(p))) continue;
+      const m = maxOf('dmg', team);
+      if (m > 0) team.filter((p) => p.dmg === m).forEach((p) => give(p, 'anchor', `${fmtInt(p.dmg)} damage`));
+    }
+    const me = maxOf('elims');
+    if (me > 0) P.filter((p) => p.elims === me).forEach((p) => give(p, 'elims', `${me} elim${me === 1 ? '' : 's'}`));
+    const active = P.filter((p) => p.dmg > 0 || p.elims > 0);
+    const zero = active.filter((p) => p.outs === 0);
+    if (zero.length && zero.length <= 3) zero.forEach((p) => give(p, 'untouchable', 'Never OUT'));
+    else if (!zero.length && active.length) {
+      const mo = Math.min(...active.map((p) => p.outs));
+      const s = active.filter((p) => p.outs === mo);
+      if (s.length === 1) give(s[0], 'survivor', `OUT ${mo}×`);
+    }
+    const self = P.find((p) => p.isSelf);
+    const selfTeam = self ? self.team : 0;
+    const wt = win ? selfTeam : 1 - selfTeam;
+    const mD = Math.max(1, md), mE = Math.max(1, me), mO = Math.max(1, maxOf('outs'));
+    const score = (p) => p.dmg / mD + 0.6 * (p.elims / mE) - 0.3 * (p.outs / mO);
+    const winners = P.filter((p) => p.team === wt && (p.dmg > 0 || p.elims > 0));
+    if (winners.length) {
+      const best = winners.reduce((b, p) => (score(p) > score(b) + 1e-9 || (Math.abs(score(p) - score(b)) < 1e-9 && p.dmg > b.dmg) ? p : b));
+      give(best, 'mvp', 'Top all-round score');
+    }
+    for (const list of by) list.sort((x, y) => ELIM_ORDER.indexOf(x.id) - ELIM_ORDER.indexOf(y.id));
+  }
+  const match = [];
+  if (Array.isArray(roundWins)) {
+    const [a, b] = roundWins.map((v) => v | 0);
+    const hi = Math.max(a, b), lo = Math.min(a, b);
+    if (hi > 0 && lo === 0) match.push({ ...ELIM_TAGS.shutout, value: `${hi}–0` });
+    else if (hi - lo === 1) match.push({ ...ELIM_TAGS.close, value: `${hi}–${lo}` });
+  }
+  return { byPlayer: by, match };
+}
+
 /** Big stamped medal for the local player's awards. */
 export function medalMarkup(aw, seed = 1) {
   return `<div class="iw-medal is-${aw.metal}" data-aw="${aw.id}" title="${aw.label} — ${aw.desc}">
@@ -184,11 +250,11 @@ export function awardBadge(aw) {
 
 // ================================================================================== ranks
 export const RANK_TIERS = [
-  { lv: 1, name: 'Fresh Recruit', cls: 'is-t0' },
-  { lv: 5, name: 'Turf Scrapper', cls: 'is-t1' },
-  { lv: 10, name: 'Ink Slinger', cls: 'is-t2' },
-  { lv: 20, name: 'Splat Veteran', cls: 'is-t3' },
-  { lv: 30, name: 'Tide Legend', cls: 'is-t4' },
+  { lv: 1, name: 'Rookie', cls: 'is-t0' },
+  { lv: 5, name: 'Field Scrapper', cls: 'is-t1' },
+  { lv: 10, name: 'Ball Slinger', cls: 'is-t2' },
+  { lv: 20, name: 'Bunker Veteran', cls: 'is-t3' },
+  { lv: 30, name: 'Field Legend', cls: 'is-t4' },
 ];
 export const rankTier = (level) => RANK_TIERS.reduce((acc, r, i) => (level >= r.lv ? i : acc), 0);
 /** Shield emblem with one pip per tier (tier 0..4). Colour via CSS (--rk). */
@@ -616,7 +682,7 @@ function previewFov(ctx) {
     wedgeEl.setAttribute('d', wedge(cur));
     let n = 0;
     tEls.forEach((g, i) => { const inside = Math.abs(T[i][0]) <= cur / 2 && T[i][1] <= R; g.classList.toggle('is-in', inside); if (inside) n++; });
-    if (n !== lastN) { lastN = n; cap.innerHTML = `<b>${n} of ${T.length}</b> squidkids in view`; }
+    if (n !== lastN) { lastN = n; cap.innerHTML = `<b>${n} of ${T.length}</b> players in view`; }
   };
   apply();
   return {
@@ -639,7 +705,7 @@ function previewQuality(ctx) {
       ['Pixel density', `up to ${(+q.pixelRatio || 1).toFixed(q.pixelRatio % 1 ? 2 : 1).replace(/0$/, '')}×`],
       ['Shadow map', `${q.shadowSize || 0}px`],
       ['Anti-aliasing', q.msaa ? `${q.msaa}× MSAA` : 'Off'],
-      ['Ink detail', `${Math.round((q.paintAtlas || 2048) / 1024)}K atlas`],
+      ['Paint detail', `${Math.round((q.paintAtlas || 2048) / 1024)}K atlas`],
       ['Ambient occlusion', q.ao ? 'On' : 'Off'],
       ['Particles', `${Math.round((q.particles ?? 1) * 100)}%`],
     ];
@@ -675,7 +741,7 @@ function previewBloom(ctx) {
       <g transform="translate(136 66) scale(.75)" style="color:#fff">${SPECIAL_ICONS.slam.replace('class="iw-ico "', 'x="0" y="0" width="64" height="64"')}</g>
       <rect x="1" y="1" width="318" height="178" rx="14" fill="none" stroke="${K}" stroke-width="3"/></svg><div class="iw-pv-cap"></div>` });
   const cap = el.querySelector('.iw-pv-cap');
-  const set = (v) => { el.classList.toggle('is-on', !!v); cap.innerHTML = v ? 'Bright ink and specials <b>glow</b>' : 'Glow <b>OFF</b>'; };
+  const set = (v) => { el.classList.toggle('is-on', !!v); cap.innerHTML = v ? 'Bright paint and specials <b>glow</b>' : 'Glow <b>OFF</b>'; };
   set(ctx.value);
   return { el, set };
 }
@@ -699,7 +765,7 @@ function previewMinimap(ctx) {
       <path class="iw-fa" d="M238 118 q10 -6 20 0 q6 5 -4 10 q-10 4 -16 -2z M244 140 q9 -5 16 2 q4 6 -6 8 q-9 1 -10 -10z"/><path class="iw-fb" d="M280 112 q9 -4 16 2 q4 6 -6 9 q-9 2 -10 -11z M276 140 q10 -6 20 1 q5 6 -6 10 q-11 2 -14 -11z"/>
       <circle cx="252" cy="132" r="4" fill="#fff" stroke="${K}" stroke-width="2"/></g>`) + '<div class="iw-pv-cap"></div>' });
   const cap = el.querySelector('.iw-pv-cap');
-  const set = (v) => { el.classList.toggle('is-on', !!v); cap.innerHTML = v ? 'Turf minimap <b>in the corner</b>' : 'Minimap <b>hidden</b> — hold TAB for the big map'; };
+  const set = (v) => { el.classList.toggle('is-on', !!v); cap.innerHTML = v ? 'Field minimap <b>in the corner</b>' : 'Minimap <b>hidden</b> — hold TAB for the big map'; };
   set(ctx.value);
   return { el, set };
 }
@@ -856,7 +922,7 @@ function previewLength(ctx) {
     v = +v || 180;
     num.textContent = `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}`;
     arc.setAttribute('stroke-dasharray', `${((v / max) * 100).toFixed(1)} 100`);
-    cap.innerHTML = v < 120 ? 'A quick <b>sprint</b> — every second counts' : 'The full <b>turf war</b> — room for comebacks';
+    cap.innerHTML = v < 120 ? 'A quick <b>sprint</b> — every second counts' : 'The full <b>match</b> — room for comebacks';
     num.classList.remove('is-pop'); void num.offsetWidth; num.classList.add('is-pop'); // eslint-disable-line no-void
   };
   set(ctx.value);
@@ -989,8 +1055,8 @@ export function outfitIcon(o = {}) {
     <path d="M11.5 59 L25.5 59 M30.5 59 L44.5 59" stroke="${sole}" stroke-width="3" stroke-linecap="round"/></svg>`;
 }
 
-// ================================================================================== online: splashtags, ink band, drips
-// Splashtag banner art: one of seven illustrated patterns in the owner's team ink (classes .iw-tf0..3 read --tc,
+// ================================================================================== online: player tags, paint band, drips
+// Player-tag banner art: one of seven illustrated patterns in the owner's team ink (classes .iw-tf0..3 read --tc,
 // --tc-dark, --tc-light, --tc-deep off the tag, so a team change recolours it without rebuilding). 240×64, sliced.
 export const TAG_KINDS = 7;
 export function tagArt(seed = 1) {
@@ -1013,7 +1079,7 @@ export function tagArt(seed = 1) {
     const cx = 170 + R() * 40, cy = 64;
     for (let i = 0; i < 16; i += 2) { const a0 = Math.PI + (i / 16) * Math.PI, a1 = Math.PI + ((i + 1) / 16) * Math.PI; b += `<path class="iw-tf2" d="M${f1(cx)} ${cy} L${f1(cx + Math.cos(a0) * 320)} ${f1(cy + Math.sin(a0) * 320)} L${f1(cx + Math.cos(a1) * 320)} ${f1(cy + Math.sin(a1) * 320)} Z" opacity=".55"/>`; }
     b = `<rect class="iw-tf0" width="240" height="64"/>${b}<circle class="iw-tf1" cx="${f1(cx)}" cy="${cy}" r="16"/>`;
-  } else if (kind === 4) { // squid school
+  } else if (kind === 4) { // mask crowd
     for (let i = 0; i < 9; i++) b += sq(14 + i * 27 + R() * 8, 10 + (i % 2) * 34 + R() * 10, 0.36 + R() * 0.12, -30 + R() * 60, i % 3 ? 'iw-tf0' : 'iw-tf2');
     b = `<rect class="iw-tf1" width="240" height="64"/>${b}`;
   } else if (kind === 5) { // zigzag

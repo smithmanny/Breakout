@@ -410,11 +410,14 @@ function makeBlobMaterial() {
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>
         attribute vec4 aShape;
+        varying vec3 vIwO;
+        varying float vIwPh;
         vec3 iwP;`)
       .replace('#include <beginnormal_vertex>', `
         vec3 objectNormal;
         {
           vec3 p = position, n = normal;
+          vIwO = p; vIwPh = aShape.z;
           float back = step(p.z, 0.0);
           float u = clamp(-p.z, 0.0, 1.0);
           float tau = mix(1.0, 1.0 - 0.42 * pow(u, 1.3), back);       // tail taper (soft, rounded tip)
@@ -426,6 +429,18 @@ function makeBlobMaterial() {
         }`)
       .replace('#include <begin_vertex>', 'vec3 transformed = iwP;');
     sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vIwO;
+        varying float vIwPh;`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          // paintball shell: two-tone halves (team colour + a deeper shade) split by a thin light seam; the seam axis
+          // turns with the ball's spin (aShape.z runs on with its age)
+          vec3 iwAx = normalize(vec3(sin(vIwPh), cos(vIwPh * 1.3), sin(vIwPh * 0.7 + 1.0)));
+          float iwD = dot(normalize(vIwO), iwAx);
+          diffuseColor.rgb *= mix(1.0, 0.6, smoothstep(-0.03, 0.03, iwD));
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), (1.0 - smoothstep(0.04, 0.09, abs(iwD))) * 0.6);
+        }`)
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
         {
           float iwNear = smoothstep(0.55, 1.6, length(vViewPosition));
@@ -438,7 +453,7 @@ function makeBlobMaterial() {
           totalEmissiveRadiance += vColor.rgb * (0.16 + 0.55 * iwRim);
         }`);
   };
-  mat.customProgramCacheKey = () => 'iw-blob-3';
+  mat.customProgramCacheKey = () => 'iw-blob-4';
   return mat;
 }
 
@@ -962,7 +977,7 @@ export class Projectiles {
     if (hit.hit && !victim && !bossHit) {
       _v2.copy(hit.point).addScaledVector(hit.normal, 0.12);
       area += G.paint.splat(_v2, w.impactRadius * (0.6 + 0.4 * charge), a.team, { seed: Math.random(), stretch: dir, stretchAmt: 0.6 });
-      G.fx?.burst(hit.point, hit.normal, a.color, { count: 10, speed: 4, size: 0.09, paint: false });
+      G.fx?.ballSplat?.(hit.point, hit.normal, a.color, dir, { size: 1.25, count: 8, flecks: 4 });
       if (a.isLocal || a._nearCamera()) G.audio?.play('ink_hit_wall', { pos: hit.point, volume: 0.6 });
     }
     {
@@ -1164,7 +1179,10 @@ export class Projectiles {
           if (p.type === 'drop') dmg = lerp(p.damage, p.dmgFar, clamp(p.start.distanceTo(_v) / 7, 0, 1));
           if (p.vol) { if (p.vol.hits.includes(e)) dmg = 0; else p.vol.hits.push(e); }
           if (dmg > 0) this.applyHit(p.owner, e, dmg, p.wid || p.type);
-          G.fx?.burst(_v, _v2.copy(p.vel).normalize().negate(), p.owner.color, { count: 6, speed: 3, size: 0.07 });
+          // paintball breaking on the body at the exact hit point (the bright splat + shell bits)
+          if (G.fx?.ballHit) G.fx.ballHit(_v, _v2.copy(p.vel).setY(0).negate().normalize(), p.owner.color, dmg || p.damage);
+          else G.fx?.burst(_v, _v2.copy(p.vel).normalize().negate(), p.owner.color, { count: 6, speed: 3, size: 0.07 });
+          _v2.copy(p.vel).normalize().negate();
           if (p.type !== 'blast') emit('weapon:impact', { pos: _v.clone(), normal: _v2.clone(), team: p.team, kind: p.type === 'drop' || p.type === 'slosh' ? 'drop' : 'shot', radius: p.radius * 0.5, victim: e });
           if (p.type === 'blast') this._blastBurst(p, _v, e);
           if (p.type === 'slosh' && p.head) this._sloshSplash(p, _v, e);
@@ -1234,7 +1252,8 @@ export class Projectiles {
     if (p.type !== 'blast') emit('weapon:impact', { pos: hit.point.clone(), normal: hit.normal.clone(), team: p.team, kind: p.type === 'drop' || p.type === 'slosh' ? 'drop' : 'shot', radius: rad });
     const near = p.owner.isLocal || G.camera.position.distanceToSquared(hit.point) < 22 * 22;
     if (near) {
-      G.fx?.burst(hit.point, hit.normal, p.owner.color, { count: p.type === 'blast' ? 14 : 5, speed: p.type === 'blast' ? 5 : 3, size: 0.07, paint: false });
+      if (p.type === 'blast' || !G.fx?.ballSplat) G.fx?.burst(hit.point, hit.normal, p.owner.color, { count: p.type === 'blast' ? 14 : 5, speed: p.type === 'blast' ? 5 : 3, size: 0.07, paint: false });
+      else G.fx.ballSplat(hit.point, hit.normal, p.owner.color, _dir.copy(p.vel).normalize());
       if (Math.random() < (p.type === 'shot' ? 0.45 : 1)) G.audio?.play(p.type === 'blast' ? 'splat_big' : 'splat_small', { pos: hit.point, volume: p.type === 'shot' ? 0.35 : 0.6 });
     }
     if (p.type === 'blast') this._blastBurst(p, hit.point, null);
@@ -1419,9 +1438,10 @@ export class Projectiles {
     this.arcRing.scale.setScalar(1 + Math.sin(G.time * 8) * 0.06);
   }
 
-  // Every projectile = a glossy teardrop head (tail length from its speed, liquid wobble, a fat "squirt" pop as it
-  // leaves the muzzle) + a string of satellite droplets that sway behind it and close up as it slows. Blaster balls
-  // swell and jiggle in the last moments before their mid-air burst.
+  // Every projectile = a small glossy paintball (two-tone shell with a seam that spins with the ball, clear-coat
+  // highlight, a quick pop to size as it leaves the barrel; the faint motion streak behind it is fxHooks → fx.streak).
+  // The shape attributes still allow the old teardrop / satellite looks (LOOK_* tail/wob/sats), all off for paintballs.
+  // Launcher balls swell and pulse in the last moments before their mid-air burst.
   _draw() {
     let n = 0;
     const B = this.blobs, shp = this.blobShape.array;
