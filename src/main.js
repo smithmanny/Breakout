@@ -78,6 +78,14 @@ class Game {
     const camera = (G.camera = new THREE.PerspectiveCamera(this.settings.fov, innerWidth / innerHeight, 0.15, 6500));
     camera.position.set(0, 40, -60);
     this.R.setScene(scene, camera);
+    // a lost + restored WebGL context (driver reset, GPU switch; often on software GL) empties every render target:
+    // three re-uploads plain textures by itself, but the GPU-baked ones must be baked again — the texture library (else
+    // the whole arena renders black) and the sky's env map. (Paint on the field is lost; it is only cosmetic.)
+    this.R.renderer.domElement.addEventListener('webglcontextrestored', () => {
+      console.warn('[inkwave] WebGL context restored — re-baking GPU textures');
+      try { this.texlib?.rebake?.(); } catch (e) { console.warn('[inkwave] texlib rebake', e); }
+      try { if (G.env?.setTheme) { G.env.setTheme(G.env.theme || this.theme); if (G.env.envMap) G.scene.environment = G.env.envMap; } } catch (e) { console.warn('[inkwave] env rebake', e); }
+    });
     this.input = G.input = new Input(this.R.renderer.domElement);
     this.input.onKey = (e, repeat) => this._onKey(e, repeat);
     this.input.onUnlock = () => this._onPointerUnlock();
@@ -445,11 +453,11 @@ class Game {
       // (elimination: the HUD's own kill feed renders every 'eliminated' — "Viper ⟶ Blotch OUT")
       if (attacker?.isLocal) {
         G.audio?.play('splat_enemy', { volume: 0.9 });
-        if (!elim) this.hud?.feed({ text: `You splatted ${victim.name}!`, color: G.teamHex[local.team], kind: 'kill' });
+        if (!elim) this.hud?.feed({ text: `You took out ${victim.name}!`, color: G.teamHex[local.team], kind: 'kill' });
       } else if (victim.isLocal) {
         G.audio?.play('splatted_self');
         G.audio?.duck?.(0.45, 2.2);
-        const by = attacker ? attacker.name : cause === 'water' ? 'the sea' : 'enemy paint';
+        const by = attacker ? attacker.name : cause === 'water' ? 'the sea' : 'enemy fire';
         // elimination: no respawn this round (respawn 0: the HUD shows no countdown); the camera moves on to a teammate
         this.hud?.showSplatted({ by, byColor: attacker ? G.teamHex[attacker.team] : '#6fd0ff', respawn: elim ? 0 : PLAYER.respawnTime, out: elim });
         this.rig.mode = 'spectate';
@@ -457,9 +465,9 @@ class Game {
         this.rig.lookAt.copy(victim.pos);
       } else if (victim.team === local?.team) {
         G.audio?.play('ally_splatted', { volume: 0.5 });
-        if (!elim) this.hud?.feed({ text: `${victim.name} was splatted${attacker ? ' (' + attacker.name + ')' : ''}`, color: G.teamHex[victim.enemyTeam], kind: 'death' });
+        if (!elim) this.hud?.feed({ text: `${victim.name} was taken out${attacker ? ' (' + attacker.name + ')' : ''}`, color: G.teamHex[victim.enemyTeam], kind: 'death' });
       } else if (attacker && attacker.team === local?.team && !elim) {
-        this.hud?.feed({ text: `${attacker.name} splatted ${victim.name}`, color: G.teamHex[attacker.team], kind: 'ally' });
+        this.hud?.feed({ text: `${attacker.name} took out ${victim.name}`, color: G.teamHex[attacker.team], kind: 'ally' });
       }
     });
     on('respawn', ({ actor }) => {
@@ -1156,7 +1164,7 @@ class Game {
       else if (a.superJumpState) prompt = null;
       else if (a.specialReady() && (this._hints.specialT = (this._hints.specialT || 0) + dt) > 2) prompt = pad ? 'Special ready! Press {Y}' : 'Special ready! Press [F]';
       else if (m.elim && m.round === 1 && m.roundPhase === 'live' && m.roundTime > ROUNDS.roundTime - 7 && !this._hints.sprinted) prompt = pad ? 'Hold {LT} to sprint (no firing) · {X} reload · {RB} grenade' : 'Hold [SHIFT] to sprint (no firing) · [R] reload · [E] grenade';
-      else if (!m.elim && m.duration - m.time < 8 && !this._hints.shot) prompt = 'Paint the ground — most turf wins!';
+      else if (!m.elim && m.duration - m.time < 8 && !this._hints.shot) prompt = 'Hit HULLBREAKER — aim for the glowing weak points!';   // (Boss Battle: the only non-elimination match)
       if (!a.specialReady()) this._hints.specialT = 0;
       if (a.intent.fire) this._hints.shot = true;
       if (a.sprinting) this._hints.sprinted = true;

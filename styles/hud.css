@@ -1205,7 +1205,7 @@ body.iw-dio-on .iw-xh, body.iw-dio-on .iw-mks, body.iw-dio-on .iw-map, body.iw-d
 .bk-fs__tables { display: grid; grid-template-columns: 1fr 1fr; gap: calc(var(--u) * 1.4); width: 100%; margin-top: calc(var(--u) * .4); }
 .bk-ft { display: flex; flex-direction: column; gap: calc(var(--u) * .3); --tc: var(--my); --tc-rgb: var(--my-rgb); --tc-light: var(--my-light); }
 .bk-ft--th { --tc: var(--th); --tc-rgb: var(--th-rgb); --tc-light: var(--th-light); }
-.bk-ft__head, .bk-ft__row { display: grid; grid-template-columns: 1fr repeat(4, calc(var(--u) * 4.2)); align-items: center; gap: calc(var(--u) * .3); }
+.bk-ft__head, .bk-ft__row { display: grid; grid-template-columns: 1fr repeat(4, max(calc(var(--u) * 4.2), 3.3rem));   /* (floor: small windows keep 4-digit damage apart) */ align-items: center; gap: calc(var(--u) * .3); }
 .bk-ft__head { padding: 0 calc(var(--u) * .8) calc(var(--u) * .2); font: 900 calc(var(--fs-xs) * .85) / 1 'Rubik', sans-serif; letter-spacing: .06em; color: rgba(255, 255, 255, .6); text-align: center;
   animation: iw-in-up .45s var(--out) backwards 1.5s; }
 .bk-ft__team { display: flex; align-items: center; gap: .5em; text-align: left; font: italic 900 var(--fs-m) / 1 'Rubik', sans-serif; letter-spacing: .08em; color: #fff; }

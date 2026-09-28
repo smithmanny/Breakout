@@ -1039,6 +1039,9 @@ export class ScreenFX {
       else if (t < 0.5) s.flood = 1;
       else s.flood = lerp(1, 0.17, easeOut((t - 0.5) / 0.8));
       s.floodDrip = Math.min(0.4, t < 0.5 ? 0.05 : 0.05 + (t - 0.5) * 0.08);
+      // elimination: out until the next round (up to a minute of spectating teammates) — once the OUT! moment has
+      // landed, the dripping frame and the grey wash clear so the rest of the round is watchable
+      if (t > 3.2 && this.G.match?.elim) s.floodMode = 'fadeout';
     } else if (s.floodMode === 'reveal') {
       // own-colour ink covers everything, then an iris opens from the centre with a bright rim
       s.flood = 1;

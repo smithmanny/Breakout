@@ -37,7 +37,7 @@ const NETMOCK = typeof location !== 'undefined' && new URLSearchParams(location.
 const CODE_ABC = 'BCEFGHJKLMNPQRTUVXYZ23456789';   // as session.js: no O/0, I/1, and no W/A/S/D (menu keys)
 const TEAM_LABEL = ['ALPHA', 'BRAVO'];
 const EMOTES = [
-  { id: 'booyah', label: 'BOOYAH!', icon: 'booyah', key: '1', dir: 'up' },
+  { id: 'booyah', label: 'LET\u2019S GO!', icon: 'booyah', key: '1', dir: 'up' },   // (id kept: it is on the wire)
   { id: 'wave', label: 'HEY!', icon: 'hand', key: '2', dir: 'right' },
   { id: 'dance', label: 'DANCE', icon: 'note', key: '3', dir: 'down' },
   { id: 'flex', label: 'FLEX', icon: 'flex', key: '4', dir: 'left' },

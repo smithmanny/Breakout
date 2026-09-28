@@ -32,7 +32,7 @@ async function main() {
   const say = (...a) => console.log('[rounds-sim]', ...a);
   say(`${N} clients, lag ${LAG} ± ${JIT} ms, roster ${roster.map((r) => `${r.nid}:${r.owner}${r.bot ? '/bot' : ''}:t${r.team}`).join(' ')}`);
 
-  const workers = new Map(), views = new Map(), last = new Map();
+  const workers = new Map(), views = new Map(), last = new Map(), queues = new Map();
   let hostId = ids[0];
   const gone = new Set();
   let readyN = 0;
@@ -40,9 +40,18 @@ async function main() {
     if (gone.has(to)) return;
     // in order per link (like TCP): the jitter never reorders messages between the same two sockets — and the relay's
     // 'leave' for a player reaches everyone after whatever that player sent before it went
+    // (a per-link queue: two timers due in the same millisecond but armed with different delays may fire in either
+    // order, so each timer flushes everything queued on its link up to and including its own message)
     const k = from + '>' + to, t = Math.max(last.get(k) || 0, Date.now() + LAG + Math.random() * JIT);
     last.set(k, t);
-    setTimeout(() => { if (!gone.has(to)) workers.get(to)?.postMessage(raw || { t: 'msg', from, json }); }, t - Date.now());
+    const q = queues.get(k) || (queues.set(k, []), queues.get(k));
+    const item = { msg: raw || { t: 'msg', from, json } };
+    q.push(item);
+    setTimeout(() => {
+      const i = q.indexOf(item);
+      if (i < 0) return;
+      for (const it of q.splice(0, i + 1)) if (!gone.has(to)) workers.get(to)?.postMessage(it.msg);
+    }, t - Date.now());
   };
   let done;
   const finished = new Promise((r) => (done = r));
@@ -241,8 +250,9 @@ async function client() {
   log(`ready (${id === hostId ? 'host' : 'follower'})`);
   // everyone starts on the relay's word once all clients are up (the game: the host's 'go')
   await new Promise((r) => parentPort.on('message', (msg) => { if (msg.t === 'go') r(); }));
-  m.start();
-  m.setState('playing');                           // (skip the 4 s intro)
+  // (like main.netMatchGo: a follower whose host 'st' messages beat the relay's 'go' is already under way — starting
+  // again would drop it back into a 4 s intro behind everyone else)
+  if (m.state === 'init') { m.start(); m.setState('playing'); }   // (skip the 4 s intro)
   let prev = performance.now(), viewT = 0;
   setInterval(() => {
     const t = performance.now(), dt = Math.min(0.05, (t - prev) / 1000);

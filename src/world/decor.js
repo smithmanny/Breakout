@@ -41,28 +41,18 @@ function merge(list) {
   const clean = list.map((g) => { const x = g.index ? g.toNonIndexed() : g; for (const k of Object.keys(x.attributes)) if (!['position', 'normal', 'color', 'uv'].includes(k)) x.deleteAttribute(k); return x; });
   return mergeGeometries(clean, false);
 }
-// Original squid emblem (white on transparent) — mantle with fins, round head, four tentacles, eye holes.
+// BREAKOUT emblem (white on transparent): the logo's marker reticle — a ring, four ticks crossing it and a centre dot.
 function emblemCanvas(size = 256, ring = true) {
   const cv = document.createElement('canvas'); cv.width = cv.height = size;
   const x = cv.getContext('2d'), c = size / 2, s = size / 256;
   x.clearRect(0, 0, size, size);
   if (ring) { x.fillStyle = '#fff'; x.beginPath(); x.arc(c, c, 118 * s, 0, TAU); x.fill(); x.globalCompositeOperation = 'destination-out'; x.beginPath(); x.arc(c, c, 104 * s, 0, TAU); x.fill(); x.globalCompositeOperation = 'source-over'; }
-  x.fillStyle = '#fff'; x.beginPath();
-  const S = 78 * s, cy = c + 6 * s;
-  x.moveTo(c, cy - S * 1.0);
-  x.bezierCurveTo(c + 0.35 * S, cy - 0.7 * S, c + 0.45 * S, cy - 0.45 * S, c + 0.75 * S, cy - 0.25 * S);
-  x.bezierCurveTo(c + 0.55 * S, cy - 0.1 * S, c + 0.5 * S, cy, c + 0.48 * S, cy + 0.2 * S);
-  x.bezierCurveTo(c + 0.46 * S, cy + 0.45 * S, c + 0.3 * S, cy + 0.5 * S, c + 0.32 * S, cy + 0.8 * S);
-  x.lineTo(c + 0.16 * S, cy + 0.62 * S); x.lineTo(c + 0.08 * S, cy + 0.85 * S); x.lineTo(c, cy + 0.62 * S);
-  x.lineTo(c - 0.08 * S, cy + 0.85 * S); x.lineTo(c - 0.16 * S, cy + 0.62 * S); x.lineTo(c - 0.32 * S, cy + 0.8 * S);
-  x.bezierCurveTo(c - 0.3 * S, cy + 0.5 * S, c - 0.46 * S, cy + 0.45 * S, c - 0.48 * S, cy + 0.2 * S);
-  x.bezierCurveTo(c - 0.5 * S, cy, c - 0.55 * S, cy - 0.1 * S, c - 0.75 * S, cy - 0.25 * S);
-  x.bezierCurveTo(c - 0.45 * S, cy - 0.45 * S, c - 0.35 * S, cy - 0.7 * S, c, cy - S);
-  x.fill();
-  x.globalCompositeOperation = 'destination-out';
-  for (const sx of [-1, 1]) { x.beginPath(); x.ellipse(c + sx * 0.2 * S, cy + 0.05 * S, 0.13 * S, 0.17 * S, 0, 0, TAU); x.fill(); }
-  x.globalCompositeOperation = 'source-over';
-  for (const sx of [-1, 1]) { x.beginPath(); x.arc(c + sx * 0.2 * S + 0.03 * S, cy + 0.09 * S, 0.07 * S, 0, TAU); x.fill(); }
+  x.strokeStyle = '#fff'; x.fillStyle = '#fff'; x.lineCap = 'round';
+  x.lineWidth = 20 * s; x.beginPath(); x.arc(c, c, 56 * s, 0, TAU); x.stroke();
+  x.beginPath();
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { x.moveTo(c + dx * 40 * s, c + dy * 40 * s); x.lineTo(c + dx * 88 * s, c + dy * 88 * s); }
+  x.stroke();
+  x.beginPath(); x.arc(c, c, 14 * s, 0, TAU); x.fill();
   return cv;
 }
 
@@ -89,7 +79,7 @@ void main(){
   float pool = smoothstep(0.58, 0.5, r + (n - 0.5) * 0.06);
   vec3 ink = uColor * (0.42 + 0.3 * n) + vec3(0.9) * pow(n, 7.0) * 1.4;
   base = mix(base, ink, pool);
-  // emblem (white squid) in the pool
+  // emblem (white reticle) in the pool
   vec2 eu = q / 0.46 * 0.5 + 0.5;
   float em = (eu.x > 0.0 && eu.x < 1.0 && eu.y > 0.0 && eu.y < 1.0) ? texture2D(uEmblem, eu).a : 0.0;
   base = mix(base, vec3(1.0) * (0.9 + 0.2 * uPulse), em * pool);
