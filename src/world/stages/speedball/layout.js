@@ -8,7 +8,7 @@ import { SURF } from './surfaces.js';
 // black safety netting, dressed with inflatable bunkers. Each team starts at its start station at the back of its end
 // (Alpha −Z, Bravo +Z); the field is a 180° turn of itself, so each team has its snake on its own left (+X for Alpha)
 // and the dorito side on its right, and meets the other team's dorito side across the 50.
-//   • snake side (+X, Alpha): a long low snake (3 pinched segments, 1.0 m — hop on, or play it low) from the corner
+//   • snake side (+X, Alpha): a long low snake (four strapped segments, 1.0 m — hop on, or play it low) from the corner
 //     can to near the 50, a tall brick behind it and the "50 can" at the end
 //   • centre lane: the home brick in front of the start station, a mini-A, a wide low cake (climbable), the centre X
 //     (a 1.5 m tube crossed by two 1.25 m arms you can hop onto) with a low cake either side of it
@@ -30,7 +30,7 @@ const K = {
   red: '#d4382c', yellow: '#efbd2e', blue: '#2b5cb8', white: '#ecebe5', black: '#2c2e33', orange: '#e86f25', teal: '#1f9a96',
 };
 
-// ---- bunker kit (every piece: nylon surface, max bevel, tagged for props.js / the thumbnail)
+// ---- bunker kit (every piece: nylon surface, soft body with the largest bevel it allows, tagged by kind)
 const nylon = (color, tag, o = {}) => ({ color, pattern: SURF.nylon, bevel: 9, round: true, tag, ...o });
 // rounded box ("brick" / "snake" segment / "temple"): centre (cx, cz), w across (local x), d along (local z)
 const pillow = (cx, cz, w, d, h, deg, color, tag = 'bunker', o = {}) => O(cx, cz, w, d, 0, h, deg, nylon(color, tag, o));

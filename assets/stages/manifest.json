@@ -39,5 +39,15 @@
       "sm": "assets/stages/cargo-dusk-sm.webp"
     }
   },
-  "generated": "2026-09-27T20:11:01.803Z"
+  "generated": "2026-09-27T20:11:01.803Z",
+  "speedball": {
+    "day": {
+      "src": "assets/stages/speedball-day.webp",
+      "sm": "assets/stages/speedball-day-sm.webp"
+    },
+    "dusk": {
+      "src": "assets/stages/speedball-dusk.webp",
+      "sm": "assets/stages/speedball-dusk-sm.webp"
+    }
+  }
 }

@@ -56,6 +56,9 @@ const SHOTS = {
   // Cargo Terminal — over the gate-side shoulder of the Alpha base looking up the turned berth: K7's portal over the
   // Landing, the stacks either side of the truck lane, CORAL MAXIMA's bow (the layout's own `art` camera, in world space)
   cargo: { pos: [11.3, 26, -64.07], look: [-0.98, 4, 5.57], fov: 60, t: 40, palette: 'tangerine-cobalt' },
+  // Breakpoint Field — from over the Alpha snake-side corner looking up the field: the snake along the wire, the centre
+  // X, the Bravo pits behind the far net, the suspension bridge across the bay
+  speedball: { pos: [23, 10.5, -33], look: [-2, 0.3, 1], fov: 58, t: 40, palette: 'tangerine-cobalt' },
 };
 // A stage missing from the table gets a generic 3/4 aerial from its layout bounds (computed in the page).
 const FALLBACK = { pos: null, look: null, fov: 60, t: 40, palette: 'tangerine-cobalt' };
