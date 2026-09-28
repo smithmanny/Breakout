@@ -216,7 +216,7 @@ export class Actor {
     // special meter fills from damage dealt (online, a remote attacker's own client credits it when it sends the hit)
     if (attacker && attacker !== this && attacker.team !== this.team) {
       attacker.stats.damage = (attacker.stats.damage || 0) + applied;
-      if (!attacker.remote) attacker.addSpecialPoints(applied);
+      if (!attacker.remote) attacker.addSpecialPoints?.(applied);
     }
     this.hp -= amount;
     this.lastDamage = 0;
