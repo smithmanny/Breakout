@@ -3,7 +3,9 @@
 //   GET /room/<CODE>?name=<name>&create=1&v=<proto>   (WebSocket upgrade) → the Room object for that code
 //   GET /health                                          → "ok"
 //
-// A Room is a dumb, fast fan-out: game payloads are forwarded as raw strings (never parsed here). The room only
+// A Room is a fast fan-out. Game payloads are JSON-parsed and checked against the wire rules in src/net/validate.js
+// (known message kinds only; host-only kinds only from the host; types, lengths, enums, looks, hits; match actors only
+// from the client that owns them) and anything malformed is dropped, never forwarded. The room also
 // tracks membership (id, name, join order), elects the host (the oldest member), and refuses joins that can't work
 // (unknown code, full, match in progress). Wire format, client → room:
 //   "b|<payload>"          broadcast to everyone else          "s|<toId>|<payload>"   to one member
@@ -15,6 +17,7 @@
 //   {"t":"welcome","id","host","members":[{id,name}]}           {"t":"join","m":{id,name}}
 //   {"t":"leave","id","host"}                                   {"t":"err","e":"…"} (then close)
 import { DurableObject } from 'cloudflare:workers';
+import { cleanMessage, Budget } from '../../src/net/validate.js';   // the same wire rules the clients apply (docs/NET.md, Hostile clients)
 import { handleShop } from './shop.js';   // cosmetics shop API (/shop/*): see docs/MONETIZATION.md
 
 const PROTO = 1, MAX = 8;
@@ -53,6 +56,8 @@ export class Room extends DurableObject {
     this.silentMatch = +env?.SILENT_MATCH_MS > 0 ? +env.SILENT_MATCH_MS : SILENT_MATCH;
     this.seen = new Map();   // ws → last message time (in memory: a busy room never hibernates; a quiet one has the pings)
     this.rate = new Map();   // ws → { t: window start, n: messages in it, strikes }
+    this.nidOwner = new Map();   // match actor id (nid) → owning member id, learned from the host's validated 'start' (in memory only)
+    this.hitBudget = new Budget(30, 40);   // per sender: hits per second
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
     // hibernation: rebuild the join counter from surviving sockets
     for (const ws of this.ctx.getWebSockets()) { const a = ws.deserializeAttachment(); if (a && a.seq >= this.seq) this.seq = a.seq + 1; }
@@ -113,22 +118,55 @@ export class Room extends DurableObject {
     if (++r.n > RATE * 3 || r.strikes >= BURST_STRIKES) { try { ws.close(4008, 'Too many messages'); } catch { /* gone */ } this._gone(ws); return; }
     const c = msg.charCodeAt(0);
     if (c === 98 /* b */ && msg.charCodeAt(1) === 124) {
-      const out = 'm|' + me.id + '|' + msg.slice(2);
+      const body = this._vet(me.id, msg.slice(2), now);
+      if (body === null) return;
+      const out = 'm|' + me.id + '|' + body;
       for (const s of this.ctx.getWebSockets()) if (s !== ws) try { s.send(out); } catch { /* closing */ }
       return;
     }
     if (c === 115 /* s */ && msg.charCodeAt(1) === 124) {
       const k = msg.indexOf('|', 2);
       if (k < 0) return;
-      const to = msg.slice(2, k), out = 'm|' + me.id + '|' + msg.slice(k + 1);
+      const to = msg.slice(2, k), body = this._vet(me.id, msg.slice(k + 1), now);
+      if (body === null) return;
+      const out = 'm|' + me.id + '|' + body;
       for (const s of this.ctx.getWebSockets()) { const a = s.deserializeAttachment(); if (a && a.id === to) { try { s.send(out); } catch { /* closing */ } break; } }
       return;
     }
     if (c === 123 /* { */) {
       let o; try { o = JSON.parse(msg); } catch { return; }
       if (o.t === 'ping') ws.send(JSON.stringify({ t: 'pong', c: o.c }));
-      else if (o.t === 'lock' && this.host() === me.id) this.locked = !!o.v;
+      else if (o.t === 'lock' && this.host() === me.id) { this.locked = !!o.v; if (!this.locked) this.nidOwner.clear(); }
     }
+  }
+
+  // Decide what a game payload from `from` may say. Returns the string to forward (rewritten when the checks cleaned it) or null.
+  _vet(from, payload, now) {
+    let d;
+    try { d = JSON.parse(payload); } catch { return null; }
+    const host = this.host();
+    const c = cleanMessage(d, from === host);
+    if (!c) return null;
+    let rewrite = c !== d;   // (cleaners that rebuild the message return a new object: forward that, not the raw text)
+    switch (c.k) {
+      case 'start':
+        this.nidOwner.clear();
+        for (const r of c.roster) this.nidOwner.set(r.nid, r.owner);
+        break;
+      case 'hit': case 'bhit': {
+        if (!this.hitBudget.take(from, 1, now / 1000)) return null;
+        const o = this.nidOwner.get(c.a);
+        if (this.nidOwner.size && o !== from) return null;   // you can only hit as a squidkid you own
+        break;
+      }
+      case 't':
+        if (this.nidOwner.size && c.a) {
+          const keep = c.a.filter((s) => this.nidOwner.get(s[0]) === from);   // snapshots only for squidkids the sender owns
+          if (keep.length !== c.a.length) { c.a = keep; rewrite = true; }
+        }
+        break;
+    }
+    return rewrite ? JSON.stringify(c) : payload;
   }
 
   async webSocketClose(ws) { this._gone(ws); }
@@ -141,8 +179,9 @@ export class Room extends DurableObject {
     a.gone = true;
     try { ws.serializeAttachment(a); } catch { /* already closed */ }
     const host = this.host();
+    for (const [nid, o] of this.nidOwner) if (o === a.id) this.nidOwner.set(nid, host);   // the host adopts a leaver's squidkids (as the clients do)
     const out = JSON.stringify({ t: 'leave', id: a.id, host });
     for (const m of this.members()) try { m.ws.send(out); } catch { /* closing */ }
-    if (!this.members().length) this.locked = false;
+    if (!this.members().length) { this.locked = false; this.nidOwner.clear(); }
   }
 }

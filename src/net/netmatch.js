@@ -22,7 +22,7 @@
 import * as THREE from 'three';
 import { G, emit, on } from '../core/ctx.js';
 import { PLAYER, WEAPONS, WEAPON_ORDER, validWeapon, mapNoBots } from '../config.js';
-import { Budget, damageCap, reachOf } from './validate.js';
+import { Budget, damageCap, reachOf, HIT_ANY_MAX } from './validate.js';
 import { BotBrain } from '../game/bots.js';
 import { Boss } from '../boss/boss.js';
 
@@ -204,7 +204,7 @@ export class NetMatch {
     switch (d.k) {
       case 't': this._tick(from, d); break;
       case 'hit': this._hit(from, d); break;
-      case 'bhit': if (this.isHost && this._shooterOk(from, d.a, d.d, 'boss')) this.match?.boss?.remoteHit(d); break;
+      case 'bhit': if (this.isHost && Number.isInteger(d.a) && d.d >= 0 && d.d <= 600 && this._shooterOk(from, d.a, d.d, 'boss')) this.match?.boss?.remoteHit(d); break;
       case 'st': if (from === this.s.hostId) this._hostState(d); break;
       case 'res': if (from === this.s.hostId) this._result(d); break;
       case 'end': if (from === this.s.hostId) G.game?.netMatchEnd?.(); break;
@@ -657,6 +657,7 @@ export class NetMatch {
   }
 
   _hit(from, d) {
+    if (!Number.isInteger(d.v) || !Number.isInteger(d.a) || !(d.d >= 0 && d.d <= HIT_ANY_MAX) || typeof d.w !== 'string') return;   // (session.js already cleaned it: this is the last line)
     const v = this.byNid.get(d.v), atk = this.byNid.get(d.a);
     if (!v || v.remote || !v.alive || !atk || atk.team === v.team) return;
     if (!this._shooterOk(from, d.a, d.d, d.w)) return;

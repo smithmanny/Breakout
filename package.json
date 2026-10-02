@@ -9,6 +9,7 @@
     "smoke": "./tools/smoke.sh",
     "net-test": "node tools/net-test.mjs",
     "shop-test": "node tools/shop-test.mjs",
+    "net-hostile": "node tools/net-hostile-test.mjs",
     "build": "python3 tools/build-dist.py",
     "release": "./tools/release-pages.sh",
     "deploy-relay": "cd server && wrangler deploy"
