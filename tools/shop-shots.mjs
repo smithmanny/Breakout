@@ -1,6 +1,7 @@
 // Shop UI harness: opens the Shop in headless Chrome against a MOCKED /shop API (no Worker needed) and screenshots it.
 // usage: node tools/shop-shots.mjs [--out dir] [--sizes 360x640,390x844,...] [--states ready,offline,...] [--check] [--url http://localhost:8490/]
 //   states: ready | owned (bought something) | offline | error | pending | unavailable
+//   --url 'http://localhost:8490/?shop=cancel' --noopen simulates a checkout redirect return.
 //   --check also reports overflow / tap-target problems per size (exit 1 if any). Needs `npm start` (port 8490) running.
 import puppeteer from 'puppeteer-core';
 import { mkdirSync, readFileSync } from 'node:fs';
@@ -50,10 +51,10 @@ for (const state of STATES) for (const [w, h] of SIZES) {
       if (state === 'pending') localStorage.setItem('breakout.shop.pending', JSON.stringify({ ref: 'r1', provider: 'coinbase', items: ['gun_glacier'], at: Date.now() }));
     } catch { /* ignore */ }
   }, state, owned);
-  await page.goto(BASE + '?skipTitle', { waitUntil: 'load', timeout: 120000 });
+  await page.goto(BASE + (BASE.includes('?') ? '&' : '?') + 'skipTitle', { waitUntil: 'load', timeout: 120000 });
   await page.waitForFunction('window.__inkwave && __inkwave.menus', { timeout: 120000, polling: 200 });
   await new Promise((r) => setTimeout(r, 1500));
-  await page.evaluate(() => { __inkwave.menus.show('shop', { push: true }); });
+  if (!args.includes('--noopen')) await page.evaluate(() => { __inkwave.menus.show('shop', { push: true }); });   // --noopen: let the app land in the Shop itself (checkout return)
   await new Promise((r) => setTimeout(r, 2200));
   if (ACT) { const r = await page.evaluate(`(async () => { ${ACT} })()`); if (r !== undefined) console.log(`[act ${state} ${w}x${h}]`, typeof r === 'string' ? r : JSON.stringify(r, null, 1)); await new Promise((r) => setTimeout(r, 1500)); }
   const file = `${OUT}/${state}${SUFFIX}-${w}x${h}.png`;
