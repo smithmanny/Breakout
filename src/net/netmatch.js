@@ -21,7 +21,8 @@
 // shooter's client (what you see is what you hit) and applied by the victim's owner.
 import * as THREE from 'three';
 import { G, emit, on } from '../core/ctx.js';
-import { PLAYER, WEAPONS, mapNoBots } from '../config.js';
+import { PLAYER, WEAPONS, WEAPON_ORDER, validWeapon, mapNoBots } from '../config.js';
+import { Budget, damageCap, reachOf } from './validate.js';
 import { BotBrain } from '../game/bots.js';
 import { Boss } from '../boss/boss.js';
 
@@ -202,8 +203,8 @@ export class NetMatch {
   onMessage(from, d) {
     switch (d.k) {
       case 't': this._tick(from, d); break;
-      case 'hit': this._hit(d); break;
-      case 'bhit': if (this.isHost) this.match?.boss?.remoteHit(d); break;
+      case 'hit': this._hit(from, d); break;
+      case 'bhit': if (this.isHost && this._shooterOk(from, d.a, d.d, 'boss')) this.match?.boss?.remoteHit(d); break;
       case 'st': if (from === this.s.hostId) this._hostState(d); break;
       case 'res': if (from === this.s.hostId) this._result(d); break;
       case 'end': if (from === this.s.hostId) G.game?.netMatchEnd?.(); break;
@@ -245,6 +246,7 @@ export class NetMatch {
     }
     // events → the sender's queue (played on its timeline)
     if (d.e) for (const e of d.e) p.events.push(e);
+    if (p.events.length > 2000) p.events.splice(0, p.events.length - 2000);   // (a stalled timeline never grows without bound)
     if (d.r && from === this.s.hostId) p.events.push([d.ts, 'rd', d.r]);   // (after d.e: its moments are all earlier)
     if (d.c && from === this.s.hostId) this._hostClock(d.c);
     // the boss: the host's snapshot, on the host's playback timeline
@@ -461,7 +463,7 @@ export class NetMatch {
       while (i < p.events.length && p.events[i][0] <= tr) i++;
       if (!i) continue;
       const due = p.events.splice(0, i);
-      for (const e of due) this._play(id, e);
+      for (const e of due) { try { this._play(id, e); } catch (err) { console.warn('[net] bad event from', id, err); } }   // (a malformed event never stops the timeline)
     }
   }
 
@@ -469,6 +471,8 @@ export class NetMatch {
     switch (e[1]) {
       case 's': {
         this.applying = true;
+        // (anybody may paint: but only plausible ink: finite position inside the world, a real team, a sane blob)
+        if (!finite3(e[2], e[3], e[4]) || !(e[5] > 0 && e[5] <= 8) || (e[6] !== 0 && e[6] !== 1 && e[6] !== 2)) break;
         const st = e[9] || e[10] || e[11] ? _v2.set(e[9], e[10], e[11]) : undefined;
         const opts = { seed: e[7] };
         if (e[8]) opts.kind = e[8];
@@ -477,19 +481,19 @@ export class NetMatch {
         this.applying = false;
         break;
       }
-      case 'p': { const a = this.byNid.get(e[2]); if (a) G.projectiles?.ghostProjectile(a, e); break; }
-      case 'b': { const a = this.byNid.get(e[2]); if (a) G.projectiles?.ghostBomb(a, e[3], e[4], e[5], e[6], e[7], e[8], e[9]); break; }
+      case 'p': { const a = this.byNid.get(e[2]); if (a && a.owner === from) G.projectiles?.ghostProjectile(a, e); break; }
+      case 'b': { const a = this.byNid.get(e[2]); if (a && a.owner === from) G.projectiles?.ghostBomb(a, e[3], e[4], e[5], e[6], e[7], e[8], e[9]); break; }
       case 'tr': {
         const a = this.byNid.get(e[2]);
-        if (!a || !a.remote || !a.alive && e[3] !== 'spawn') break;
+        if (!a || !a.remote || a.owner !== from || !a.alive && e[3] !== 'spawn') break;
         a.character._netTrig?.(e[3], unpackTrig(e[4]));
         this._trigSideEffects(a, e[3]);
         break;
       }
-      case 'ev': this._playEvent(e[2], e[3]); break;
+      case 'ev': this._playEvent(e[2], e[3], from); break;
       case 'rd': if (from === this.s.hostId && !this.isHost) this.match?.applyNetRound(e[2]); break;
-      case 'bm': this.match?.boss?.onMove(e[2]); break;
-      case 'bc': { const b = this.match?.boss; if (b && !b.sim) b._crabBurst(e[2], e[3], e[4], e[5], !!e[6]); break; }
+      case 'bm': if (from === this.s.hostId) this.match?.boss?.onMove(e[2]); break;
+      case 'bc': if (from !== this.s.hostId) break; { const b = this.match?.boss; if (b && !b.sim) b._crabBurst(e[2], e[3], e[4], e[5], !!e[6]); break; }
     }
   }
 
@@ -566,11 +570,13 @@ export class NetMatch {
     else if (name === 'slosh') G.audio?.play('slosh_throw', { pos, volume: 0.55 });
   }
 
-  _playEvent(name, d) {
+  _playEvent(name, d, from) {
+    if (!d || typeof d !== 'object' || Array.isArray(d)) return;
     const e = unpackEvent(d, this);
     if (!e) return;
     const a = e.actor || e.victim;
-    if (!a || !a.remote) return;
+    // an event describes the sender's own squidkid (its splat, respawn, jump …): nobody can splat / respawn someone else's
+    if (!a || !a.remote || a.owner !== from) return;
     const near = a._nearCamera();
     switch (name) {
       // (re-emitted below for everyone else: kill feed, Match → 'eliminated', minimap …)
@@ -612,6 +618,7 @@ export class NetMatch {
     victim.character.setVisible(false);
     victim.net.buf.length = 0; victim.net.ready = false; victim.net.has = false;
     victim.net.deathTp = victim.net.tp;
+    victim.net.deadAt = now();
     // your own kills: the confirm sting / marker (the hit that did it was only a prediction)
     if (attacker && !attacker.remote) emit('hit', { attacker, victim, damage: 0, killed: true, weaponId: cause });
     return true;
@@ -634,9 +641,30 @@ export class NetMatch {
   }
 
   // ---- hits (victim's owner) ------------------------------------------------------------------------------------------
-  _hit(d) {
+  // Hostile-client checks. The relay stamps every payload with its real sender, so `from` cannot be forged; a hit only
+  // counts when that sender owns the attacking squidkid (a player owns itself, the host owns bots and adopted actors) and
+  // what it claims is plausible: right weapon, no more damage than that weapon can deal, within its reach (+ slack for the
+  // ~0.1-0.3 s our copy of the shooter lags), a rate the weapon can sustain, shooter alive (or only just splatted).
+  // Hits are otherwise shooter-authoritative by design (docs/NET.md): this bounds what a cheater can fake, not aim.
+  _shooterOk(from, nid, dmg, wid) {
+    const atk = this.byNid.get(nid);
+    if (!atk || atk.owner !== from) return false;
+    const t = now();
+    if (!(this._budget || (this._budget = new Budget(40, 60))).take(nid, 1, t)) return false;                    // shots per second
+    if (!(this._dmgBudget || (this._dmgBudget = new Budget(700, 600))).take(nid, Math.min(dmg, 200), t)) return false;   // damage per second
+    if (!atk.alive && !(atk.net && t - (atk.net.deadAt ?? -9) < 1.2)) return false;
+    return true;
+  }
+
+  _hit(from, d) {
     const v = this.byNid.get(d.v), atk = this.byNid.get(d.a);
     if (!v || v.remote || !v.alive || !atk || atk.team === v.team) return;
+    if (!this._shooterOk(from, d.a, d.d, d.w)) return;
+    if (d.d > damageCap(d.w)) return;
+    if (WEAPONS[d.w] && WEAPON_ORDER.includes(d.w) && atk.weaponId !== d.w && validWeapon(atk.weaponId) !== d.w) return;   // somebody else's weapon
+    if (G.match?.damageOpen && !G.match.damageOpen()) return;
+    // range: our copy of the shooter lags by its playback delay, so allow (reach × 1.25 + what 0.4 s of sprinting covers)
+    if (atk.pos && v.pos && Math.hypot(atk.pos.x - v.pos.x, atk.pos.y - v.pos.y, atk.pos.z - v.pos.z) > reachOf(d.w) * 1.25 + 8) return;
     this._applyingHit = true;
     G.projectiles?.applyHit(atk, v, d.d, d.w);
     this._applyingHit = false;
@@ -651,7 +679,8 @@ export class NetMatch {
   _hostState(d) {
     const m = this.match;
     if (!m || this.isHost) return;
-    if (typeof d.t === 'number') m.time = d.t;
+    if (typeof d.s !== 'string' || d.s.length > 12) return;
+    if (typeof d.t === 'number' && Number.isFinite(d.t)) m.time = Math.max(0, Math.min(3600, d.t));
     if (d.s !== m.state && d.s !== 'judge') m.setState(d.s);
   }
   sendResult(result) {
@@ -662,14 +691,23 @@ export class NetMatch {
   _result(d) {
     const m = this.match;
     if (!m || this.isHost) return;
-    for (const [nid, turf, splats, deaths, bossDmg, weakHits, dmg, surv] of d.st || []) {
+    // one result per match: a host that dies in the judge phase hands the judge to the next host, whose own result must not
+    // restart the results screen on a client that already has the first (and never lets a malformed one wipe a good one)
+    if (m.result || (d.st !== undefined && (!Array.isArray(d.st) || d.st.length > 32))) return;
+    const n0 = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(-1e6, Math.min(1e6, v)) : 0);
+    for (const row of d.st || []) {
+      if (!Array.isArray(row)) continue;
+      const [nid, turf, splats, deaths, bossDmg, weakHits, dmg, surv] = row;
       const a = this.byNid.get(nid);
       if (!a) continue;
-      a.stats.turf = turf; a.stats.splats = splats; a.stats.deaths = deaths;
-      if (bossDmg !== undefined) { a.stats.bossDmg = bossDmg; a.stats.weakHits = weakHits; }
-      if (dmg !== undefined) a.stats.damage = dmg;
-      if (surv !== undefined) a.stats.roundsSurvived = surv;
+      a.stats.turf = n0(turf); a.stats.splats = n0(splats); a.stats.deaths = n0(deaths);
+      if (bossDmg !== undefined) { a.stats.bossDmg = n0(bossDmg); a.stats.weakHits = n0(weakHits); }
+      if (dmg !== undefined) a.stats.damage = n0(dmg);
+      if (surv !== undefined) a.stats.roundsSurvived = n0(surv);
     }
+    d = { ...d, win: d.win === 0 || d.win === 1 ? d.win : -1, cov: Array.isArray(d.cov) && d.cov.length === 2 ? [n0(d.cov[0]), n0(d.cov[1])] : [0, 0],
+      mode: d.mode === 'boss' ? 'boss' : d.mode === 'elim' ? 'elim' : undefined,
+      rd: Array.isArray(d.rd) ? d.rd.slice(0, 40).filter((r) => r && typeof r === 'object').map((r) => ({ winner: r.winner === 0 || r.winner === 1 ? r.winner : -1, reason: typeof r.reason === 'string' ? r.reason.slice(0, 12) : 'time' })) : undefined };
     if (d.mode !== 'boss') m.time = 0;   // (a boss win stops the clock where it was)
     if (d.mode === 'boss') m.result = { mode: 'boss', coverage: d.cov, winner: d.win, boss: d.bo };
     else {
@@ -839,12 +877,13 @@ function packEvent(e) {
   }
   return o;
 }
+const finite3 = (x, y, z) => Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z) && Math.abs(x) < 5000 && Math.abs(y) < 5000 && Math.abs(z) < 5000;
 function unpackEvent(d, nm) {
   const e = {};
   for (const k in d) {
     const v = d[k];
     if (v && typeof v === 'object' && !Array.isArray(v) && v.n !== undefined) e[k] = nm.byNid.get(v.n) || null;
-    else if (Array.isArray(v) && v.length === 3) e[k] = new THREE.Vector3(v[0], v[1], v[2]);
+    else if (Array.isArray(v) && v.length === 3) e[k] = finite3(v[0], v[1], v[2]) ? new THREE.Vector3(v[0], v[1], v[2]) : null;
     else e[k] = v;
   }
   return e;
