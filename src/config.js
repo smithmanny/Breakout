@@ -289,3 +289,12 @@ export const QUALITY = {
   high:   { pixelRatio: 1.5,  shadowSize: 4096, msaa: 4, bloom: true,  ao: true,  paintAtlas: 4096, particles: 1.0 },
   ultra:  { pixelRatio: 2.0,  shadowSize: 4096, msaa: 4, bloom: true,  ao: true,  paintAtlas: 4096, particles: 1.0 },
 };
+
+// First-run quality when the player has no saved choice: 'medium' on weak / mobile hardware, else the default ('high').
+// (deviceMemory is Chromium-only, capped at 8; hardwareConcurrency is everywhere. Unknown values never downgrade.)
+export function hardwareDefaultQuality(nav = typeof navigator !== 'undefined' ? navigator : {}) {
+  const mobile = /Android|iPhone|iPad|iPod|Mobile|CrOS/i.test(nav.userAgent || '') || (nav.maxTouchPoints > 1 && /Macintosh/.test(nav.userAgent || ''));
+  const cores = nav.hardwareConcurrency, mem = nav.deviceMemory;
+  if (mobile || (cores && cores <= 4) || (mem && mem <= 4)) return 'medium';
+  return DEFAULT_SETTINGS.quality;
+}
