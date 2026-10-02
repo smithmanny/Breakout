@@ -1,10 +1,23 @@
 {
   // INKWAVE online relay: one Durable Object per room code (WebSocket fan-out + membership + host election).
+  // Plus the cosmetics shop API (/shop/*, see docs/MONETIZATION.md): entitlements live in the SHOP KV namespace.
   "$schema": "../node_modules/wrangler/config-schema.json",
   "name": "inkwave-net",
   "main": "src/index.js",
   "compatibility_date": "2026-09-01",
   "durable_objects": { "bindings": [{ "name": "ROOMS", "class_name": "Room" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  // `wrangler dev` auto-creates a local KV; for production run `wrangler kv namespace create SHOP` and paste the id here.
+  "kv_namespaces": [{ "binding": "SHOP" }],
+  // Optional global rate limiter used by the shop (falls back to per-isolate counters when absent).
+  "ratelimits": [{ "name": "SHOP_RL", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } }],
+  // Non-secret config. SHOP_MODE stays "test" until the launch checklist is done. Secrets (never put them here):
+  // STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, TOKEN_SECRET, CLAIM_PRIVATE_JWK, COINBASE_*, RESEND_API_KEY: see .dev.vars.example
+  "vars": {
+    "SHOP_MODE": "test",
+    "SHOP_RETURN_URL": "https://inkwave-aah.pages.dev/",
+    "SHOP_ALLOWED_ORIGINS": "",
+    "CRYPTO_PROVIDER": "stripe"
+  },
   "observability": { "enabled": false }
 }

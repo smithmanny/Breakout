@@ -1,0 +1,28 @@
+# Copy to server/.dev.vars for `wrangler dev` (git-ignored). In production use `wrangler secret put <NAME>`.
+# NEVER commit real keys. All values below are placeholders / test-mode examples.
+
+# --- required -------------------------------------------------------------------------------------------------------
+# Random 32+ byte secret used to sign anonymous player tokens:  openssl rand -base64 32
+TOKEN_SECRET=change-me-random-32-bytes
+
+# --- Stripe (test mode: sk_test_...). Live keys are refused unless SHOP_MODE=live ----------------------------------------
+STRIPE_SECRET_KEY=sk_test_xxx
+# Signing secret of the webhook endpoint (whsec_...), or from `stripe listen` for local dev
+STRIPE_WEBHOOK_SECRET=whsec_xxx
+
+# --- signed cosmetic claims (lets other players verify what you equipped). Generate: node tools/shop-keygen.mjs --------
+# One line of JSON (a private ES256 JWK)
+CLAIM_PRIVATE_JWK=
+
+# --- optional: Coinbase Commerce (only when CRYPTO_PROVIDER=coinbase in wrangler.jsonc vars) ---------------------------------
+COINBASE_COMMERCE_API_KEY=
+COINBASE_WEBHOOK_SECRET=
+
+# --- optional: email a recovery code to the buyer after purchase (Resend) -----------------------------------------------
+RESEND_API_KEY=
+MAIL_FROM=BREAKOUT <shop@example.com>
+
+# --- optional local overrides of non-secret vars --------------------------------------------------------------------
+# SHOP_MODE=test
+# SHOP_RETURN_URL=http://localhost:8490/
+# SHOP_RATE_SCALE=100
