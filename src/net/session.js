@@ -9,6 +9,7 @@ import { MAPS, WEAPONS, WEAPON_ORDER, validWeapon, MATCH, ROUNDS, BOT_NAMES, TEA
 import { randomStyle } from '../game/character-style.js';
 import { prime as primeClaim } from '../shop/claims.js';   // verify other players' signed cosmetic claims as they arrive
 import { Transport } from './transport.js';
+import { cleanMessage, cleanStyle, cleanName } from './validate.js';   // every peer payload goes through it (docs/NET.md, Hostile clients)
 import { NetMatch } from './netmatch.js';
 
 // no 0/O or 1/I (misread), and no W/A/S/D: those move the menu cursor, so any other key typed on the online hub can
@@ -203,7 +204,7 @@ export class NetSession {
     const o = {};
     if (ch.name != null) o.name = String(ch.name).slice(0, 16);
     if (ch.weapon && WEAPONS[ch.weapon]) o.weapon = validWeapon(ch.weapon);   // (retired markers → a playable one)
-    if (ch.style) o.style = ch.style;
+    const st = ch.style && cleanStyle(ch.style); if (st) o.style = st;
     if (ch.ready != null) o.ready = !!ch.ready;
     if (ch.team === 0 || ch.team === 1 || ch.team === 'auto') o.team = ch.team;
     if (this.isHost) this._applyMe(this.myId, o);
@@ -218,11 +219,11 @@ export class NetSession {
   _applyMe(id, o) {
     const p = this.lobby.players.find((x) => x.id === id);
     if (!p) return;
-    if (o.name) p.name = String(o.name).slice(0, 16);
+    if (o.name) p.name = cleanName(o.name, p.name);
     if (o.weapon && WEAPONS[o.weapon]) p.weapon = validWeapon(o.weapon);
-    if (o.style) p.style = o.style;
+    if (o.style) p.style = cleanStyle(o.style) || p.style;
     if (o.ready != null) p.ready = !!o.ready;
-    if (o.ping != null) p.ping = Math.round(o.ping);
+    if (o.ping != null && Number.isFinite(+o.ping)) p.ping = Math.round(Math.min(9999, Math.max(0, +o.ping)));
     if (o.team === 'auto') p.team = 'auto';
     else if (o.team === 0 || o.team === 1) {
       const n = this.lobby.players.filter((x) => x !== p && x.team === o.team).length;
@@ -357,9 +358,10 @@ export class NetSession {
   // ------------------------------------------------------------------ incoming payloads
   _message(from, d) {
     if (!d || typeof d !== 'object') return;
+    d = cleanMessage(d, from === this.hostId);   // unknown kinds, host-only kinds from a non-host, bad types / ranges: dropped
+    if (!d) return;
     switch (d.k) {
       case 'lobby':
-        if (from !== this.hostId) return;
         {
           const l = d.l;
           this.lobby.map = l.map; this.lobby.time = l.time; this.lobby.duration = l.duration; this.lobby.bots = l.bots; this.lobby.difficulty = l.difficulty;

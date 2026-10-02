@@ -106,7 +106,30 @@ through `validWeapon` (retired roller / slosher become a playable marker).
 match running) and blind fan-out of `b|` / `s|to|` payloads. Clients send `"ping"` every 2 s, answered by the runtime
 without waking the room; a sweep drops sockets silent for 10 s during a match (150 s in the lobby).
 
-**Testing.** `node tools/net-test.mjs` (game on :8490, `cd server && npx wrangler dev --port 8787`) plays real headless
+**Hostile clients (src/net/validate.js).** The relay stamps every payload with the sender's real id (`m|<id>|…`), so
+`from` cannot be forged; everything else a peer says is untrusted and checked twice with the same rules, in the relay
+(it now parses payloads) and on every client (`session._message`, `netmatch`):
+- *kinds*: unknown kinds are dropped; `lobby / start / go / st / res / end / own` are accepted from the host only.
+- *fields*: types, lengths and enums (names `[\p{L}\p{N} ._\-!?']` ≤ 16, map / weapon / difficulty / palette / mode,
+  roster ≤ 16 with unique nids, lobby ≤ 8 players). A look (`style`) is rebuilt from a whitelist: six small indices, the
+  shop's `wskin` / `costume` ids and the opaque `claim` string (≤ 600 chars; `gate()` still decides what renders).
+  Ticks: ≤ 16 snapshots of finite, in-world numbers, ≤ 400 events.
+- *ownership*: the relay learns nid → owner from the host's `start` (and hands a leaver's nids to the new host, as the
+  clients do). A `hit` / `bhit` counts only if the sender owns the attacking nid; tick snapshots for nids the sender does
+  not own are stripped; on clients an `ev` / `p` / `b` / `tr` about an actor only plays if the sender owns it (nobody can
+  splat or revive someone else's squidkid) and `rd` / `bm` / `bc` only from the host.
+- *plausibility* (victim's owner, `_hit`): damage ≤ that weapon's maximum, the weapon is the shooter's own, within its
+  reach (+ lag slack), a rate the weapon can sustain (token buckets per attacker: shots and damage per second), shooter alive
+  (or splatted < 1.2 s ago), damage open (not between rounds), victim alive and on the other team. Relay: 40 hits/s per sender.
+- *results*: one `res` per match (a second one from a new host after a judge-phase handover is ignored) and its fields
+  are clamped before use.
+Hits stay shooter-authoritative (what you see is what you hit), so a cheater with a legitimate owner can still claim hits
+that are merely possible (an aimbot is out of scope); what is closed is forging someone else, impossible damage, and floods.
+
+**Testing.** `node tools/net-hostile-test.mjs [--relay ws://localhost:8787]` (no browser; the relay part runs when a relay
+answers) covers all of the above. `node tools/net-rounds-sim.mjs --drop judge [--judgeDelay ms]` kills the host after it
+called the match and before its result went out: the next client must judge and everyone must get one result.
+`node tools/net-test.mjs` (game on :8490, `cd server && npx wrangler dev --port 8787`) plays real headless
 clients against the local relay and reports consistency (clock, coverage, rosters, results) and what is drawn:
 per-frame "kink" and path error of every remote squidkid against its owner's own frames.
 `--clients 3 --leave host --drop kill|freeze` tests migration, `--full` plays through results back to the lobby,

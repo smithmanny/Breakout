@@ -91,6 +91,8 @@ async function main() {
     for (const [i, v] of vs) for (const [n, alive, vis] of v.vis) if (alive !== vis) diff.push(`${i} nid ${n} alive ${alive} drawn ${vis}`);
     return diff;
   };
+  // hits are validated: a hit only counts when it comes from the client that owns the attacking squidkid
+  const ownerOf = (nid) => { const o = hv().actors?.find((a) => a.nid === nid)?.owner; return live().includes(o) ? o : hostId; };
   const cmd = (id, c) => workers.get(id)?.postMessage({ t: 'cmd', ...c });
   const hv = () => views.get(hostId) || {};
   const waitFor = async (pred, ms = 20000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (pred()) return true; await sleep(50); } return false; };
@@ -105,14 +107,14 @@ async function main() {
       const loser = round % 2;                      // alternate which team gets wiped
       const byTeam = hv().actors.filter((a) => a.team === loser && a.alive);
       const shooter = hv().actors.find((a) => a.team !== loser && a.alive);
-      if (round === 2 && (N > 2 || DROP === 'host')) {
+      if (round === 2 && DROP !== 'judge' && (N > 2 || DROP === 'host')) {
         // mid-round drop-out while eliminated: kill the leaver's squidkid first, then drop that client — its squidkid
         // is adopted by the host (--drop host: the host itself leaves; the next client becomes host and adopts its
         // squidkid, the bots, and the round authority) and must stay out until the next round, on every screen
         const leaver = DROP === 'host' ? ids[0] : ids[N - 1];
         const victim = roster.find((r) => r.owner === leaver && !r.bot);
         const atk = hv().actors.find((a) => a.team !== victim.team && a.alive);
-        cmd(live().find((i) => i !== leaver), { c: 'hit', a: atk.nid, v: victim.nid, d: 999 });
+        cmd(ownerOf(atk.nid), { c: 'hit', a: atk.nid, v: victim.nid, d: 999 });
         // (dropped once its own screen has it out and its tick has gone: its splat may still be in flight / queued on
         // the others' playback timelines — they must all end up agreeing)
         await waitFor(() => views.get(leaver)?.actors.find((a) => a.nid === victim.nid)?.alive === false, 5000);
@@ -133,7 +135,7 @@ async function main() {
       // round 3: only one kill — the round clock runs out and the side with more players standing takes it
       if (round === 3) byTeam.splice(1);
       for (const v of byTeam) {
-        const from = live().find((i) => i !== roster.find((r) => r.nid === v.nid).owner) || hostId;
+        const from = ownerOf(shooter.nid);
         cmd(from, { c: 'hit', a: shooter.nid, v: v.nid, d: 999 });
         await sleep(150);
       }
@@ -145,6 +147,17 @@ async function main() {
       await waitFor(() => live().every((i) => views.get(i).actors.every((a) => !a.alive || a.baseDist <= 3)), 1500);
       const far = live().map((i) => [i, views.get(i).actors.filter((a) => a.alive && a.baseDist > 3).map((a) => a.nid)]).filter(([, l]) => l.length);
       if (far.length) { bad++; say(`!! not back at base after the reset: ${JSON.stringify(far)}`); }
+    }
+    if (DROP === 'judge') {
+      // the host calls the match (state 'finish', followers follow via its 'st') and dies before its result reaches anyone:
+      // the next client must take the judge over and every remaining client must still get exactly one result
+      if (!(await waitFor(() => views.get(hostId)?.state === 'finish', 15000))) throw new Error('host never called the match');
+      const leaver = hostId;
+      await sleep(+opt('judgeDelay', 150));   // (the host's result goes out ~2.6 s after the call: 0, 150, 2500 …)
+      gone.add(leaver); workers.get(leaver).terminate();
+      hostId = live()[0];
+      for (const i of live()) deliver(i, leaver, null, { t: 'cmd', c: 'leave', id: leaver, host: hostId });
+      say(`host ${leaver} died in the judge phase; new host ${hostId}`);
     }
     // ---- the result
     if (!(await waitFor(() => live().every((i) => views.get(i)?.result), 20000))) throw new Error('no result on every client');
@@ -187,7 +200,7 @@ async function client() {
   G.teamColors = [new THREE.Color(1, 0.5, 0), new THREE.Color(0, 0.5, 1)];
   G.teamHex = ['#ff8800', '#0088ff'];
   G.time = 0;
-  G.level = stubObj({ spawnPads: [new THREE.Vector3(0, 0, -30), new THREE.Vector3(0, 0, 30)] });
+  G.level = stubObj({ spawnPads: [new THREE.Vector3(0, 0, -6), new THREE.Vector3(0, 0, 6)] });
   G.physics = stubObj({ groundProbe: () => ({ hit: false }) });
   G.paint = stubObj({ splat: () => 0, coverage: () => [0.31, 0.27] });
   G.camera = new THREE.PerspectiveCamera();
@@ -237,7 +250,8 @@ async function client() {
         const atk = nm.byNid.get(msg.a), v = nm.byNid.get(msg.v);
         if (!atk || !v) return;
         // the shooter's screen decides (it may be a proxy here): route like weapons.js applyHit does
-        if (v.remote) nm.sendHit(atk, v, msg.d, 'shooter'); else v.damage(msg.d, atk, 'shooter');
+        if (v.remote) { for (let n = 0; n < 3 && n * 36 < msg.d; n++) nm.sendHit(atk, v, Math.min(36, msg.d), 'shooter'); } else   // (real hits are validated: one shooter ball is <= 36)
+          v.damage(msg.d, atk, 'shooter');
       } else if (msg.c === 'leave') {
         members.delete(msg.id);
         const hostChanged = msg.host !== session.hostId;
