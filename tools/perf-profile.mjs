@@ -27,20 +27,29 @@ const errs = [];
 page.on('pageerror', (e) => errs.push(e.message));
 page.on('console', (m) => m.type() === 'error' && errs.push(m.text()));
 if (args.includes('--cpu')) { await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 500 }); await cdp.send('Profiler.start'); }
+if (args.includes('--cpuplay')) await cdp.send('Profiler.enable');
+if (opt('cpu', 0) > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: +opt('cpu', 1) });
 const t0 = Date.now();
 await page.goto(url, { waitUntil: 'load' });
 await page.waitForFunction('window.__inkwave && __inkwave.match && __inkwave.match.state==="playing" && __inkwave.match.local && !__inkwave.match.attract', { timeout: 300000, polling: 200 });
 const toPlay = Date.now() - t0;
-let cpu;
-if (args.includes('--cpu')) {
+let cpu, cpuIncl;
+async function stopCpu() {
   const { profile } = await cdp.send('Profiler.stop');
   const self = new Map(), byId = new Map(profile.nodes.map((n) => [n.id, n]));
   const dt = profile.timeDeltas; 
   profile.samples.forEach((id, i) => { const cf = byId.get(id).callFrame; const k = `${cf.functionName || '(anon)'} ${cf.url.replace(/.*\/(src|vendor)\//, '$1/')}:${cf.lineNumber + 1}`; self.set(k, (self.get(k) || 0) + (dt[i] || 0)); });
-  cpu = [...self].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([k, v]) => `${(v / 1000).toFixed(0)}ms ${k}`);
+  // inclusive time per function (each sample credited once to every distinct function on its stack)
+  const parent = new Map(); for (const n of profile.nodes) for (const c of n.children || []) parent.set(c, n.id);
+  const incl = new Map();
+  profile.samples.forEach((id, i) => { const seen = new Set(); for (let n = id; n; n = parent.get(n)) { const cf = byId.get(n).callFrame; const k = `${cf.functionName || '(anon)'} ${cf.url.replace(/.*\/(src|vendor)\//, '$1/')}:${cf.lineNumber + 1}`; if (!seen.has(k)) { seen.add(k); incl.set(k, (incl.get(k) || 0) + (dt[i] || 0)); } } });
+  cpuIncl = [...incl].filter(([k]) => / src\//.test(k)).sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, v]) => `${(v / 1000).toFixed(0)}ms ${k}`);
+  return [...self].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([k, v]) => `${(v / 1000).toFixed(0)}ms ${k}`);
 }
+if (args.includes('--cpu')) cpu = await stopCpu();
 const boot = await page.evaluate('__inkwave.bootMs');
 await new Promise((r) => setTimeout(r, 3000));
+if (args.includes('--cpuplay')) { await cdp.send('Profiler.setSamplingInterval', { interval: 250 }); await cdp.send('Profiler.start'); }
 if (args.includes('--alloc')) await cdp.send('HeapProfiler.startSampling', { samplingInterval: 4096 });
 await cdp.send('Performance.enable');
 const metrics = async () => Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map((m) => [m.name, m.value]));
@@ -48,6 +57,7 @@ const m0 = await metrics();
 await page.evaluate(() => { window.__ft = []; let l = performance.now(); const f = (t) => { __ft.push(t - l); l = t; requestAnimationFrame(f); }; requestAnimationFrame(f); });
 await new Promise((r) => setTimeout(r, SECS * 1000));
 const m1 = await metrics();
+if (args.includes('--cpuplay')) cpu = await stopCpu();
 const res = await page.evaluate(() => {
   const ft = __ft.slice().sort((a, b) => a - b), q = (p) => ft[Math.floor(ft.length * p)];
   const i = window.__inkwave.R.renderer.info;
@@ -64,6 +74,6 @@ if (args.includes('--alloc')) {
 const secs = m1.Timestamp - m0.Timestamp;
 console.log(JSON.stringify({ url, toPlayS: toPlay / 1000, bootMs: boot, bytesKB: Math.round(bytes / 1024), reqs,
   taskMsPerSec: (m1.TaskDuration - m0.TaskDuration) / secs * 1000, scriptMsPerSec: (m1.ScriptDuration - m0.ScriptDuration) / secs * 1000,
-  ...res, cpu, alloc, errs: errs.slice(0, 5) }, null, 1));
+  ...res, cpu, cpuIncl, alloc, errs: errs.slice(0, 5) }, null, 1));
 kill();
 process.exit(0);

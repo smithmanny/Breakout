@@ -51,6 +51,7 @@ while stack:
 if 'vendor/three/build/three.core.js' not in order: order.insert(1, 'vendor/three/build/three.core.js')
 html = open('index.html').read()
 links = ''.join('<link rel="modulepreload" href="./%s">\n' % f for f in order)
+html = html.replace('<link rel="stylesheet" href="styles/ui.css">', '<link rel="preload" href="styles/hud.css" as="style">\n<link rel="stylesheet" href="styles/ui.css">')   # ui.css @imports hud.css: fetch both at once
 html = html.replace('<script type="module" src="./src/main.js"></script>', links + '<script type="module" src="./src/main.js"></script>')
 open('dist/index.html', 'w').write(html)
 print('dist ready:', len(seen), 'addon files,', len(order), 'preloaded modules')
@@ -58,11 +59,11 @@ print('dist ready:', len(seen), 'addon files,', len(order), 'preloaded modules')
 # minify (per file, no bundling: the module graph and importmap stay as they are). Needs esbuild: uses a local one if
 # installed, else fetches a pinned version with npx (like release-pages.sh does for wrangler); skipped if neither works.
 def minify():
-    files = [f for f in glob.glob('dist/**/*.js', recursive=True)]
+    files = glob.glob('dist/**/*.js', recursive=True) + glob.glob('dist/styles/*.css')
     local = 'node_modules/.bin/esbuild'
     cmd = [local] if os.path.exists(local) else ['npx', '--yes', 'esbuild@0.25.12']
     tmp = 'dist/.min'
-    r = subprocess.run(cmd + files + ['--minify', '--format=esm', '--target=es2022', '--legal-comments=none', '--outbase=dist', '--outdir=' + tmp, '--log-level=error'], capture_output=True, text=True)
+    r = subprocess.run(cmd + files + ['--minify', '--format=esm', '--target=es2022', '--legal-comments=none', '--loader:.css=css', '--outbase=dist', '--outdir=' + tmp, '--log-level=error'], capture_output=True, text=True)
     if r.returncode: print('minify skipped:', (r.stderr or r.stdout).strip()[:200]); shutil.rmtree(tmp, ignore_errors=True); return
     before = after = 0
     for f in files:
