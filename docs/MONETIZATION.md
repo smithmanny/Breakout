@@ -130,8 +130,7 @@ refresh make it feel immediate; if you outgrow KV, the same functions in `store.
 
 ## Recovery
 
-- In the Shop: RESTORE PURCHASES > GET MY CODE shows a one-time code (`BRK-XXXX-XXXX-XXXX-XXXX`, about 79 bits, stored only
-  as a hash). Entering it on a new device or after clearing site data restores the identity (`/shop/recovery/redeem`, rate limited).
+- In the Shop: after the first purchase a SAVE YOUR CODE sheet opens (copy, download .txt, "I have saved it"); until the player confirms, a SAVE MY CODE note stays in the Shop header. MY RECOVERY CODE and RESTORE PURCHASES are always in the Shop toolbar (restore uses an in-game field, no browser prompt). The code is kept in `localStorage: breakout.shop.recovery` ({code, saved, prompted}) so reopening it never rotates a code the player already wrote down. The code (`BRK-XXXX-XXXX-XXXX-XXXX`, about 79 bits) is stored on the server only as a hash. Entering it on a new device or after clearing site data restores the identity (`/shop/recovery/redeem`, rate limited).
 - Optional: with `RESEND_API_KEY` + `MAIL_FROM` the buyer's checkout email gets a code automatically after their first purchase.
   (Stripe also emails receipts if enabled in the Dashboard.)
 - Lost token and no code: support can look up the order by Stripe session / payment id (`ord:` key holds the `pid`).
