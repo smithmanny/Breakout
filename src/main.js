@@ -83,6 +83,7 @@ class Game {
     // the whole arena renders black) and the sky's env map. (Paint on the field is lost; it is only cosmetic.)
     this.R.renderer.domElement.addEventListener('webglcontextrestored', () => {
       console.warn('[inkwave] WebGL context restored — re-baking GPU textures');
+      this.R.markContextRestored();
       try { this.texlib?.rebake?.(); } catch (e) { console.warn('[inkwave] texlib rebake', e); }
       try { if (G.env?.setTheme) { G.env.setTheme(G.env.theme || this.theme); if (G.env.envMap) G.scene.environment = G.env.envMap; } } catch (e) { console.warn('[inkwave] env rebake', e); }
     });

@@ -91,16 +91,34 @@ export class Renderer {
     this.settings = settings;
     this.q = QUALITY[settings.quality] || QUALITY.high;
     this._w = 0; this._h = 0;
+    this._ctxEpoch = 0; this._builtEpoch = 0;
   }
+
+  // Call when the WebGL context was restored: everything built before it is dead and must not be deleted again.
+  markContextRestored() { this._ctxEpoch++; }
 
   setScene(scene, camera) {
     this.scene = scene; this.camera = camera;
     this._buildComposer();
   }
 
+  // Free the old composer's GPU resources: its ping-pong targets, every pass (GTAO / bloom mip chains, grade, output, the
+  // composer's own copy pass) and nothing else — the screen-FX pass is owned by screenfx.js and survives rebuilds.
+  _disposeComposer() {
+    const c = this.composer;
+    if (!c) return;
+    // built before a context loss: its GL handles belong to the dead context, so deleting them only makes the browser warn
+    if (this._ctxEpoch !== this._builtEpoch) { this.composer = null; this.gtao = null; return; }
+    for (const p of c.passes) { if (p !== this.extraPass) { try { p.dispose?.(); } catch (e) { console.warn('[inkwave] pass dispose', e); } } }
+    c.passes.length = 0;
+    try { c.dispose(); } catch (e) { console.warn('[inkwave] composer dispose', e); }
+    this.composer = null; this.gtao = null;
+  }
+
   _buildComposer() {
     const r = this.renderer, q = this.q;
-    if (this.composer) { this.composer.renderTarget1.dispose(); this.composer.renderTarget2.dispose(); }
+    this._disposeComposer();
+    this._builtEpoch = this._ctxEpoch;
     this.dynScale = this.dynScale || 1;
     const pr = Math.min(window.devicePixelRatio || 1, q.pixelRatio) * this.dynScale;
     r.setPixelRatio(pr);
