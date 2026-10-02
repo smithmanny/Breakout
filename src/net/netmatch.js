@@ -66,6 +66,7 @@ export class NetMatch {
   // ---------------------------------------------------------------------------------------------- setup
   /** Called by main.js once the Match built its actors from the roster. */
   bind(match) {
+    if (this.disposed) return;   // (the room went away while the stage was loading)
     this.match = match;
     G.netm = this;
     for (const a of match.actors) {
@@ -101,6 +102,7 @@ export class NetMatch {
   go() { /* intro starts on every client at the host's word (session._launch → main.netMatchGo) */ }
 
   dispose() {
+    this.disposed = true;
     for (const u of this.unsubs) u();
     this.unsubs.length = 0;
     for (const a of this.byNid.values()) this._stopLoops(a);

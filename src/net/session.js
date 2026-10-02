@@ -116,6 +116,8 @@ export class NetSession {
     this._members.clear();
     this.lobby = this._blankLobby();
     this._startCfg = null;
+    this._loaded = false;
+    clearTimeout(this._goT); this._goT = null;   // (a stale go-timer must never launch the next room's match early)
     if (!silent && was !== 'offline') { this._setState('offline'); this._emit('lobby', { lobby: this.lobby }); }
     else this.state = 'offline';
   }
@@ -131,6 +133,7 @@ export class NetSession {
     const inMatch = this.state === 'match' || this.state === 'starting';
     this.error = reason === 'bye' ? null : 'Lost connection to the room';
     this.match?.dispose(); this.match = null;
+    clearTimeout(this._goT); this._goT = null; this._startCfg = null;
     this.tr = null;
     this.code = null;
     this._setState(this.error ? 'error' : 'offline');
@@ -157,6 +160,9 @@ export class NetSession {
       this.match?.onLeave(o.id, hostChanged);
       if (hostChanged) this._emit('host', { hostId: this.hostId });
       if (this.isHost) { this._fixTeams(); this._broadcastLobby(); }
+      // host left while everyone was loading: the new host never got the 'ready' reports (they went to the old one) —
+      // if it is itself loaded, count it now so the 12 s timer can start the match instead of leaving all stuck
+      if (hostChanged && this.isHost && this.state === 'starting' && this._loaded) this._markReady(this.myId);
       this._emit('leave', { player: gone, reason: 'left' });
       this._pushLobby();
     }
@@ -211,7 +217,7 @@ export class NetSession {
   _applyMe(id, o) {
     const p = this.lobby.players.find((x) => x.id === id);
     if (!p) return;
-    if (o.name) p.name = o.name;
+    if (o.name) p.name = String(o.name).slice(0, 16);
     if (o.weapon && WEAPONS[o.weapon]) p.weapon = validWeapon(o.weapon);
     if (o.style) p.style = o.style;
     if (o.ready != null) p.ready = !!o.ready;
@@ -289,6 +295,7 @@ export class NetSession {
 
   async _begin(cfg) {
     this._startCfg = cfg;
+    this._loaded = false;
     this._ready = new Set();
     for (const p of this.lobby.players) p.ready = false;
     this._setState('starting');
@@ -300,10 +307,13 @@ export class NetSession {
     try {
       await G.game.startNetMatch(cfg, this.match);
     } catch (e) {
+      if (this._startCfg !== cfg) return;   // cancelled: the session was left / lost while loading
       console.error('[net] match start failed', e);
       this._fail(new Error('Could not start the match'));
       return;
     }
+    if (this.state !== 'starting' || this._startCfg !== cfg) return;   // (left / disconnected while loading)
+    this._loaded = true;
     if (this.isHost) this._markReady(this.myId);
     else this.tr?.sendTo(this.hostId, { k: 'ready', id: cfg.id });
   }
@@ -334,7 +344,8 @@ export class NetSession {
   // the match's results have been shown: everyone back to the lobby (the room stays)
   endMatch() {
     this.match?.dispose(); this.match = null;
-    this._startCfg = null;
+    this._startCfg = null; this._loaded = false;
+    clearTimeout(this._goT); this._goT = null;
     if (!this.tr) return;
     if (this.isHost) { this.tr.lock(false); for (const p of this.lobby.players) p.ready = false; this._broadcastLobby(); }
     this._setState('lobby');

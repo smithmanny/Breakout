@@ -147,6 +147,13 @@ class Game {
     // online session (G.net) — the menus' online screens and startNetMatch/netMatchGo/netMatchEnd below drive it
     try { (await import('./net/session.js')).installNet(); } catch (e) { console.error('[inkwave] net', e); }
     G.net?.on?.('lobby', ({ lobby }) => this._roomPalette(lobby));
+    // the host left while results were up: nobody holds the back-to-room clock any more — the new host takes it over
+    G.net?.on?.('host', () => {
+      if (G.net.isHost && G.netm && this.match?.state === 'results') {
+        clearTimeout(this._netEndT);
+        this._netEndT = setTimeout(() => { G.netm?.sendEnd(); this.netMatchEnd(); }, 6000);
+      }
+    });
     await progress(0.7, 'Chalking the lines…');
 
     this._setPalette(this._pickPalette());
@@ -663,6 +670,7 @@ class Game {
     }));
     m.setup();
     await this._warmCharacters(m);   // before 'ready': nobody starts until every shader a squidkid can use is compiled
+    if (nm.disposed) { if (this.match === m) { m.dispose(); this.match = G.match = null; } throw new Error('Match cancelled'); }   // room lost while loading: quitToMenu owns the screen
     nm.bind(m);
     this.lastMatchOpts = null;
     this.minimap.setViewerTeam(m.local ? m.local.team : 0);
