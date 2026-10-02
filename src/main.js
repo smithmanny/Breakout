@@ -185,8 +185,12 @@ class Game {
       if (shop.id || params.has('shop')) {
         const ret = await shop.handleReturn();
         shop.refresh();
-        const say = { paid: 'Purchase complete! Your items are in the Shop.', pending: 'Payment received, confirming. Your items will appear shortly.', cancelled: 'Checkout cancelled.', failed: 'The payment did not go through.', rejected: 'We could not verify that payment. Contact support.' }[ret && ret.status];
-        if (say) this.menus?.toast(say, { kind: ret.status === 'paid' ? 'info' : 'error', ms: 6000 });
+        const st = ret && ret.status;
+        const say = { paid: 'Purchase complete! Your items are in the Shop.', pending: 'Payment received, confirming. Your items will appear shortly.', cancelled: 'Checkout cancelled. You were not charged.', failed: 'The payment did not go through. You were not charged.', rejected: 'We could not verify that payment. Contact support.', error: 'We could not confirm your payment right now. Open the Shop and tap CHECK STATUS.', unknown: 'We could not find that order. If you were charged, contact support.' }[st];
+        // land the player back in the Shop: it keeps explaining the outcome in a note (so only a success needs a toast), and after a first purchase asks them to save their recovery code
+        const landed = !!(st && !params.has('autostart') && this.menus && this.menus.current !== 'shop' && ['title', 'main'].includes(this.menus.current));
+        if (landed) this.menus.show('shop', { push: true });
+        if (say && (st === 'paid' || !landed)) this.menus?.toast(say, { kind: st === 'paid' ? 'good' : 'error', ms: 7000 });
       }
     }).catch((e) => console.warn('[shop]', e));
     // the online hub / lobby set loads in the background once the menus are idle (no arena flash on the first visit)

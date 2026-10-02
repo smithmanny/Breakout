@@ -699,14 +699,17 @@ export class Menus {
   }
 
   // ================================================================ modal
-  _openModal({ title, text, buttons, danger = false }) {
+  /** `body`: optional extra element shown under the text (e.g. the Shop's recovery code box or code input); `onBack`: Esc/B handler. */
+  _openModal({ title, text, buttons, danger = false, body = null, onBack = null }) {
     const btnEls = buttons.map((b, i) => this._btn({ id: 'modal-' + i, label: b.label, cls: 'iw-btn--modal ' + (b.cls || ''), accept: b.accept, sound: b.sound || 'ui_click' }));
     const m = h('div', { class: 'iw-modal' },
       h('div', { class: 'iw-modal__card' + (danger ? ' is-danger' : '') },
         h('div', { class: 'iw-modal__splat', html: splatSVG({ seed: 5, cls: danger ? 'iw-fdanger' : 'iw-fa' }) }),
         h('div', { class: 'iw-modal__title iw-display' }, title),
         text ? h('p', { class: 'iw-modal__text' }, text) : null,
+        body,
         h('div', { class: 'iw-modal__btns' }, btnEls)));
+    if (onBack) m._onBack = onBack;
     this._scr.el.appendChild(m);
     this._modalPrev = this._focus;
     this._modal = m;

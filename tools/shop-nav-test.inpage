@@ -1,0 +1,58 @@
+// In-page script for: node tools/shop-shots.mjs --states ready --sizes 1280x720,390x844 --act @tools/shop-nav-test.inpage
+// Drives the Shop with the menu engine's own input entry points (gamepad = menus.nav, keyboard = menus.handleKey) and reports failures.
+const M = __inkwave.menus, sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const fails = [], log = [];
+const ok = (c, m) => { if (!c) fails.push(m); log.push((c ? 'ok   ' : 'FAIL ') + m); };
+const id = () => (M._focus && M._focus.dataset.id) || null;
+const pad = async (d) => { M.nav(d); await sleep(60); };
+const key = async (code) => { M.handleKey({ key: code, code, preventDefault() {}, stopPropagation() {}, repeat: false }); await sleep(60); };
+const inView = (el) => { const r = el.getBoundingClientRect(), vh = innerHeight; return r.bottom > 0 && r.top < vh; };
+
+await sleep(600);
+ok(M.current === 'shop', 'shop is the current screen');
+ok(/^item-/.test(id() || ''), 'initial focus is on a tile: ' + id());
+const first = id();
+await pad('right'); ok(id() !== first && /^item-/.test(id()), 'pad right moves to another tile: ' + id());
+await pad('down'); ok(/^item-/.test(id()), 'pad down moves to the row below: ' + id());
+await key('ArrowLeft'); ok(/^item-/.test(id()), 'keyboard left works: ' + id());
+// up to the tabs, then shoulder buttons switch tabs
+for (let i = 0; i < 6 && !/^stab-|^restore|^recovery|^note-/.test(id() || ''); i++) await pad('up');
+ok(/^stab-|^restore|^recovery|^note-/.test(id()), 'pad up reaches the toolbar/tabs: ' + id());
+const n0 = document.querySelectorAll('.bo-tile').length;
+await pad('tab_next'); const n1 = document.querySelectorAll('.bo-tile').length;
+ok(n1 !== n0 && n1 > 0, `tab_next changes the list (${n0} -> ${n1})`);
+ok(M._focus && M._focus.isConnected, 'focus survives a tab change: ' + id());
+await key('KeyQ'); ok(document.querySelectorAll('.bo-tile').length === n0, 'keyboard Q goes back to ALL');
+// walk the whole grid downward and make sure focus never leaves the visible area
+await pad('down');
+let seen = new Set();
+for (let i = 0; i < 14; i++) { seen.add(id()); ok(!M._focus || inView(M._focus), 'focused control visible: ' + id()); await pad('down'); }
+// select a tile, reach the buy button
+const wide = !matchMedia('(max-width: 900px), (max-aspect-ratio: 5 / 4)').matches;
+const tiles = [...document.querySelectorAll('.bo-tile')];
+M._setFocus(wide ? tiles[3] : tiles[0], { snap: true });
+await pad('accept'); await sleep(100);
+ok(document.querySelector('.bo-shop__detail [data-id="buy-card"]'), 'accept on a tile opens the detail with BUY');
+let reached = id() === 'buy-card';
+if (!reached && wide) { await pad('right'); if (id() === 'buy-crypto') await pad('up'); reached = id() === 'buy-card'; }   // wide: the card sits right of the grid; right lands on the nearest button
+ok(reached, 'buy button reachable by directional input (' + id() + ')');
+if (reached) {
+  ok(inView(M._focus), 'buy button on screen');
+  await pad('down'); ok(id() === 'buy-crypto', 'down moves to the crypto button: ' + id()); await pad('up');
+  await pad('accept'); await sleep(200); ok(!!M._modal, 'accept on BUY opens the confirm modal'); ok(/^modal-/.test(id()), 'focus moved into the modal: ' + id());
+  ok(inView(M._focus), 'modal button on screen');
+  await pad('back'); await sleep(300); ok(!M._modal, 'back closes the modal'); ok(id() === 'buy-card', 'focus returns to BUY after the modal: ' + id());
+  if (!wide) { await pad('back'); ok(/^item-/.test(id()), 'B from the sheet returns to the tile: ' + id()); }
+}
+// restore flow
+M._setFocus(document.querySelector('[data-id="restore"]'), { snap: true });
+await pad('accept'); await sleep(200);
+ok(!!M._modal && M._modal.querySelector('.bo-code__input'), 'restore opens the in-game code field (no browser prompt)');
+ok(id() === 'code', 'focus starts on the code field: ' + id());
+await pad('accept'); ok(document.activeElement && document.activeElement.classList.contains('bo-code__input'), 'accept focuses the input for typing');
+await pad('back'); await sleep(100); ok(!M._modal || !document.activeElement.classList?.contains('bo-code__input'), 'back leaves the input');
+const closeAll = async () => { for (let i = 0; i < 3 && M._modal; i++) { await pad('back'); await sleep(300); } };
+await closeAll(); ok(!M._modal, 'modal closed');
+await pad('back'); await sleep(500);
+ok(M.current !== 'shop', 'back leaves the shop: ' + M.current);
+return { fails, log };
