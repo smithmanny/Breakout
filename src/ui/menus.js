@@ -25,12 +25,13 @@ import {
 } from './menu-art.js';
 import { bossSilhouette, bossEmblem, BOSS_GLYPH, BOSS_NAME, BOSS_EPITHET } from './boss-art.js';
 import { WhatsNew } from './news.js';
+import { buildShopScreen } from '../shop/shop-screen.js';   // cosmetics shop (src/shop)
 
-const SCREENS = ['loading', 'title', 'main', 'mode', 'loadout', 'setup', 'locker', 'settings', 'howto', 'credits', 'pause', 'results', 'online', 'lobby'];
+const SCREENS = ['loading', 'title', 'main', 'mode', 'loadout', 'setup', 'locker', 'settings', 'howto', 'credits', 'pause', 'results', 'online', 'lobby', 'shop'];
 // Transitions that get the full-screen paint wipe (the rest use staggered pop-ins).
 const WIPES = new Set(['loading>title', 'title>main', 'results>main', 'pause>main', 'results>null', 'pause>title', 'online>lobby', 'lobby>online', 'lobby>main', 'results>lobby', 'pause>online']);
 // Pushes/pops between these get the light ink swipe (decorative — the swap itself is immediate).
-const LIGHT = new Set(['main', 'mode', 'loadout', 'setup', 'locker', 'settings', 'howto', 'credits', 'pause', 'online', 'lobby']);
+const LIGHT = new Set(['main', 'mode', 'loadout', 'setup', 'locker', 'shop', 'settings', 'howto', 'credits', 'pause', 'online', 'lobby']);
 // ?netmock=1 → an offline stand-in for G.net (src/net/mock.js) so the online screens work without the relay
 const NETMOCK = typeof location !== 'undefined' && new URLSearchParams(location.search).get('netmock') === '1';
 // room codes (the session generates them from this set: no O/0, I/1)
@@ -101,6 +102,7 @@ const MENU_DESC = {
   online: 'Private rooms for up to 8 friends — create one or join with a room code',
   loadout: 'Choose your marker: stats, hopper, grenades and special for each one',
   locker: 'Choose your player — hair, mask and headgear, eyes, skin and jersey',
+  shop: 'Marker finishes and costumes: purely cosmetic, no gameplay advantage',
   settings: 'Controls, video, audio and gameplay options',
   howto: 'The rules in 30 seconds, plus every control',
   credits: 'The players and code behind BREAKOUT',
@@ -490,7 +492,7 @@ export class Menus {
     if (this._stack.length > 1) {
       this._sfx('ui_back');
       this.show(this._stack[this._stack.length - 2], { pop: true, back: true });
-    } else if (['mode', 'loadout', 'setup', 'locker', 'settings', 'howto', 'credits', 'online'].includes(this.current)) {
+    } else if (['mode', 'loadout', 'setup', 'locker', 'shop', 'settings', 'howto', 'credits', 'online'].includes(this.current)) {
       this._sfx('ui_back'); // opened directly by the engine: fall back to the main menu
       this.show('main', { back: true });
     }
@@ -825,11 +827,12 @@ export class Menus {
         badge: h('span', { class: 'iw-btn__live' }, h('i'), 'LIVE') },
       { id: 'loadout', label: 'LOADOUT', icon: weaponIcon(W.kind || lo.weapon), cls: 'iw-btn--menu', accept: () => this._go('loadout') },
       { id: 'locker', label: 'LOCKER', icon: GLYPHS.hanger, cls: 'iw-btn--menu', accept: () => this._go('locker') },
+      { id: 'shop', label: 'SHOP', icon: GLYPHS.star, cls: 'iw-btn--menu', accept: () => this._go('shop') },
       { id: 'settings', label: 'SETTINGS', icon: GLYPHS.gear, cls: 'iw-btn--menu', accept: () => this._go('settings') },
       { id: 'howto', label: 'HOW TO PLAY', icon: GLYPHS.question, cls: 'iw-btn--menu', accept: () => this._go('howto') },
       { id: 'credits', label: 'CREDITS', icon: GLYPHS.star, cls: 'iw-btn--menu', accept: () => this._go('credits') },
     ];
-    const tilts = [-2.2, 1.3, 1.4, -1.1, 1.6, -1.3, 1.1];
+    const tilts = [-2.2, 1.3, 1.4, -1.1, 1.6, -1.3, 1.1, -1.5];
     const btns = items.map((it, i) => { const b = this._btn({ ...it, tilt: tilts[i % tilts.length] }); b.classList.add('iw-in', 'iw-in--left'); return b; });
     const descText = h('span', { class: 'iw-main__desctext' });
     const desc = h('div', { class: 'iw-main__desc iw-in iw-in--left' }, h('i', { class: 'iw-main__descdot' }), descText);
@@ -1634,6 +1637,9 @@ export class Menus {
       },
     };
   }
+
+  // ================================================================ SCREEN: shop (cosmetics: src/shop/shop-screen.js)
+  _scr_shop() { return buildShopScreen(this); }
 
   // ================================================================ SCREEN: loadout (weapon select)
   _scr_loadout() {

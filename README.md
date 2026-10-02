@@ -46,6 +46,8 @@
 - **Paint that behaves like paint.** Paintballs fly with a little drop and burst into splats; the field gets messier
   with every round because the paint stays. Hits leave marks on players, too.
 - **Locker.** Pick a player and make them yours: paintball masks and headgear, hair, face, and team jerseys or camo.
+- **Shop (cosmetics only).** Marker finishes and costumes, bought with a card or stablecoin crypto through Stripe. Nothing
+  affects gameplay. See [`docs/MONETIZATION.md`](docs/MONETIZATION.md).
 - **Boss Battle (bonus mode, beta).** Everyone on one squad against HULLBREAKER, a giant hermit crab living in a
   rusted shipping container.
 - **A map you can actually read.** Hold <kbd>Tab</kbd> and the camera cranes up into a tilt-shift diorama of the live

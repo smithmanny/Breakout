@@ -15,6 +15,7 @@
 //   {"t":"welcome","id","host","members":[{id,name}]}           {"t":"join","m":{id,name}}
 //   {"t":"leave","id","host"}                                   {"t":"err","e":"…"} (then close)
 import { DurableObject } from 'cloudflare:workers';
+import { handleShop } from './shop.js';   // cosmetics shop API (/shop/*): see docs/MONETIZATION.md
 
 const PROTO = 1, MAX = 8;
 // Public relay hygiene: only the game's own site may open rooms (plus local dev), each socket gets a message budget
@@ -29,8 +30,9 @@ const SILENT_MATCH = 20000, SILENT_LOBBY = 150000, SWEEP = 4000;   // a heavy tr
 const CODE = /^[A-Z0-9]{4,8}$/;
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const url = new URL(req.url);
+    if (url.pathname.startsWith('/shop/')) return handleShop(req, env, ctx);
     if (url.pathname === '/health') return new Response('ok', { headers: { 'access-control-allow-origin': '*' } });
     const m = url.pathname.match(/^\/room\/([A-Za-z0-9]+)$/);
     if (!m) return new Response('INKWAVE relay', { status: 404 });

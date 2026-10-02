@@ -175,6 +175,16 @@ class Game {
     this.fpsAcc = 0; this.fpsN = 0; this.fps = 60;
     G.mode = 'menu';
     this.menus?.show(params.has('skipTitle') ? 'main' : 'title');
+    // shop (src/shop): load the cached entitlements so owned cosmetics render, and finish a checkout redirect if we came back from one
+    import('./shop/client.js').then(async ({ getShop }) => {
+      const shop = getShop();
+      if (shop.id || params.has('shop')) {
+        const ret = await shop.handleReturn();
+        shop.refresh();
+        const say = { paid: 'Purchase complete! Your items are in the Shop.', pending: 'Payment received, confirming. Your items will appear shortly.', cancelled: 'Checkout cancelled.', failed: 'The payment did not go through.', rejected: 'We could not verify that payment. Contact support.' }[ret && ret.status];
+        if (say) this.menus?.toast(say, { kind: ret.status === 'paid' ? 'info' : 'error', ms: 6000 });
+      }
+    }).catch((e) => console.warn('[shop]', e));
     // the online hub / lobby set loads in the background once the menus are idle (no arena flash on the first visit)
     if (!params.has('autostart')) setTimeout(() => { if (G.mode === 'menu') this.showcase.preloadLobby?.(); }, 2500);
     this._applyAudioVolumes();
@@ -380,7 +390,7 @@ class Game {
     if (s === 'loadout') this.showcase.showLoadout(validWeapon(this.profile.weapon), G.teamColors[0], this.profile.style);
     else if (s !== 'results') { if (this.showcase.mode === 'loadout') this.showcase.hide(); }
     if (G.mode === 'menu') {
-      if (s === 'title' || s === 'main' || s === 'setup' || s === 'settings' || s === 'howto' || s === 'credits' || s === 'loadout' || s === 'locker' || s === 'online' || s === 'lobby') {
+      if (s === 'title' || s === 'main' || s === 'setup' || s === 'settings' || s === 'howto' || s === 'credits' || s === 'loadout' || s === 'locker' || s === 'shop' || s === 'online' || s === 'lobby') {
         if (this._musicTrack !== (s === 'title' ? 'title' : 'menu')) this._playMusic(s === 'title' ? 'title' : 'menu');
       }
     }

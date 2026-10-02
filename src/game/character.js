@@ -36,6 +36,7 @@ import { TIERS, T_HERO, T_GAME, T_FAR, LOD_QUALITY, KID_H, FADE_S, pickTier, dit
 import * as STYLE from './character-style.js';
 const { SKIN_TONES, OUTFITS, IRIS, HAIR_STYLES, resolveStyle } = STYLE;
 export { SKIN_TONES, OUTFITS, IRIS, HAIR_STYLES };
+import { gate as gateCosmetics, applyCostume, applyWeaponSkin } from '../shop/cosmetics.js';   // premium cosmetics (src/shop)
 
 // ------------------------------------------------------------------------------------------------
 // Math helpers (allocation-free)
@@ -413,7 +414,7 @@ export class Character {
     const st = opts.style || {};
     const seed = hashStr(this.name);
     this.seed = seed;
-    this.style = resolveStyle(st, seed);
+    this.style = gateCosmetics(resolveStyle(st, seed));   // premium wskin / costume survive only when owned or signed-claim verified
     this.rng = mulberry(seed);
     this.color = new THREE.Color();
     this.enemyColor = new THREE.Color('#2f5bff');
@@ -435,6 +436,7 @@ export class Character {
       u.uSole.value.set(outfit.sole); u.uSock.value.set(outfit.sock); u.uStrap.value.set(outfit.strap); u.uPattern.value = outfit.pattern;
       u.uIris.value.set(IRIS[this.style.eyes][0]); u.uIris2.value.set(IRIS[this.style.eyes][1]);
     }
+    applyCostume(u, this.style);
     u.uHurtSeed.value = (seed % 997) * 0.37;
     // BREAKOUT: a paintball mask hides the face (eyes mesh off, ears folded flat under the ear pieces)
     this.masked = typeof STYLE.isMasked === 'function' ? STYLE.isMasked(this.style) : false;
@@ -686,8 +688,9 @@ export class Character {
     if (this.weapons[kind]) return this.weapons[kind];
     const d = getWeaponDef(kind);
     const w = this._weaponInstance(d, false);
+    applyWeaponSkin(w, this.style);
     // dual wield: a second instance of the same weapon in the LEFT fist (docs: character-weapons.js getWeaponDef)
-    if (d.dual && d.inHandL) w.left = this._weaponInstance(d, true);
+    if (d.dual && d.inHandL) { w.left = this._weaponInstance(d, true); applyWeaponSkin(w.left, this.style); }
     this.weapons[kind] = w;
     return w;
   }
