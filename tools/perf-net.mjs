@@ -1,0 +1,16 @@
+import puppeteer from 'puppeteer-core';
+const base = process.argv[2] || 'http://localhost:8490/';
+const b = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=metal', '--enable-gpu'] });
+const p = await b.newPage(); const c = await p.createCDPSession(); await c.send('Network.enable');
+await c.send('Network.setCacheDisabled', { cacheDisabled: true });
+const rows = {}; const t0 = Date.now();
+c.on('Network.requestWillBeSent', (e) => { rows[e.requestId] = { url: e.request.url.replace(base, ''), t: Date.now() - t0 }; });
+c.on('Network.loadingFinished', (e) => { const r = rows[e.requestId]; if (r) { r.kb = Math.round(e.encodedDataLength / 1024); r.end = Date.now() - t0; } });
+await p.goto(base + '?autostart=60&autopilot');
+await p.waitForFunction('window.__inkwave && __inkwave.match && __inkwave.match.state==="playing"', { timeout: 300000 });
+const all = Object.values(rows);
+console.log(all.filter((r) => r.kb >= 40).map((r) => `${r.kb}KB ${r.t}-${r.end} ${r.url}`).join('\n'));
+const js = all.filter((r) => /\.js/.test(r.url));
+console.log('js files', js.length, 'KB', js.reduce((a, r) => a + r.kb, 0), 'first', Math.min(...js.map((r) => r.t)), 'last end', Math.max(...js.map((r) => r.end)));
+console.log('other', all.filter((r) => !/\.js/.test(r.url)).map((r) => `${r.kb}KB ${r.url.slice(0, 60)}`).join('\n'));
+await b.close();

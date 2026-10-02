@@ -43,13 +43,12 @@ const TEX = {
   sizzle: { dur: 2, rate: 450, crackle: true, d: [0.0006, 0.003], amp: [0.05, 1] },
 };
 const texCache = new WeakMap();
-export function texture(ctx, kind) {
-  let m = texCache.get(ctx);
-  if (!m) { m = new Map(); texCache.set(ctx, m); }
-  let buf = m.get(kind);
-  if (buf) return buf;
+// The synthesis is a generator so the idle warm-up can slice it (a texture takes 30-100 ms in one go: a visible frame
+// hitch right as the menu / match starts). `yield` after each grain event; drained in one go it is the same code in the
+// same order, so the samples are bit-identical either way.
+function* buildTexture(ctx, kind, m, out) {
   const s = TEX[kind], sr = ctx.sampleRate, len = Math.floor(s.dur * sr);
-  buf = ctx.createBuffer(1, len, sr);
+  const buf = ctx.createBuffer(1, len, sr);
   const d = buf.getChannelData(0);
   let seed = 0;
   for (const c of kind) seed = (seed * 31 + c.charCodeAt(0)) | 0;
@@ -71,15 +70,40 @@ export function texture(ctx, kind) {
         d[(start + i) % len] += amp * (1 - Math.exp(-i / atk)) * Math.exp(-i / dec) * Math.sin(ph);
       }
     }
+    if ((k & 7) === 7) yield;
   }
+  yield;
   let ss = 0, pk = 0, mean = 0;
   for (let i = 0; i < len; i++) mean += d[i];
   mean /= len;
   for (let i = 0; i < len; i++) { d[i] -= mean; ss += d[i] * d[i]; pk = Math.max(pk, Math.abs(d[i])); }
   const g = Math.min(0.25 / Math.sqrt(ss / len || 1), 0.95 / (pk || 1));
   for (let i = 0; i < len; i++) d[i] *= g;
-  m.set(kind, buf);
-  return buf;
+  if (!m.has(kind)) m.set(kind, buf);   // (a sliced warm-up that lost the race to a synchronous request keeps the first buffer)
+  out.buf = m.get(kind);
+}
+const texMap = (ctx) => { let m = texCache.get(ctx); if (!m) { m = new Map(); texCache.set(ctx, m); } return m; };
+export function texture(ctx, kind) {
+  const m = texMap(ctx), have = m.get(kind);
+  if (have) return have;
+  const out = {};
+  for (const _ of buildTexture(ctx, kind, m, out));
+  return out.buf;
+}
+/** Build a texture in ~`budgetMs` slices, calling `idle(next)` between them (setTimeout-style). Resolves when cached. */
+export function textureSliced(ctx, kind, schedule = (f) => setTimeout(f, 0), budgetMs = 4) {
+  return new Promise((resolve) => {
+    const m = texMap(ctx);
+    if (m.has(kind)) return resolve(m.get(kind));
+    const out = {}, g = buildTexture(ctx, kind, m, out);
+    const run = () => {
+      if (m.has(kind)) return resolve(m.get(kind));   // built synchronously meanwhile
+      const t = performance.now();
+      for (;;) { if (g.next().done) return resolve(out.buf); if (performance.now() - t > budgetMs) break; }
+      schedule(run);
+    };
+    run();
+  });
 }
 
 /* ------------------------------------------------------------------------------------------------------------
@@ -167,7 +191,7 @@ export class AudioEngine {
   // pre-render grain textures in idle slices so the first swim/roll doesn't hitch
   _warm() {
     const kinds = Object.keys(TEX);
-    const step = () => { const k = kinds.shift(); if (!k || !this.ctx) return; texture(this.ctx, k); setTimeout(step, 40); };
+    const step = async () => { const k = kinds.shift(); if (!k || !this.ctx) return; await textureSliced(this.ctx, k); setTimeout(step, 20); };
     setTimeout(step, 60);
   }
 
