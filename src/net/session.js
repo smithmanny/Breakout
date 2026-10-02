@@ -7,6 +7,7 @@
 import { G, emit } from '../core/ctx.js';
 import { MAPS, WEAPONS, WEAPON_ORDER, validWeapon, MATCH, ROUNDS, BOT_NAMES, TEAM_PALETTES, mapNoBots, mapBossOk, bossFallbackMap, noBotsStartBlock } from '../config.js';
 import { randomStyle } from '../game/character-style.js';
+import { prime as primeClaim } from '../shop/claims.js';   // verify other players' signed cosmetic claims as they arrive
 import { Transport } from './transport.js';
 import { NetMatch } from './netmatch.js';
 
@@ -186,7 +187,7 @@ export class NetSession {
   }
   // local view: mark you + host
   _pushLobby() {
-    for (const p of this.lobby.players) { p.you = p.id === this.myId; p.host = p.id === this.hostId; }
+    for (const p of this.lobby.players) { p.you = p.id === this.myId; p.host = p.id === this.hostId; primeClaim(p.style); }
     this._emit('lobby', { lobby: this.lobby });
   }
 
