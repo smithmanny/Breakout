@@ -90,7 +90,8 @@ export const damageCap = (w) => (DMG_CAP[w] ? Math.ceil(DMG_CAP[w] * 1.1) + 1 : 
 export function reachOf(w) {
   const c = WEAPONS[w];
   if (!c) return 40;
-  return Math.max(c.range || 0, c.rangeMax || 0, c.projSpeed && c.life ? c.projSpeed * c.life * 0.5 : 0, 12);
+  // (balls fly ~1.1 s unless the weapon says otherwise; gravity / drag shorten that, so 0.8 of the straight-line reach)
+  return Math.max(c.range || 0, c.rangeMax || 0, c.projSpeed ? c.projSpeed * (c.life || 1.1) * 0.8 : 0, 12);
 }
 
 export function cleanHit(d) {
@@ -127,7 +128,7 @@ export function checkTick(d) {
       for (let i = 1; i < s.length; i++) {
         const v = s[i];
         if (v === null || v === undefined) continue;
-        if (typeof v !== 'number' || !Number.isFinite(v) || Math.abs(v) > 5000) return null;
+        if (typeof v !== 'number' || !Number.isFinite(v) || Math.abs(v) > (i <= 3 ? 5000 : 4294967296)) return null;   // (index 10 is the flag bitmask; 1..3 the position)
       }
     }
   }

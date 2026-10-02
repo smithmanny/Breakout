@@ -61,6 +61,7 @@ say('1. wire rules');
   ok(!V.cleanMessage({ k: 't', ts: 'x' }, false) && !V.cleanMessage({ k: 't', ts: 5, a: Array.from({ length: 17 }, () => actor(0)) }, false), 'tick: bad ts / too many actors');
   ok(!V.cleanMessage({ k: 't', ts: 5, a: [[0, 'a', ...Array(20).fill(1)]] }, false) && !V.cleanMessage({ k: 't', ts: 5, a: [[0, 1e999, ...Array(20).fill(1)]] }, false), 'tick: non-numeric / infinite snapshot values');
   ok(!V.cleanMessage({ k: 't', ts: 5, a: [[0, 1e6, ...Array(20).fill(1)]] }, false), 'tick: position out of the world');
+  ok(V.cleanMessage({ k: 't', ts: 5, a: [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1048593, 100, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0]] }, false), 'tick: a real snapshot (flag bitmask > 5000) passes');
   ok(!V.cleanMessage({ k: 't', ts: 5, e: Array.from({ length: 500 }, () => [1, 'ev']) }, false) && !V.cleanMessage({ k: 't', ts: 5, e: [['x', 'ev']] }, false), 'tick: event flood / bad event');
   for (const k of ['st', 'res', 'end', 'own', 'go']) ok(!V.cleanMessage({ k, id: 'abc' }, false), `${k}: host only`);
   ok(!V.cleanMessage({ k: 'sudo' }, true) && !V.cleanMessage({ k: 5 }, true) && !V.cleanMessage([], true) && !V.cleanMessage(null, true) && !V.cleanMessage('x', true), 'unknown kinds / junk');
