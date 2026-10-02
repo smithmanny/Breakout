@@ -28,7 +28,7 @@ page.on('pageerror', (e) => errs.push(e.message));
 page.on('console', (m) => m.type() === 'error' && errs.push(m.text()));
 if (args.includes('--cpu')) { await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 500 }); await cdp.send('Profiler.start'); }
 if (args.includes('--cpuplay')) await cdp.send('Profiler.enable');
-if (opt('cpu', 0) > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: +opt('cpu', 1) });
+if (opt('throttle', 0) > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: +opt('throttle', 1) });
 const t0 = Date.now();
 await page.goto(url, { waitUntil: 'load' });
 await page.waitForFunction('window.__inkwave && __inkwave.match && __inkwave.match.state==="playing" && __inkwave.match.local && !__inkwave.match.attract', { timeout: 300000, polling: 200 });
@@ -50,12 +50,15 @@ if (args.includes('--cpu')) cpu = await stopCpu();
 const boot = await page.evaluate('__inkwave.bootMs');
 await new Promise((r) => setTimeout(r, 3000));
 if (args.includes('--cpuplay')) { await cdp.send('Profiler.setSamplingInterval', { interval: 250 }); await cdp.send('Profiler.start'); }
-if (args.includes('--alloc')) await cdp.send('HeapProfiler.startSampling', { samplingInterval: 4096 });
+if (args.includes('--alloc')) await cdp.send('HeapProfiler.startSampling', { samplingInterval: 2048, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true });
 await cdp.send('Performance.enable');
 const metrics = async () => Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map((m) => [m.name, m.value]));
 const m0 = await metrics();
 await page.evaluate(() => { window.__ft = []; let l = performance.now(); const f = (t) => { __ft.push(t - l); l = t; requestAnimationFrame(f); }; requestAnimationFrame(f); });
-await new Promise((r) => setTimeout(r, SECS * 1000));
+// allocation rate: sum of heap growth between samples (drops = GC runs, counted separately)
+let allocB = 0, gcs = 0, lastHeap = (await metrics()).JSHeapUsedSize;
+const endAt = Date.now() + SECS * 1000;
+while (Date.now() < endAt) { await new Promise((r) => setTimeout(r, 50)); const h = (await metrics()).JSHeapUsedSize; if (h >= lastHeap) allocB += h - lastHeap; else gcs++; lastHeap = h; }
 const m1 = await metrics();
 if (args.includes('--cpuplay')) cpu = await stopCpu();
 const res = await page.evaluate(() => {
@@ -74,6 +77,6 @@ if (args.includes('--alloc')) {
 const secs = m1.Timestamp - m0.Timestamp;
 console.log(JSON.stringify({ url, toPlayS: toPlay / 1000, bootMs: boot, bytesKB: Math.round(bytes / 1024), reqs,
   taskMsPerSec: (m1.TaskDuration - m0.TaskDuration) / secs * 1000, scriptMsPerSec: (m1.ScriptDuration - m0.ScriptDuration) / secs * 1000,
-  ...res, cpu, cpuIncl, alloc, errs: errs.slice(0, 5) }, null, 1));
+  allocKBps: Math.round(allocB / 1024 / SECS), gcPer10s: +(gcs / SECS * 10).toFixed(1), ...res, cpu, cpuIncl, alloc, errs: errs.slice(0, 5) }, null, 1));
 kill();
 process.exit(0);

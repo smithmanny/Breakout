@@ -116,6 +116,12 @@ const UP = new THREE.Vector3(0, 1, 0), DOWN = new THREE.Vector3(0, -1, 0), XAX =
 const _sEnd = new THREE.Quaternion(), _sQp = new THREE.Quaternion(), _sQa = new THREE.Quaternion(), _sQb = new THREE.Quaternion(), _sP = new THREE.Vector3(), _sT = new THREE.Vector3(), _sPole = new THREE.Vector3();
 const IDENT = new THREE.Matrix4();
 const _cW = new THREE.Color(1, 1, 1);
+// Skinned body parts draw their shadow depth with one shared skinned-only depth material. The shadow pass walks the scene
+// graph in order, so skinned parts and static parts (weapon, mask) alternate; with the stock shared depth material every
+// switch re-resolves the shader program (getParameters + cache key: ~20 per frame, ~40 % of the heap churn). Same shader
+// as three's own RGBA-packed depth material, so the depth output is identical.
+const SKIN_DEPTH = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+const stockDepthOk = (m) => !(m.displacementMap && m.displacementScale !== 0) && !(m.alphaMap && m.alphaTest > 0) && !(m.map && m.alphaTest > 0) && m.alphaToCoverage !== true;
 const _vVH = new THREE.Vector2(), _lodC = new THREE.Vector3(), _lodK = new THREE.Vector3();
 // far-tier triangle targets per part (decimated from the game tier when the builders give no far mesh)
 const FAR_TRIS = { skin: 2600, cloth: 3800, hair: 2000, eyes: 260 };
@@ -764,7 +770,10 @@ export class Character {
       m.bind(this.skeleton, IDENT);
       m.castShadow = p.shadow; m.receiveShadow = true;
       m.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0.75, 0), 1.3);
-      m.frustumCulled = true; m.renderOrder = p.order || 0; m.visible = false;
+      // (opaque skinned parts sort after the static ones in the GTAO normal pass, which re-resolves its override program
+      // on every skinned<->static switch; order is irrelevant for opaque draws, the depth buffer decides)
+      m.frustumCulled = true; m.renderOrder = p.order || (m.material.transparent ? 0 : 1); m.visible = false;
+      if (stockDepthOk(m.material)) m.customDepthMaterial = SKIN_DEPTH;
       m.name = 'kid:' + p.key + ':' + TIERS[t];
       m.userData.iwMat = p.mat; m.userData.iwShadow = p.shadow; m.userData.iwKey = p.key;
       this.kid.add(m); S.meshes[p.key] = m; S.list.push(m);
