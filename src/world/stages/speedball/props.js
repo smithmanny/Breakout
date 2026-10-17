@@ -7,7 +7,7 @@
 // Everything here stands outside the field of play except the netting (its colliders are the field's walls: solid, never
 // inkable, an off-limits top) and the start stations (no collider: they stand on the back line inside the spawn).
 // Cheap on triangles: flat panels, boxes and low-segment tubes; the net itself is one alpha-tested plane per bay.
-import { NET } from './layout.js';
+import { NET, PROM } from './layout.js';
 
 const P = Math.PI;
 
@@ -257,19 +257,68 @@ export const PLACEMENTS = [
   // spectators' side: a long bleacher outside the net on the snake side (the mirror gives the far side's), scoreboard
   { type: 'speedball_bleacher', pos: [17.3, 0, -8.5], rotY: -P / 2, length: 11, rows: 5 },
   { type: 'speedball_scoreboard', pos: [-16.2, 0, -7.5], rotY: P / 2 },
-  // flood lights along both sidelines (dusk), trees round the park
+  // flood lights along both sidelines (dusk), trees round the park (on the lawn: no tree grates)
   { type: 'lightpole', pos: [15.4, 0, -16.5], rotY: -P / 2 + 0.25, variant: 0, height: 10, color: '#b9c0c6' },
   { type: 'lightpole', pos: [-15.4, 0, -16.5], rotY: P / 2 - 0.25, variant: 0, height: 10, color: '#b9c0c6' },
-  { type: 'tree', pos: [-21.5, 0, -33.5], variant: 0, height: 5.2 },
-  { type: 'tree', pos: [-13.5, 0, -36.5], variant: 0, height: 4.6 },
-  { type: 'tree', pos: [13.0, 0, -35.8], variant: 0, height: 5.0 },
-  { type: 'tree', pos: [24.5, 0, -27.0], variant: 0, height: 4.4 },
-  { type: 'tree', pos: [25.5, 0, -2.5], variant: 0, height: 5.4 },
-  { type: 'tree', pos: [-25.0, 0, -18.0], variant: 0, height: 4.8 },
-  { type: 'bush', pos: [-19.0, 0, -28.5], scale: 1.3 },
+  { type: 'tree', pos: [-21.5, 0, -32.6], variant: 0, height: 5.2, grate: false },
+  { type: 'tree', pos: [-15.2, 0, -34.4], variant: 0, height: 4.6, grate: false },
+  { type: 'tree', pos: [18.6, 0, -33.6], variant: 0, height: 5.0, grate: false },
+  { type: 'tree', pos: [23.4, 0, -27.0], variant: 0, height: 4.4, grate: false },
+  { type: 'tree', pos: [23.6, 0, -1.8], variant: 0, height: 5.4, grate: false },
+  { type: 'tree', pos: [-23.8, 0, -18.0], variant: 0, height: 4.8, grate: false },
+  { type: 'bush', pos: [-18.6, 0, -28.2], scale: 1.3 },
   { type: 'bush', pos: [20.0, 0, -18.0], scale: 1.1 },
   { type: 'bench', pos: [-16.4, 0, -14.5], rotY: P / 2 },
   { type: 'cooler', pos: [-16.3, 0, -12.9], rotY: P / 2 },
+  // ---- the waterfront boardwalk round the park (layout.js PROM): timber pier edge with tall piles on the water side, a
+  // handrail, street lights, benches looking out over the bay, palms. Back edge z = -40, sides x = ±30.
+  { type: 'pieredge', pos: [30, 0, -40], rotY: P, length: 60, outer: true, spacing: 4.6, cleats: [9.5, 50.5], fenders: [16, 44] },
+  { type: 'pieredge', pos: [30, 0, 0], rotY: P / 2, length: 40, outer: true, spacing: 4.6, ext1: 0.1, cleats: [14], fenders: [26] },
+  { type: 'pieredge', pos: [-30, 0, -40], rotY: -P / 2, length: 40, outer: true, spacing: 4.6, ext0: 0.1, cleats: [26], fenders: [14] },
+  { type: 'railing', pos: [-29.45, 0, -39.45], rotY: 0, length: 58.9 },
+  { type: 'railing', pos: [29.45, 0, -39.45], rotY: -P / 2, length: 39.45 },
+  { type: 'railing', pos: [-29.45, 0, -39.45], rotY: -P / 2, length: 39.45 },
+  { type: 'lightpole', pos: [-17, 0, -40 + PROM - 0.45], rotY: 0, variant: 1, height: 6 },
+  { type: 'lightpole', pos: [17, 0, -40 + PROM - 0.45], rotY: 0, variant: 1, height: 6 },
+  { type: 'lightpole', pos: [30 - PROM + 0.45, 0, -30], rotY: P / 2, variant: 1, height: 6 },
+  { type: 'lightpole', pos: [30 - PROM + 0.45, 0, -12], rotY: P / 2, variant: 1, height: 6 },
+  { type: 'lightpole', pos: [-30 + PROM - 0.45, 0, -30], rotY: -P / 2, variant: 1, height: 6 },
+  { type: 'lightpole', pos: [-30 + PROM - 0.45, 0, -12], rotY: -P / 2, variant: 1, height: 6 },
+  { type: 'bench', pos: [-24, 0, -38.3], rotY: P, length: 1.8 },
+  { type: 'bench', pos: [-10.5, 0, -38.3], rotY: P, length: 1.8 },
+  { type: 'bench', pos: [23.5, 0, -38.3], rotY: P, length: 1.8 },
+  { type: 'bench', pos: [28.3, 0, -21], rotY: P / 2, length: 1.8 },
+  { type: 'bench', pos: [28.3, 0, -5], rotY: P / 2, length: 1.8 },
+  { type: 'bench', pos: [-28.3, 0, -21], rotY: -P / 2, length: 1.8 },
+  { type: 'bench', pos: [-28.3, 0, -5], rotY: -P / 2, length: 1.8 },
+  { type: 'trashbin', pos: [-8.9, 0, -38.5], variant: 0 },
+  { type: 'trashbin', pos: [28.5, 0, -19.3], variant: 0 },
+  { type: 'trashbin', pos: [-28.5, 0, -6.7], variant: 0 },
+  { type: 'tree', pos: [27.3, 0, -37.3], variant: 1, height: 5.6 },
+  { type: 'tree', pos: [-27.3, 0, -37.3], variant: 1, height: 5.0 },
+  { type: 'tree', pos: [27.2, 0, -25.5], variant: 1, height: 5.2 },
+  { type: 'tree', pos: [-27.2, 0, -25.5], variant: 1, height: 5.4 },
+  // ---- the walk from the pits to the boardwalk: flower beds at its mouth, a fingerpost, the food carts + vending on
+  // the boardwalk, bike parking, picnic tables on the lawn, the merch stall on the scoreboard side
+  { type: 'planter', pos: [-2.6, 0, -35.6], variant: 1, length: 1.6, width: 0.8, height: 0.5 },
+  { type: 'planter', pos: [2.6, 0, -35.6], variant: 1, length: 1.6, width: 0.8, height: 0.5 },
+  { type: 'fingerpost', pos: [2.3, 0, -32.4], rotY: 0.4, count: 3, variant: 3 },
+  { type: 'cart', pos: [-5.8, 0, -37.8], rotY: 0, variant: 1 },
+  { type: 'cart', pos: [6.4, 0, -37.8], rotY: 0, variant: 0 },
+  { type: 'aboard', pos: [-3.9, 0, -35.9], rotY: 0.35, variant: 0 },
+  { type: 'vending', pos: [10.4, 0, -38.9], rotY: 0, variant: 0 },
+  { type: 'vending', pos: [11.5, 0, -38.9], rotY: 0, variant: 1, color: 'coral' },
+  { type: 'bikerack', pos: [-9.6, 0, -34.6], rotY: 0, count: 4, bikes: 3 },
+  { type: 'picnic', pos: [-13.4, 0, -29.6], rotY: 0.1, variant: 0 },
+  { type: 'picnic', pos: [12.8, 0, -33.4], rotY: -0.15, variant: 1 },
+  { type: 'picnic', pos: [23.0, 0, -18.4], rotY: P / 2, variant: 0 },
+  { type: 'stall', pos: [-21.6, 0, -24.0], rotY: P / 2, variant: 2, width: 2.6 },
+  { type: 'deckchair', pos: [-24.3, 0, -9.2], rotY: -P / 2, variant: 1 },
+  { type: 'bunting', pos: [-8.6, 0, -31.6], rotY: 0, length: 17.2, height: 3.2, team: 0 },
+  // out on the bay
+  { type: 'buoy', pos: [36, -1.75, -31], variant: 0, color: 'coral' },
+  { type: 'buoy', pos: [-37, -1.75, -12], variant: 0, color: 'mustard' },
+  { type: 'channelmarker', pos: [-22, -1.6, -50], variant: 0 },
   // straps over the snake's segment joints
   { type: 'speedball_strap', pos: [10.8, 0, -12.2], w: 1.25, h: 1.0 },
   { type: 'speedball_strap', pos: [10.8, 0, -9.0], w: 1.25, h: 1.0 },

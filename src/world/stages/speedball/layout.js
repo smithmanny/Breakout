@@ -24,6 +24,7 @@ export const FIELD = { hx: 12.5, hz: 22.5 };      // painted boundary lines
 export const NET = { x: 13.6, z: 24.2, h: 5.2 };  // netting (props.js) — the colliders stand on this line
 const TURF = { hx: 13.8, hz: 24.4 };              // turf slabs (a little past the net)
 const PARK = { hx: 30, hz: 40 };                  // park lawn around the field (outside the net: not inkable)
+export const PROM = 3.5;                          // boardwalk promenade round the park's water edge (props.js dresses it)
 
 const K = {
   turf: '#4f9a3f', lawn: '#6a9446', path: '#d3cbb9',
@@ -79,6 +80,7 @@ const ground = [
   B(-TURF.hx, TURF.hx, -1.2, 0, 0, TURF.hz, { tag: 'turf', color: K.turf, pattern: SURF.turf, mural: [{ n: [0, 1, 0], id: 5 }] }),
 ];
 const lawn = (o = {}) => ({ tag: 'lawn', color: K.lawn, pattern: SURF.lawn, paint: false, ...o });
+const boardwalk = { tag: 'promenade', color: K.path, pattern: PATTERN.planks, paint: false };
 
 const SPEEDBALL = {
   id: 'speedball',
@@ -96,12 +98,17 @@ const SPEEDBALL = {
     O(1.078, -1.078, 1.1, 1.95, 0, 1.25, -45, nylon(K.red, 'x-arm')),
   ],
   half: [
-    // ================= park lawn outside the net (not inkable; the bleachers, pits and staging area stand on it)
-    B(-PARK.hx, PARK.hx, -1.2, 0, -PARK.hz, -TURF.hz, lawn()),
-    B(TURF.hx, PARK.hx, -1.2, 0, -TURF.hz, 0, lawn()),
-    B(-PARK.hx, -TURF.hx, -1.2, 0, -TURF.hz, 0, lawn()),
-    // gravel walk + pit pad behind the start end (outside the net), a hair above the lawn
+    // ================= park lawn outside the net (not inkable; the bleachers, pits and staging area stand on it),
+    // ringed by a hardwood boardwalk along the water (back edge + both sides; the mirror closes the ring)
+    B(-PARK.hx, PARK.hx, -1.2, 0, -PARK.hz, -PARK.hz + PROM, boardwalk),
+    B(PARK.hx - PROM, PARK.hx, -1.2, 0, -PARK.hz + PROM, 0, boardwalk),
+    B(-PARK.hx, -PARK.hx + PROM, -1.2, 0, -PARK.hz + PROM, 0, boardwalk),
+    B(-PARK.hx + PROM, PARK.hx - PROM, -1.2, 0, -PARK.hz + PROM, -TURF.hz, lawn()),
+    B(TURF.hx, PARK.hx - PROM, -1.2, 0, -TURF.hz, 0, lawn()),
+    B(-PARK.hx + PROM, -TURF.hx, -1.2, 0, -TURF.hz, 0, lawn()),
+    // pit pad behind the start end (outside the net) and the paved walk from it to the boardwalk, a hair above the lawn
     B(-9, 9, 0, 0.04, -31.5, -26.5, { tag: 'pits-pad', color: K.path, pattern: PATTERN.pavers, paint: false }),
+    B(-1.4, 1.4, 0, 0.04, -PARK.hz + PROM, -31.5, { tag: 'pits-pad', color: K.path, pattern: PATTERN.pavers, paint: false }),
 
     // ================= start: the home brick in front of the start station
     pillow(0, -15.6, 2.8, 1.0, 1.75, 0, K.blue, 'home'),

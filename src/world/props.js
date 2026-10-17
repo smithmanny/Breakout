@@ -1208,7 +1208,7 @@ const P3 = (x, y, z) => [x, y, z];
 
 D.railing = {
   desc: 'Painted steel handrail (posts every ~1.2 m, rounded top rail, mid + toe rails, flanged feet). Runs from pos along local +X.',
-  params: { length: 'm (4)', height: 'm (1.0)', color: 'paint (railing)' }, variants: 1, mount: 'ground',
+  params: { length: 'm (4)', height: 'm (1.0)', color: 'paint (railing)', rail: 'bool: collides as a railing (kids blocked; shots / ink / squids pass)' }, variants: 1, mount: 'ground',
   build(B, o) {
     const L = o.length ?? 4, H = o.height ?? 1.0, c = o.color ?? 'railing';
     const n = Math.max(2, Math.round(L / 1.2) + 1);
@@ -1222,7 +1222,7 @@ D.railing = {
     B.sph('gloss', c, 0.04, L, H - 0.018, 0, { ws: 10, hs: 6 });
     B.cyl('gloss', c, 0.021, L, L / 2, H * 0.55, 0, { rz: HP, seg: 8, open: true });
     B.cyl('gloss', c, 0.018, L, L / 2, 0.15, 0, { rz: HP, seg: 8, open: true });
-    B.col(-0.05, 0, -0.06, L + 0.05, H, 0.06);
+    B.col(-0.05, 0, -0.06, L + 0.05, H, 0.06, o.rail ? { rail: true } : undefined);
   },
 };
 
@@ -1402,13 +1402,13 @@ D.bush = {
 
 D.tree = {
   desc: 'variant 0 = round-canopy plaza tree on a steel tree grate, 1 = curved palm with serrated fronds + coconuts.',
-  params: { height: 'm (v0 4.2 / v1 5.2)', seed: 'shape' }, variants: 2, mount: 'ground',
+  params: { height: 'm (v0 4.2 / v1 5.2)', seed: 'shape', grate: 'bool: v0 tree grate (true; false on lawn)' }, variants: 2, mount: 'ground',
   build(B, o) {
     const v = (o.variant ?? 0) % 2, det = B.k.qf >= 1 ? 2 : 1;
     if (v === 0) {
       const h = (o.height ?? 4.2) / 4.2;
       B.push(0, 0, 0, 0, 0, 0, 1);
-      B.box('metal', 'darksteel', 1.2, 0.03, 1.2, 0, 0.015, 0, { r: 0.012 });
+      if (o.grate !== false) B.box('metal', 'darksteel', 1.2, 0.03, 1.2, 0, 0.015, 0, { r: 0.012 });
       B.lathe('wood', 'bark', [[0, 0], [0.24, 0], [0.18, 0.06], [0.14, 0.2], [0.12, 0.9 * h], [0.1, 1.9 * h], [0.08, 2.5 * h], [0, 2.55 * h]], 0, 0, 0, { seg: 10 });
       B.tube('wood', 'bark', [P3(0, 1.5 * h, 0), P3(0.25, 1.9 * h, 0.08), P3(0.55, 2.35 * h, 0.15)], (t) => 0.07 - t * 0.03, { radial: 7 });
       B.tube('wood', 'bark', [P3(0, 1.7 * h, 0), P3(-0.22, 2.1 * h, -0.1), P3(-0.45, 2.5 * h, -0.2)], (t) => 0.06 - t * 0.025, { radial: 7 });

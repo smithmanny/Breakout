@@ -628,10 +628,10 @@ export function register(D, H) {
   }
   D.cargo_box = {
     desc: 'Container dressing for a stack box (the body is a level block): corner posts + castings, rails, forklift pockets, door end (locking bars, cams, hinges, CSC plate, owner code) at +Z or a reefer machinery end — hardware only over the block face, so ink on the end shows. pos = bottom centre, local Z = length.',
-    params: { len: '20 | 40', color: 'box paint', door: '+1 door at local +Z, -1 at −Z', reefer: 'bool', code: 'owner code' }, variants: 1, mount: 'ground',
+    params: { len: '20 | 40', color: 'box paint', door: '+1 door at local +Z, -1 at −Z', reefer: 'bool', code: 'owner code', h: 'block height (2.6)' }, variants: 1, mount: 'ground',
     build(B, o) {
       B.aoBase = null;
-      containerBody(B, 0, 0, 0, o.len ?? 20, o.color ?? '#a8583f', { doorAt: o.door ?? 1, reefer: !!o.reefer, code: o.code });
+      containerBody(B, 0, 0, 0, o.len ?? 20, o.color ?? '#a8583f', { doorAt: o.door ?? 1, reefer: !!o.reefer, code: o.code, h: o.h });
     },
   };
   D.cargo_loosebox = {

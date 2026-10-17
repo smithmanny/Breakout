@@ -11,6 +11,8 @@
 import { PATTERN } from './mapkit.js';
 import { LAYOUT as CARGO } from './stages/cargo/layout.js';
 import { LAYOUT as SPEEDBALL } from './stages/speedball/layout.js';
+// Kelpline borrows Cargo Terminal's stage surfaces (yard tarmac, quay concrete, chequer plate): stage slots exist on every map
+import { SURF } from './stages/cargo/surfaces.js';
 export { PATTERN };
 
 const C = {
@@ -34,38 +36,38 @@ export const TIDEWATER = {
   // Blocks that are their own mirror image (centered on the origin).
   single: [
     // Main deck slab
-    B(-21, 21, -1.2, 0, -44, 44, { color: C.deck, pattern: PATTERN.deck }),
+    B(-21, 21, -1.2, 0, -44, 44, { color: C.deck, pattern: PATTERN.pavers }),
     // Central tower
-    B(-5, 5, 0, 2.8, -5, 5, { color: C.tile, pattern: PATTERN.tiles }),
-    B(-1.6, 1.6, 2.8, 3.8, -0.45, 0.45, { color: C.cream, pattern: PATTERN.plain }),
+    B(-5, 5, 0, 2.8, -5, 5, { color: C.tile, pattern: PATTERN.glasstile }),
+    B(-1.6, 1.6, 2.8, 3.8, -0.45, 0.45, { color: C.cream, pattern: PATTERN.render }),
   ],
   half: [
     // ---- side deck strips (water notch between them) ----
-    B(-25, -21, -1.2, 0, -44, 6, { color: C.deckEdge, pattern: PATTERN.wood }),
-    B(-25, -21, -1.2, 0, 14, 44, { color: C.deckEdge, pattern: PATTERN.wood }),
-    // sea railings along the long edges (low, jumpable)
-    B(-25, -24.4, 0, 1.05, -43.4, 6, { color: C.slate, pattern: PATTERN.metal }),
-    B(-25, -24.4, 0, 1.05, 14, 43.4, { color: C.slate, pattern: PATTERN.metal }),
+    B(-25, -21, -1.2, 0, -44, 6, { color: C.deckEdge, pattern: PATTERN.planks }),
+    B(-25, -21, -1.2, 0, 14, 44, { color: C.deckEdge, pattern: PATTERN.planks }),
+    // sea railings along the long edges (low, jumpable): collision-only, the railing you see is a prop (dressing.js)
+    B(-25, -24.4, 0, 1.05, -43.4, 6, { rail: true, paint: false, color: C.slate }),
+    B(-25, -24.4, 0, 1.05, 14, 43.4, { rail: true, paint: false, color: C.slate }),
     // back wall behind the Alpha spawn
-    B(-25, 25, 0, 3.6, -44, -43.4, { color: C.cream, pattern: PATTERN.concrete, mural: [{ n: [0, 0, 1], id: 0 }] }),
+    B(-25, 25, 0, 3.6, -44, -43.4, { color: C.cream, pattern: PATTERN.render, mural: [{ n: [0, 0, 1], id: 0 }] }),
 
     // ---- Alpha spawn deck ----
     B(-9, 9, 0, 2.2, -43.4, -35, { color: C.spawn, pattern: PATTERN.spawn }),
-    R([-16, 0, -39.2], [-9, 2.2, -39.2], 4.2, { color: C.stone, pattern: PATTERN.hazard }),
-    R([16, 0, -39.2], [9, 2.2, -39.2], 4.2, { color: C.stone, pattern: PATTERN.hazard }),
+    R([-16, 0, -39.2], [-9, 2.2, -39.2], 4.2, { color: C.stone, pattern: PATTERN.stonestep }),
+    R([16, 0, -39.2], [9, 2.2, -39.2], 4.2, { color: C.stone, pattern: PATTERN.stonestep }),
     // low parapets on the deck front corners (cover while leaving spawn)
-    B(-9, -6.2, 2.2, 3.0, -35.6, -35, { color: C.cream, pattern: PATTERN.plain }),
-    B(6.2, 9, 2.2, 3.0, -35.6, -35, { color: C.cream, pattern: PATTERN.plain }),
+    B(-9, -6.2, 2.2, 3.0, -35.6, -35, { color: C.cream, pattern: PATTERN.render }),
+    B(6.2, 9, 2.2, 3.0, -35.6, -35, { color: C.cream, pattern: PATTERN.render }),
 
     // ---- base flanks ----
     // container stack (left)
     B(-22.2, -19.8, 0, 2.5, -33, -27, { color: C.teal, pattern: PATTERN.container, mural: [{ n: [1, 0, 0], id: 3 }, { n: [-1, 0, 0], id: 3 }] }),
     B(-22.2, -16.2, 2.5, 5.0, -30.6, -28.2, { color: C.rust, pattern: PATTERN.container, mural: [{ n: [0, 0, 1], id: 3 }, { n: [0, 0, -1], id: 3 }] }),
     // kiosk (right back)
-    B(17.5, 22, 0, 3.2, -40, -35, { color: C.sand, pattern: PATTERN.concrete, mural: [{ n: [-1, 0, 0], id: 2 }, { n: [0, 0, 1], id: 2 }] }),
+    B(17.5, 22, 0, 3.2, -40, -35, { color: C.sand, pattern: PATTERN.brick, mural: [{ n: [-1, 0, 0], id: 2 }, { n: [0, 0, 1], id: 2 }] }),
     // right base platform with ramp
     B(14, 21, 0, 1.3, -30, -22, { color: C.stone, pattern: PATTERN.tiles }),
-    R([17.5, 0, -16.5], [17.5, 1.3, -22], 3.6, { color: C.stone, pattern: PATTERN.hazard }),
+    R([17.5, 0, -16.5], [17.5, 1.3, -22], 3.6, { color: C.stone, pattern: PATTERN.stonestep }),
     // crates
     B(-7.2, -5.8, 0, 1.4, -27.8, -26.4, { color: C.wood, pattern: PATTERN.wood }),
     B(4.4, 5.8, 0, 1.4, -25.2, -23.8, { color: C.wood, pattern: PATTERN.wood }),
@@ -74,23 +76,23 @@ export const TIDEWATER = {
 
     // ---- mid-base ----
     // tall dividing wall (left-centre)
-    B(-10.2, -9.2, 0, 3.0, -23, -13, { color: C.cream, pattern: PATTERN.concrete, mural: [{ n: [1, 0, 0], id: 1 }, { n: [-1, 0, 0], id: 1 }] }),
+    B(-10.2, -9.2, 0, 3.0, -23, -13, { color: C.rust, pattern: PATTERN.brick, mural: [{ n: [1, 0, 0], id: 1 }, { n: [-1, 0, 0], id: 1 }] }),
     // planter (right-centre)
     B(8, 12.5, 0, 0.9, -18.5, -15, { color: C.planter, pattern: PATTERN.planter, tag: 'planter' }),
     // low bench wall
-    B(-17, -12.5, 0, 0.85, -20.2, -19.4, { color: C.stone, pattern: PATTERN.plain }),
+    B(-17, -12.5, 0, 0.85, -20.2, -19.4, { color: C.stone, pattern: PATTERN.render }),
 
     // ---- side-lane platform (left, ramp faces Alpha) ----
-    B(-21, -14, 0, 1.6, -8, 8, { color: C.lav, pattern: PATTERN.tiles }),
-    R([-17.5, 0, -13.5], [-17.5, 1.6, -8], 4.0, { color: C.stone, pattern: PATTERN.hazard }),
+    B(-21, -14, 0, 1.6, -8, 8, { color: C.lav, pattern: PATTERN.rubber }),
+    R([-17.5, 0, -13.5], [-17.5, 1.6, -8], 4.0, { color: C.stone, pattern: PATTERN.stonestep }),
     B(-18.4, -17, 1.6, 2.8, 1, 2.4, { color: C.wood, pattern: PATTERN.wood }),
 
     // ---- mid cover ----
-    R([2.2, 0, -12], [2.2, 2.8, -5], 3.6, { color: C.stone, pattern: PATTERN.hazard }),
+    R([2.2, 0, -12], [2.2, 2.8, -5], 3.6, { color: C.stone, pattern: PATTERN.stonestep }),
     B(-10.4, -9, 0, 1.4, 3, 4.4, { color: C.wood, pattern: PATTERN.wood }),
     B(-10.4, -9, 1.4, 2.8, 3, 4.4, { color: C.wood, pattern: PATTERN.wood }),
     B(-10.4, -9, 0, 1.4, 4.4, 5.8, { color: C.wood, pattern: PATTERN.wood }),
-    B(9.5, 13, 0, 2.4, -2.2, -1.2, { color: C.cream, pattern: PATTERN.concrete }),
+    B(9.5, 13, 0, 2.4, -2.2, -1.2, { color: C.cream, pattern: PATTERN.render }),
   ],
   // non-colliding decoration anchors (built by level.js decor)
   decor: {
@@ -117,34 +119,34 @@ export const KELPLINE = {
   spawnBarrier: 4.2,
   single: [
     // sunken service trench across the middle
-    B(-24, 24, -3.0, -2.0, -3, 3, { color: K.trench, pattern: PATTERN.concrete }),
+    B(-24, 24, -3.0, -2.0, -3, 3, { color: K.trench, pattern: SURF.quay }),
     // central gantry deck on four pillars (steel sides can't be inked → climb the front/back)
-    B(-7, 7, 2.0, 2.8, -7, 7, { color: K.deck, pattern: PATTERN.metalpanel, noPaint: [[1, 0, 0], [-1, 0, 0]] }),
+    B(-7, 7, 2.0, 2.8, -7, 7, { color: K.deck, pattern: SURF.chequer, noPaint: [[1, 0, 0], [-1, 0, 0]] }),
     B(-1.6, 1.6, 2.8, 4.4, -1.6, 1.6, { color: K.steel, pattern: PATTERN.metalpanel }),
   ],
   half: [
     // ground (the two halves either side of the trench)
-    B(-24, 24, -1.2, 0, -48, -3, { color: K.asphalt, pattern: PATTERN.asphalt }),
+    B(-24, 24, -1.2, 0, -48, -3, { color: K.asphalt, pattern: SURF.tarmac }),
     // trench retaining wall below the deck slab (closes the gap down to the trench floor)
-    B(-24, 24, -3.0, -1.2, -3.8, -3, { color: K.asphalt, pattern: PATTERN.asphalt }),
+    B(-24, 24, -3.0, -1.2, -3.8, -3, { color: K.asphalt, pattern: SURF.tarmac }),
     // pillars under the gantry
     B(5.4, 6.6, 0, 2.0, 5.4, 6.6, { color: K.steel, pattern: PATTERN.metalpanel }),
     B(-6.6, -5.4, 0, 2.0, 5.4, 6.6, { color: K.steel, pattern: PATTERN.metalpanel }),
     // grate bridges over the trench (flanks)
     B(12, 16, -0.15, 0, -3, 3, { color: K.steel, pattern: PATTERN.grate, grate: true }),
     // ramp out of the trench on your own side
-    R([-9, -2.0, 2.2], [-9, 0, -3], 3, { color: K.concrete, pattern: PATTERN.hazard }),
-    // sea railings (+ trench ends)
-    B(-24, -23.4, 0, 1.05, -47.4, -3, { color: K.steel, pattern: PATTERN.metal }),
-    B(-24, -23.4, 0, 1.05, 3, 47.4, { color: K.steel, pattern: PATTERN.metal }),
+    R([-9, -2.0, 2.2], [-9, 0, -3], 3, { color: K.concrete, pattern: PATTERN.stonestep }),
+    // sea railings (collision-only, the railing you see is a prop: dressing.js) + trench ends
+    B(-24, -23.4, 0, 1.05, -47.4, -3, { rail: true, paint: false, color: K.steel }),
+    B(-24, -23.4, 0, 1.05, 3, 47.4, { rail: true, paint: false, color: K.steel }),
     B(-24, -23.4, -2.0, 0.2, -3, 3, { color: K.steel, pattern: PATTERN.metal }),
     // back wall
-    B(-24, 24, 0, 4.2, -48, -47.4, { color: K.cream, pattern: PATTERN.concrete, mural: [{ n: [0, 0, 1], id: 0 }] }),
+    B(-24, 24, 0, 4.2, -48, -47.4, { color: K.cream, pattern: PATTERN.render, mural: [{ n: [0, 0, 1], id: 0 }] }),
 
     // ---- spawn deck (front drop + two side ramps)
     B(-10, 10, 0, 3.2, -47.4, -40, { color: K.spawn, pattern: PATTERN.spawn }),
-    R([-18, 0, -43.4], [-10, 3.2, -43.4], 4, { color: K.concrete, pattern: PATTERN.hazard }),
-    R([18, 0, -43.4], [10, 3.2, -43.4], 4, { color: K.concrete, pattern: PATTERN.hazard }),
+    R([-18, 0, -43.4], [-10, 3.2, -43.4], 4, { color: K.steel, pattern: PATTERN.treads }),
+    R([18, 0, -43.4], [10, 3.2, -43.4], 4, { color: K.steel, pattern: PATTERN.treads }),
     B(-10, -7, 3.2, 4.0, -40.6, -40, { color: K.cream, pattern: PATTERN.concrete }),
     B(7, 10, 3.2, 4.0, -40.6, -40, { color: K.cream, pattern: PATTERN.concrete }),
 
@@ -157,8 +159,8 @@ export const KELPLINE = {
     B(2.6, 4, 1.4, 2.8, -29, -27.6, { color: K.wood, pattern: PATTERN.wood }),
 
     // ---- left raised side deck + grate catwalk into the central ramp
-    B(-24, -15, 0, 2.0, -22, -8.6, { color: K.pavers, pattern: PATTERN.pavers }),
-    R([-19.5, 0, -29], [-19.5, 2.0, -22], 4, { color: K.concrete, pattern: PATTERN.hazard }),
+    B(-24, -15, 0, 2.0, -22, -8.6, { color: K.pavers, pattern: SURF.quay }),
+    R([-19.5, 0, -29], [-19.5, 2.0, -22], 4, { color: K.steel, pattern: PATTERN.treads }),
     B(-24, -23.6, 2.0, 2.95, -22, -8.6, { color: K.steel, pattern: PATTERN.metal }),
     B(-15, -6, 1.85, 2.0, -10.6, -8.6, { color: K.steel, pattern: PATTERN.grate, grate: true }),
     B(-18.6, -17.2, 2.0, 3.2, -16, -14.6, { color: K.wood, pattern: PATTERN.wood }),
@@ -173,7 +175,7 @@ export const KELPLINE = {
     B(-14, -12.8, 0, 1.4, -8, -6.8, { color: K.wood, pattern: PATTERN.wood }),
 
     // ---- central ramp up to the gantry deck
-    R([-4, 0, -16], [-4, 2.8, -7], 4, { color: K.concrete, pattern: PATTERN.hazard }),
+    R([-4, 0, -16], [-4, 2.8, -7], 4, { color: K.steel, pattern: PATTERN.treads }),
   ],
   decor: {
     lamps: [[-23, -40], [-23, -25], [23, -12], [-8.5, -46.5], [8.5, -46.5]],

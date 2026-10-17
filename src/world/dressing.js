@@ -12,8 +12,8 @@ export const DRESSING = {
     { type: 'bench', pos: [-23.2, 0, -26], rotY: P / 2 },
     { type: 'bench', pos: [-23.2, 0, 26], rotY: P / 2 },
     { type: 'trashbin', pos: [-23.4, 0, -23.6] },
-    { type: 'bollard', pos: [-24.7, 1.05, -12] }, { type: 'bollard', pos: [-24.7, 1.05, -2] },
-    { type: 'lifering', pos: [-24.6, 1.05, 18] },
+    { type: 'bollard', pos: [-23.9, 0, -15], variant: 2 }, { type: 'bollard', pos: [-23.9, 0, -3], variant: 2 },
+    { type: 'lifering', pos: [-23.9, 0, 18], rotY: P / 2 },
     // kiosk dressing (right base): awning + vending + sign
     { type: 'awning', pos: [17.35, 2.7, -37.5], rotY: -P / 2, width: 4.2 },
     { type: 'vending', pos: [16.6, 0, -34.2], rotY: -P / 2, variant: 0 },
@@ -34,7 +34,7 @@ export const DRESSING = {
     // mid
     { type: 'cone', pos: [-8.2, 0, -12.4] }, { type: 'cone', pos: [-7.4, 0, -12.1] },
     { type: 'planter', pos: [13.5, 0, -8], variant: 1 },
-    { type: 'lightpole', pos: [-24.1, 1.05, -8], rotY: P / 2 },
+    { type: 'lightpole', pos: [-24.0, 0, -8], rotY: P / 2 },
     { type: 'neon', pos: [0, 2.6, -43.35], rotY: 0, width: 4, variant: 0, mirror: true },
     // ---- street-level detail pass: walls, overhead, dead ends, spawn-deck corners
     // back wall (face z = -43.4): cable tray, posters, fuse box, hose reel; a cluttered dead-end alley behind the left ramp
@@ -70,7 +70,7 @@ export const DRESSING = {
     { type: 'net', pos: [-24.15, 0, -1.2], rotY: -P / 2, length: 2.6 },
     { type: 'crabtrap', pos: [-23.8, 0, 2.6], rotY: P / 2, variant: 1 },
     { type: 'ropecoil', pos: [-23.75, 0, 4.75], variant: 0 },
-    { type: 'streetsign', pos: [-24.7, 1.05, 5.4], variant: 3, size: 0.5, height: 1.0 },
+    { type: 'streetsign', pos: [-24.0, 0, 5.4], variant: 3, size: 0.5, height: 2.05 },
     // central tower + mid walls: posters, signs, stickers (wall-flush, no colliders)
     { type: 'poster', pos: [-2.7, 1.45, -5], rotY: P, count: 3, variant: 8 },
     { type: 'streetsign', pos: [-5, 1.85, -3.1], rotY: -P / 2, variant: 6, wall: true },
@@ -90,6 +90,37 @@ export const DRESSING = {
     { type: 'stickers', pos: [-6.5, 0.7, -27.8], rotY: P, count: 5, width: 1.2, height: 1.1 },
     { type: 'streetsign', pos: [9.5, 1.72, -1.7], rotY: -P / 2, variant: 7, wall: true },
     { type: 'hydrant', pos: [9.5, 0.75, -1.7], rotY: -P / 2, variant: 1 },
+    // ---- harbour-edge pass: steel handrails dress the collision-only sea railings (maps.js), timber pier edges with
+    //      fenders, cleats + swim ladders round the boardwalk and the water notch, dock lights + shore power
+    { type: 'railing', pos: [-24.7, 0, -43.4], rotY: -P / 2, length: 49.4, height: 1.05, rail: true },
+    { type: 'railing', pos: [-24.7, 0, 14], rotY: -P / 2, length: 29.4, height: 1.05, rail: true },
+    { type: 'pieredge', pos: [-25, 0, -44], rotY: -P / 2, length: 50, ext1: 0.1, cleats: [8, 21, 34], fenders: [14, 27.5, 41], ladders: [24.5] },
+    { type: 'pieredge', pos: [-25, 0, 14], rotY: -P / 2, length: 30, ext0: 0.1, cleats: [10, 22], fenders: [5.5, 16] },
+    { type: 'pieredge', pos: [-25, 0, 6], rotY: 0, length: 4, s1: 0.75 },
+    { type: 'pieredge', pos: [-21, 0, 6], rotY: -P / 2, length: 8, ext0: -0.1, ext1: -0.1, dfender: true, ladders: [4] },
+    { type: 'pieredge', pos: [-21, 0, 14], rotY: P, length: 4, s0: 0.75 },
+    { type: 'pieredge', pos: [25, 0, -44], rotY: P, length: 50, ext0: 0.1, ext1: 0.1, spacing: 4.2 },
+    { type: 'bollardlight', pos: [-23.95, 0, -20] }, { type: 'bollardlight', pos: [-23.95, 0, -5.4] },
+    { type: 'bollardlight', pos: [-23.95, 0, 21] }, { type: 'bollardlight', pos: [-23.95, 0, 37] },
+    { type: 'shorepower', pos: [-23.95, 0, -9.6], rotY: P / 2, berth: 'T3' },
+    { type: 'shorepower', pos: [-23.95, 0, 28.4], rotY: P / 2, berth: 'T8' },
+    // container stack: ISO hardware (corner castings, rails, door ends) over the container blocks
+    { type: 'cargo_box', pos: [-21, 0, -30], rotY: 0, len: 20, h: 2.5, color: '#8fb3b1', door: 1, code: 'KRKU 204511' },
+    { type: 'cargo_box', pos: [-19.2, 2.5, -29.4], rotY: P / 2, len: 20, h: 2.5, color: '#cf9c88', door: 1, code: 'TDBU 318842' },
+    // kiosk roof kit, a fish stall in the dead-end pocket behind the spawn ramp, a squid-dog cart on the boardwalk
+    { type: 'dish', pos: [21.2, 3.2, -39.2], rotY: -P * 0.75, variant: 0 },
+    { type: 'vent', pos: [18.4, 3.2, -39.3], variant: 1 },
+    { type: 'stall', pos: [12.8, 0, -42.6], rotY: 0, variant: 0 },
+    { type: 'cart', pos: [22.3, 0, -32.5], rotY: -P / 2, variant: 1 },
+    // skate corner: a flat bar by the bench wall, a kicker against the container stack
+    { type: 'skaterail', pos: [-17, 0, -23.2], length: 2.6 },
+    { type: 'skateramp', pos: [-18.6, 0, -30], rotY: P / 2, variant: 1, width: 2.4 },
+    // out on the water: mooring buoys, channel markers, a breakwater arm off each flank
+    { type: 'buoy', pos: [-31, -1.75, 10], variant: 0, color: 'coral' },
+    { type: 'buoy', pos: [-36, -1.75, -17], variant: 0, color: 'mustard' },
+    { type: 'channelmarker', pos: [-44, -1.6, 4], variant: 0 },
+    { type: 'channelmarker', pos: [-41, -1.6, 27], variant: 1 },
+    { type: 'breakwater', pos: [52, 0, -64], rotY: 0, length: 70 },
   ],
   halyard: [
     // Prop types live in src/world/props-marina-dock.js. Alpha half; every entry is mirrored (x,z → -x,-z).
@@ -197,13 +228,16 @@ export const DRESSING = {
     // gantry deck: railings on its steel (un-inkable) sides
     { type: 'railing', pos: [-6.9, 2.8, -6.6], rotY: -P / 2, length: 13.2, mirror: false },
     { type: 'railing', pos: [6.9, 2.8, 6.6], rotY: P / 2, length: 13.2, mirror: false },
-    // container ends + pipes on the base containers
-    { type: 'container_door', pos: [-18.8, 0, -36.02], rotY: P },
-    { type: 'container_door', pos: [15.05, 0, -33.02], rotY: P },
+    // ISO hardware (corner castings, rails, door ends) over every container block + pipes on the base containers
+    { type: 'cargo_box', pos: [-18.8, 0, -33], rotY: P, len: 20, color: '#5f9ea0', door: 1, code: 'KRKU 450126' },
+    { type: 'cargo_box', pos: [15.05, 0, -31.78], rotY: P / 2, len: 20, color: '#c47a5e', door: 1, code: 'TDBU 772031' },
+    { type: 'cargo_box', pos: [15.65, 2.6, -31.78], rotY: -P / 2, len: 20, color: '#58668e', door: 1, code: 'INKU 309114' },
+    { type: 'cargo_box', pos: [18.05, 0, -18.78], rotY: P / 2, len: 20, color: '#d6ae52', door: 1, code: 'CRLU 118540' },
+    { type: 'cargo_box', pos: [10.22, 0, -22.95], rotY: 0, len: 20, color: '#5f9ea0', door: 1, code: 'KLPU 204816' },
     { type: 'pipes', pos: [-17.55, 0.5, -34], rotY: P / 2, length: 3.2 },
     // sea edge
-    { type: 'bollard', pos: [-23.7, 1.05, -30] }, { type: 'bollard', pos: [-23.7, 1.05, -38] },
-    { type: 'lifering', pos: [-23.6, 1.05, -26] },
+    { type: 'bollard', pos: [-23.0, 0, -30], variant: 2 }, { type: 'bollard', pos: [-23.0, 0, -36.6], variant: 2 },
+    { type: 'lifering', pos: [-23.0, 0, -26], rotY: P / 2 },
     { type: 'lightpole', pos: [-23.8, 2.95, -15.2], rotY: P / 2 },
     // raised side deck
     { type: 'bench', pos: [-22.9, 2.0, -19.5], rotY: P / 2 },
@@ -220,7 +254,7 @@ export const DRESSING = {
     // yard clutter in corners (out of the main lanes)
     { type: 'barrel', pos: [-22.8, 0, -44.8] }, { type: 'barrel', pos: [-22.1, 0, -45.6], variant: 1 },
     { type: 'pallet', pos: [-20.6, 0, -46.2], rotY: 0.3 },
-    { type: 'tires', pos: [22.3, 0, -46] },
+    { type: 'tires', pos: [22.6, 0, -40.6] },
     { type: 'crates', pos: [21.8, 0, -27.5], variant: 1 },
     { type: 'cone', pos: [6.8, 0, -15.2] }, { type: 'cone', pos: [7.6, 0, -15.6] },
     { type: 'sign', pos: [-2, 4.2, -47.3], rotY: 0, width: 4.2, height: 1.2, variant: 0 },
@@ -272,6 +306,26 @@ export const DRESSING = {
     { type: 'cabinet', pos: [-15, 0.95, -20.6], rotY: P / 2, variant: 1 },
     { type: 'stickers', pos: [16.3, 0.9, -8], rotY: 0, count: 5, width: 0.6, height: 1.2 },
     { type: 'hosereel', pos: [17.3, 1.1, -30.56], rotY: 0 },
+    // ---- terminal pass: steel handrails dress the collision-only sea railings (maps.js; the side deck covers them
+    //      from z -22 to -8.6), quay edges, terminal kit in the back-right corner, roof kit on the stacked box, water
+    { type: 'railing', pos: [-23.7, 0, -47.4], rotY: -P / 2, length: 25.4, height: 1.05, rail: true },
+    { type: 'railing', pos: [-23.7, 0, -8.6], rotY: -P / 2, length: 5.6, height: 1.05, rail: true },
+    { type: 'railing', pos: [-23.7, 0, 3], rotY: -P / 2, length: 44.4, height: 1.05, rail: true },
+    { type: 'pieredge', pos: [-24, 0, -48], rotY: -P / 2, length: 44.2, ext0: 0.1, cleats: [6, 15, 30], fenders: [10.5, 23, 38], dfender: true },
+    { type: 'pieredge', pos: [24, 0, -48], rotY: P, length: 48, ext0: 0.1, ext1: 0.1, spacing: 4.0 },
+    { type: 'bollardlight', pos: [-23.05, 0, -33.3] }, { type: 'bollardlight', pos: [-23.05, 0, -6.2] },
+    { type: 'bollardlight', pos: [-23.2, 2.0, -16.4] },
+    // lighting tower parked in a fenced bay against the back wall, a twistlock bin by the yard, site notices
+    { type: 'fence', pos: [19.6, 0, -45.5], rotY: 0, length: 3.4, height: 1.8, variant: 0 },
+    { type: 'cargo_lighttower', pos: [21.6, 0, -46.5], rotY: P / 2 },
+    { type: 'cargo_cage', pos: [21.6, 0, -34.8], rotY: 0, variant: 1 },
+    { type: 'cargo_signboard', pos: [23.0, 0, -37.6], rotY: -P / 2, variant: 0 },
+    { type: 'cargo_signboard', pos: [-15.6, 2.0, -21.7], rotY: 0, variant: 2 },
+    { type: 'dish', pos: [18.0, 5.2, -31.8], rotY: 0, variant: 1 },
+    { type: 'vent', pos: [13.5, 5.2, -31.8], variant: 3 },
+    { type: 'buoy', pos: [-31, -1.75, -24], variant: 0, color: 'mustard' },
+    { type: 'buoy', pos: [-29, -1.75, 9], variant: 1 },
+    { type: 'channelmarker', pos: [-40, -1.6, -36], variant: 0 },
   ],
 };
 
